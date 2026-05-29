@@ -1,29 +1,10 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { fetchCurrentUser, login, type LoginPayload, type UserProfile } from '../api/auth'
+import { fetchCurrentUser, login } from '../api/auth'
+import type { LoginPayload, UserProfile } from '../types/rbac'
 
 const tokenKey = 'agent-hub-admin-token'
 const profileKey = 'agent-hub-admin-profile'
-
-function buildMockProfile(username: string): UserProfile {
-  return {
-    userId: username === 'admin' ? 1 : 2,
-    username,
-    displayName: username === 'admin' ? '平台管理员' : '业务用户',
-    roles: username === 'admin' ? ['ADMIN'] : ['USER'],
-    permissions: [
-      'system:user:list',
-      'system:role:list',
-      'system:permission:list',
-      'system:menu:list',
-      'ai:provider:list',
-      'ai:model:list',
-      'mcp:server:list',
-      'skill:list',
-      'agent:manage'
-    ]
-  }
-}
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref('')
@@ -58,27 +39,9 @@ export const useAuthStore = defineStore('auth', () => {
 
     try {
       const response = await login(payload)
-
-      if (response.code !== 0) {
-        throw new Error(response.message)
-      }
-
-      token.value = response.data.token
-      profile.value = response.data.profile
+      token.value = response.token
+      profile.value = response.profile
       persist()
-      return
-    } catch {
-      if (
-        (payload.username === 'admin' && payload.password === 'admin123') ||
-        (payload.username === 'user' && payload.password === 'user123')
-      ) {
-        token.value = `mock-token-${payload.username}`
-        profile.value = buildMockProfile(payload.username)
-        persist()
-        return
-      }
-
-      throw new Error('用户名或密码错误')
     } finally {
       loading.value = false
     }
@@ -86,25 +49,12 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function refreshProfile() {
     if (!token.value) {
-      return
+      return null
     }
 
-    try {
-      const response = await fetchCurrentUser()
-
-      if (response.code === 0) {
-        profile.value = response.data
-        persist()
-        return
-      }
-    } catch {
-      if (profile.value) {
-        return
-      }
-    }
-
-    profile.value = buildMockProfile('admin')
+    profile.value = await fetchCurrentUser()
     persist()
+    return profile.value
   }
 
   function logout() {

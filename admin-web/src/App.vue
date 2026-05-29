@@ -1,5 +1,5 @@
 <template>
-  <n-config-provider>
+  <n-config-provider :theme-overrides="themeOverrides">
     <n-message-provider>
       <router-view />
     </n-message-provider>
@@ -7,13 +7,27 @@
 </template>
 
 <script setup lang="ts">
-import { NConfigProvider, NMessageProvider } from 'naive-ui'
+import { NConfigProvider, NMessageProvider, type GlobalThemeOverrides } from 'naive-ui'
+
+const themeOverrides: GlobalThemeOverrides = {
+  common: {
+    primaryColor: '#2563eb',
+    primaryColorHover: '#1d4ed8',
+    primaryColorPressed: '#1e40af',
+    borderRadius: '8px'
+  },
+  Layout: {
+    color: '#f5f7fb',
+    siderColor: '#ffffff',
+    headerColor: '#ffffff'
+  }
+}
 </script>
 
 <style>
 :root {
   color: #1f2937;
-  background: #f3f6fb;
+  background: #f5f7fb;
   font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
 }
 
@@ -23,7 +37,7 @@ import { NConfigProvider, NMessageProvider } from 'naive-ui'
 
 body {
   margin: 0;
-  background: #f3f6fb;
+  background: #f5f7fb;
 }
 
 #app {

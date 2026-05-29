@@ -1,0 +1,51 @@
+name: agent-hub-deps
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: agent-hub-postgres
+    restart: unless-stopped
+    env_file:
+      - ./env/postgres.env
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - agent-hub-network
+
+  redis:
+    image: redis:7.2
+    container_name: agent-hub-redis
+    restart: unless-stopped
+    env_file:
+      - ./env/redis.env
+    command:
+      - sh
+      - -c
+      - redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - agent-hub-network
+
+networks:
+  agent-hub-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:

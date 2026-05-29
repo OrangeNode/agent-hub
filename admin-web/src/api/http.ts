@@ -15,4 +15,16 @@ http.interceptors.request.use((config) => {
   return config
 })
 
+http.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      window.localStorage.removeItem('agent-hub-admin-token')
+      window.localStorage.removeItem('agent-hub-admin-profile')
+    }
+    const message = error.response?.data?.message ?? error.message ?? '请求失败'
+    return Promise.reject(new Error(message))
+  }
+)
+
 export default http

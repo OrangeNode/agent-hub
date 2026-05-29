@@ -6,8 +6,6 @@ import com.agenthub.common.exception.BusinessException;
 import com.agenthub.security.jwt.JwtProperties;
 import com.agenthub.security.jwt.JwtService;
 import com.agenthub.security.principal.LoginUser;
-import com.agenthub.system.auth.AuthService;
-import com.agenthub.system.auth.InMemoryAuthService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -45,11 +43,6 @@ public class SecurityConfig {
     @Bean
     JwtService jwtService(JwtProperties jwtProperties) {
         return new JwtService(jwtProperties);
-    }
-
-    @Bean
-    AuthService authService() {
-        return new InMemoryAuthService();
     }
 
     @Bean

@@ -6,6 +6,7 @@ public record UserProfile(
         Long userId,
         String username,
         String displayName,
+        boolean enabled,
         List<String> roles,
         List<String> permissions
 ) {

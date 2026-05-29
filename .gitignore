@@ -1,0 +1,16 @@
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+target/
+*.class
+
+node_modules/
+dist/
+.vite/
+
+*.log
+.env
+.env.local
+.env.*.local

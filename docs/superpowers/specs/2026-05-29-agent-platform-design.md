@@ -1,155 +1,243 @@
-# Agent 平台项目初始化设计
+# Agent 平台 RBAC 管理端对齐设计
 
 ## 目标
 
-初始化一个企业级 AI Agent 平台单仓库项目。项目包含两个 Vue 3 前端和一个 Spring Boot 4 / JDK 21 / Maven 多模块后端。初始化结果必须具备可运行、可编译、边界清晰的基础形态，并为 RBAC、JWT 登录认证、AI 供应商管理、AI 模型管理、MCP 管理、Skill 库管理、Agent 管理、会话管理、SSE 流式聊天、自研 LLM Client、自研 Agent Runtime 和自研 Tool Loop 预留稳定扩展点。
+在当前单仓库项目基础上，完成一套可交付的 RBAC 管理闭环。交付结果包含：
 
-## 范围
+- `admin-web`：前端页面、布局和交互体验对齐参考项目 `D:\project\agent-hub-v2-main`
+- `backend`：使用现有 Java 多模块工程提供 RBAC 与动态菜单所需后端能力
+- `docker/`：提供 PostgreSQL、Redis 等依赖服务部署目录，方便手动在服务器启动
 
-本次初始化交付“企业级骨架 + 最小可运行闭环”：
+本次设计强调“前端体验对齐”，不要求后端实现方式或工程结构对齐参考项目。
 
-- `admin-web`：管理端前端，包含登录、主布局、系统管理、AI 管理、MCP、Skill 和 Agent 模块页面。
-- `user-web`：用户端前端，包含登录、会话列表和 SSE 流式聊天页面。
-- `backend`：Java 后端，采用 Maven 多模块结构，包含安全认证基础、核心领域模块、基础接口和模拟流式聊天链路。
+## 本次范围
 
-第一个版本不追求所有业务模块的完整 CRUD 深度，也不接入真实外部大模型供应商。初始化阶段的重点是建立清晰的工程结构、模块边界、认证链路、接口契约和后续扩展位置。
+本轮只覆盖管理端相关能力，聚焦以下内容：
 
-## 总体架构
+- 登录认证
+- 工作台基础壳子
+- 用户管理
+- 角色管理
+- 菜单管理
+- 动态菜单
+- JWT 鉴权
+- 统一响应与全局异常
+- 依赖服务 Docker 化
 
-仓库采用单仓库结构：
+明确不纳入本次范围的内容：
 
-```text
-Agent-Hub/
-  admin-web/
-  user-web/
-  backend/
-  docs/
-```
+- `user-web` 页面改造
+- AI 供应商、模型、MCP、Skill、Agent 管理页面对齐
+- SSE 事件类型、事件协议和流内错误事件设计
+- 后端实现方式对齐参考项目
 
-后端采用 Maven 多模块结构：
+## 总体策略
 
-```text
-backend/
-  pom.xml
-  agent-hub-common/
-  agent-hub-security/
-  agent-hub-system/
-  agent-hub-ai/
-  agent-hub-agent/
-  agent-hub-chat/
-  agent-hub-server/
-```
+本次采用“前端体验对齐，后端能力托底”的策略。
 
-模块职责：
-
-- `agent-hub-common`：统一响应、统一错误码、业务异常模型、参数校验异常模型、常量、基础 DTO 和通用工具。
-- `agent-hub-security`：JWT 服务、Spring Security 配置、认证过滤器、登录主体和权限辅助能力。
-- `agent-hub-system`：用户、角色、权限、菜单和登录所需的系统服务契约。
-- `agent-hub-ai`：AI 供应商、AI 模型和自研 LLM Client 抽象。
-- `agent-hub-agent`：Agent 定义、MCP Server、Tool 定义、Skill 库、Agent Runtime 接口和 Tool Loop 骨架。
-- `agent-hub-chat`：会话、消息、聊天编排和 SSE 流式响应入口。
-- `agent-hub-server`：Spring Boot 启动模块、REST Controller、全局异常处理、安全异常响应装配、配置装配和跨模块组合。
-
-两个前端都是独立的 Vite 应用。它们保持一致的工程习惯和接口风格，但初始化阶段不抽取前端公共包，以降低安装、运行和维护复杂度。
-
-## 后端设计
-
-后端技术栈为 Spring Boot 4、Java 21、Maven、Spring Security、JWT、PostgreSQL、Redis 和 SSE。不使用 Spring AI。
-
-后端基础设施必须统一管理。`agent-hub-common` 提供 `ApiResponse`、`ErrorCode`、`BusinessException` 和参数校验错误模型；`agent-hub-server` 通过 `GlobalExceptionHandler` 统一处理业务异常、参数校验异常、认证异常、授权异常和未知异常。业务 Controller 不直接返回零散的 `Map`、字符串或不一致响应结构。
-
-初始接口分组：
-
-- `/api/auth/login`：用户名密码登录，返回 JWT 和基础用户信息。
-- `/api/auth/me`：返回当前登录用户信息。
-- `/api/system/users`：用户管理接口。
-- `/api/system/roles`：角色管理接口。
-- `/api/system/permissions`：权限管理接口。
-- `/api/system/menus`：菜单管理接口。
-- `/api/ai/providers`：AI 供应商管理接口。
-- `/api/ai/models`：AI 模型管理接口。
-- `/api/mcp/servers`：MCP Server 管理接口。
-- `/api/skills`：Skill 库管理接口。
-- `/api/agents`：Agent 管理接口。
-- `/api/chat/conversations`：会话管理接口。
-- `/api/chat/stream`：SSE 流式聊天接口。
-
-初始化阶段使用内存服务提供启动数据，同时提供 PostgreSQL 和 Redis 的配置入口。这样可以保证项目创建后立刻编译运行，也能让后续持久化实现替换服务层时不影响前端接口契约。
-
-安全模型采用无状态 JWT 认证。JWT 中包含用户标识、用户名、角色和权限。后端通过 Spring Security 过滤器解析令牌，并构建当前登录主体。权限字符串采用类似 `system:user:list`、`ai:model:list`、`agent:manage` 的格式。
-
-自研 LLM Client 从第一版开始建立接口：
-
-- `LlmClient`：供应商无关的大模型调用接口，支持普通响应和流式响应。
-- `ChatRequest`、`ChatMessage`、`ChatChunk`：通用聊天请求、消息和流式片段 DTO。
-- `MockLlmClient`：本地模拟实现，用于驱动初始 SSE 聊天链路。
-
-自研 Agent Runtime 从第一版开始建立核心边界：
-
-- `AgentRuntime`：负责根据 Agent 定义和用户输入执行一次运行。
-- `ToolRegistry`：负责注册和解析可调用工具。
-- `ToolLoop`：负责模型输出、工具调用和最终回答之间的循环。
-- `RuntimeEvent`：负责表达模型片段、工具调用、工具结果和最终回答等运行事件。
+`admin-web` 以参考项目的后台工作台风格为目标，尽量对齐页面结构、视觉密度、布局组织、菜单交互、标签页体验和 RBAC 页面模式。`backend` 保持现有 Spring Boot 多模块架构，只补足前端运行所需的 RBAC 与动态菜单接口，不追求与参考项目同名接口、同实现方式或同目录结构。`docker/` 目录单独提供依赖服务部署文件，不与应用运行脚本强耦合。
 
 ## 前端设计
 
-两个前端都使用 Vue 3、TypeScript、Vite、Naive UI、Pinia、Vue Router 和 Axios。
+### 参考对齐目标
 
-`admin-web` 初始路由：
+`admin-web` 主要对齐以下体验：
+
+- `AppLayout + Header + Sidebar + Tabs + Breadcrumb` 的后台主框架
+- 浅色、克制、信息密度较高的企业后台样式
+- 基于动态菜单的侧边栏渲染
+- 基于当前路由的标签页管理
+- 表格型 RBAC 管理页面
+- 菜单树管理页面
+
+本次对齐的是“页面形态、交互组织和使用方式”，不是简单替换颜色或局部组件。
+
+### 页面与路由结构
+
+`admin-web` 本轮路由收敛为：
 
 - `/login`
 - `/`
+- `/dashboard`
 - `/system/users`
 - `/system/roles`
-- `/system/permissions`
 - `/system/menus`
-- `/ai/providers`
-- `/ai/models`
-- `/mcp/servers`
-- `/skills`
-- `/agents`
 
-管理端包含持久化布局、基于路由的菜单、认证状态管理、自动注入 Bearer Token 的 Axios 客户端，以及面向 CRUD 扩展的表格型模块页面。
+其中：
 
-`user-web` 初始路由：
+- `/login` 为独立登录页
+- `/` 为后台主框架入口，默认重定向到 `/dashboard`
+- `/dashboard` 为工作台首页
+- `/system/users` 为用户管理页
+- `/system/roles` 为角色管理页
+- `/system/menus` 为菜单管理页
 
-- `/login`
-- `/`
-- `/chat`
+### 布局与组件组织
 
-用户端包含聊天工作区、会话列表面板、消息列表、输入区和连接 `/api/chat/stream` 的 SSE 客户端。流式返回时，前端会把服务端片段持续追加到当前助手消息中。
+`admin-web` 重构为以下核心界面结构：
 
-SSE 事件类型、事件协议和流内错误事件格式不纳入本次初始化设计，后续单独设计。
+- `AppLayout`：承载整体布局
+- `Header`：顶部导航、面包屑、用户操作区
+- `Sidebar`：动态菜单侧边栏
+- `Tabs`：多标签页切换区
+- `Breadcrumb`：当前路径展示
+
+页面组织目标是直接进入可工作的后台界面，不做营销式首页，不堆装饰性卡片。
+
+### 动态菜单机制
+
+动态菜单按以下流程工作：
+
+1. 用户登录成功
+2. 前端保存 JWT
+3. 前端请求当前用户信息
+4. 前端请求当前用户菜单树
+5. 菜单树转换为侧边栏菜单数据
+6. 路由守卫根据登录状态与菜单状态决定跳转
+7. 标签页根据访问路由自动维护
+
+前端允许维护一份本地路由定义表，用于把后端菜单项映射到实际页面组件。这样既能保证页面结构稳定，也能兼容后端逐步演进。
+
+### RBAC 页面设计
+
+用户管理页采用“查询区 + 表格区 + 操作按钮 + 弹窗表单”的后台页面模式，支持：
+
+- 用户列表查询
+- 新增用户
+- 编辑用户
+- 删除用户
+- 启停状态切换
+- 绑定角色
+
+角色管理页采用同样的管理模式，支持：
+
+- 角色列表查询
+- 新增角色
+- 编辑角色
+- 删除角色
+- 状态切换
+- 角色绑定菜单
+
+菜单管理页采用树形管理模式，支持：
+
+- 菜单树查询
+- 新增同级或子级菜单
+- 编辑菜单
+- 删除菜单
+- 调整显示顺序
+
+本轮菜单管理页重点保证树形管理与基本编辑体验，不强求一次性覆盖所有增强交互。
+
+## 后端设计
+
+### 架构边界
+
+后端继续使用现有多模块结构：
+
+- `agent-hub-common`
+- `agent-hub-security`
+- `agent-hub-system`
+- `agent-hub-ai`
+- `agent-hub-agent`
+- `agent-hub-chat`
+- `agent-hub-server`
+
+本轮真正需要补强的是 `system`、`security` 和 `server` 三个方向，让 `admin-web` 的 RBAC 与动态菜单真实可跑。
+
+### 接口范围
+
+后端提供以下接口能力：
+
+- 认证
+  - 登录
+  - 获取当前登录用户信息
+- 用户管理
+  - 用户列表
+  - 新增用户
+  - 修改用户
+  - 删除用户
+  - 用户状态切换
+  - 用户角色绑定
+- 角色管理
+  - 角色列表
+  - 新增角色
+  - 修改角色
+  - 删除角色
+  - 角色状态切换
+  - 角色菜单绑定
+- 菜单管理
+  - 菜单树查询
+  - 当前用户菜单树查询
+  - 新增菜单
+  - 修改菜单
+  - 删除菜单
+  - 菜单排序调整
+
+本轮不要求后端 API 命名完全复刻参考项目，但会尽量保证前端调用简单清晰。
+
+### 数据实现策略
+
+后端采用“可运行优先、结构清晰优先”的实现策略：
+
+- 服务层接口保持明确
+- 控制器、服务、仓储边界保持清晰
+- 当前可使用内存数据或轻量仓储实现跑通闭环
+- 结构上为后续切换 PostgreSQL 持久化预留接口
+
+这意味着本轮重点是把登录、RBAC、动态菜单和前端联调跑通，而不是一次性完成最终版数据库实现。
+
+### 安全与统一规范
+
+后端继续沿用现有统一规范：
+
+- REST 接口统一使用 `ApiResponse`
+- 错误码统一由 `ErrorCode` 定义
+- 业务异常统一使用 `BusinessException`
+- 全局异常由 `GlobalExceptionHandler` 处理
+- JWT 登录认证和 Spring Security 权限控制继续统一管理
+
+SSE 设计继续保持延期状态，本轮不扩展 SSE 事件协议。
+
+## Docker 目录设计
+
+项目根目录新增 `docker/`，至少包含：
+
+- `docker-compose.yml`
+- PostgreSQL 服务配置
+- Redis 服务配置
+- 中文部署说明
+
+目标是让依赖服务部署独立于应用源码运行，你可以直接把该目录带到服务器，通过 Docker 手动启动数据库和缓存服务。
+
+如有必要，可增加环境变量样例文件，但不要求在本轮引入复杂编排。
 
 ## 数据流
 
-登录认证流程：
+### 登录与初始化
 
-1. 前端向 `/api/auth/login` 提交用户名和密码。
-2. 后端使用启动用户数据完成校验。
-3. 后端签发包含用户标识、用户名、角色和权限的 JWT。
-4. 前端将令牌保存到 Pinia 和本地存储。
-5. Axios 请求拦截器自动附加 `Authorization: Bearer <token>`。
-6. 后端认证过滤器校验令牌，并构建 Spring Security 登录主体。
+1. 用户在 `admin-web` 登录
+2. 后端校验用户名和密码并返回 JWT
+3. 前端保存令牌
+4. 前端请求当前用户信息
+5. 前端请求当前用户菜单树
+6. 前端渲染后台主框架与动态菜单
 
-流式聊天流程：
+### RBAC 管理
 
-1. 用户在 `user-web` 输入问题。
-2. 前端向 `/api/chat/stream` 建立 SSE 请求。
-3. `agent-hub-chat` 调用 Agent Runtime 或 LLM Client。
-4. 初始化版本通过 `MockLlmClient` 输出确定性的模拟片段。
-5. 前端持续追加片段，形成流式回复体验。
+1. 用户进入用户、角色或菜单页面
+2. 前端调用对应管理接口
+3. 后端返回统一响应结构
+4. 前端根据结果刷新表格、树和表单状态
 
-管理模块流程：
+### 动态菜单生效
 
-1. 管理端页面通过类型化 API 客户端调用后端接口。
-2. 后端 Controller 将请求转发到对应模块服务。
-3. 初始化服务返回启动数据和稳定 DTO 结构。
-4. 后续可以替换为数据库和 Redis 实现，而不改变前端调用契约。
+1. 后端根据当前用户角色计算可见菜单
+2. 前端根据菜单树构建侧边栏
+3. 用户角色或菜单关系调整后，重新加载菜单即可体现权限变化
 
 ## 错误处理
 
-后端 REST 响应和异常返回由统一基础设施管理。所有普通 REST 接口使用统一结构：
+普通 REST 接口继续使用统一响应结构：
 
 ```json
 {
@@ -159,39 +247,61 @@ SSE 事件类型、事件协议和流内错误事件格式不纳入本次初始�
 }
 ```
 
-`code` 为 `0` 表示成功，非 `0` 表示失败。错误码由 `agent-hub-common` 统一定义，错误信息默认使用中文。参数校验、业务异常、认证失败、授权失败和未知异常都由 `GlobalExceptionHandler` 统一转换为结构化响应。业务模块只抛出统一业务异常或返回明确 DTO，不自行拼装异常响应。
+后端负责统一处理：
 
-SSE 接口不强行包装为普通 JSON 响应。当前规格只约束流开始前的 HTTP 错误响应使用统一结构；SSE 事件类型、事件协议和流内错误事件格式后续单独设计。
+- 参数校验错误
+- 认证失败
+- 授权失败
+- 业务异常
+- 未知异常
 
-前端 Axios 拦截器负责把 HTTP 错误转换成 Naive UI 消息提示。登录过期时清理本地认证状态，并跳转回 `/login`。
+前端 Axios 拦截器负责：
+
+- 统一错误提示
+- 登录失效后的状态清理
+- 自动跳转回登录页
+
+SSE 相关事件格式不纳入本轮统一设计。
 
 ## 测试与验证
 
-初始化后的验证命令：
+本轮交付的验证标准如下：
 
-- 后端：在 `backend/` 下执行 `mvn test`。
-- 管理端前端：在 `admin-web/` 下执行 `npm install`、`npm run type-check` 和 `npm run build`。
-- 用户端前端：在 `user-web/` 下执行 `npm install`、`npm run type-check` 和 `npm run build`。
+### `admin-web`
 
-首批测试聚焦高价值边界：
+- `npm run type-check` 通过
+- `npm run build` 通过
+- 本地可访问对齐后的后台界面
 
-- 统一响应结构和全局异常处理。
-- JWT 创建和解析。
-- 登录主体和权限集合构建。
-- `MockLlmClient` 流式片段输出。
-- Agent Runtime 事件流。
-- 两个前端项目的类型检查和构建检查。
+### `backend`
+
+- `mvn test` 通过
+- 应用可启动
+- 登录、用户、角色、菜单相关接口可用
+
+### 联调验证
+
+- 登录成功
+- 动态菜单可正常加载
+- 用户管理页面可查询并操作
+- 角色管理页面可查询并操作
+- 菜单管理页面可查询树并完成基本维护
+
+### `docker`
+
+- 依赖服务 compose 文件结构清晰
+- PostgreSQL 与 Redis 配置可直接用于服务器部署
 
 ## 非目标
 
-- 初始化阶段不使用 Spring AI。
-- 初始化阶段不接入真实外部大模型供应商。
-- 初始化阶段不完成完整数据库迁移体系。
-- 初始化阶段不为每个管理模块实现完整 CRUD。
-- 初始化阶段不定义 SSE 事件类型、事件协议和流内错误事件格式。
-- 初始化阶段不拆分微服务。
+- 不改造 `user-web`
+- 不在本轮完成 AI、Agent、MCP、Skill 管理端页面
+- 不对齐参考项目的 Java 后端实现
+- 不在本轮定义 SSE 事件协议
+- 不在本轮扩展为微服务架构
 
 ## 参考资料
 
+- 参考前端项目：`D:\project\agent-hub-v2-main`
 - Spring Boot 4 官方文档：https://docs.spring.io/spring-boot/documentation.html
 - Spring Security 官方文档：https://docs.spring.io/spring-security/reference/

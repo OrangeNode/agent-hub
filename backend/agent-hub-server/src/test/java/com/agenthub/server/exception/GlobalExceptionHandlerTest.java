@@ -6,24 +6,27 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.context.annotation.Import;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.stereotype.Controller;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ResponseBody;
+import tools.jackson.databind.json.JsonMapper;
 
-@WebMvcTest(controllers = GlobalExceptionHandlerTest.TestController.class)
-@AutoConfigureMockMvc(addFilters = false)
-@Import(GlobalExceptionHandler.class)
 class GlobalExceptionHandlerTest {
 
-    private final MockMvc mockMvc;
+    private MockMvc mockMvc;
 
-    GlobalExceptionHandlerTest(MockMvc mockMvc) {
-        this.mockMvc = mockMvc;
+    @BeforeEach
+    void setUp() {
+        mockMvc = MockMvcBuilders
+                .standaloneSetup(new TestController())
+                .setControllerAdvice(new GlobalExceptionHandler())
+                .setMessageConverters(new JacksonJsonHttpMessageConverter(JsonMapper.builder().build()))
+                .build();
     }
 
     @Test

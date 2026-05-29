@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: agent-hub-server
+  datasource:
+    url: jdbc:postgresql://localhost:5432/agent_hub
+    username: postgres
+    password: postgres
+  data:
+    redis:
+      host: localhost
+      port: 6379
+server:
+  port: 8080

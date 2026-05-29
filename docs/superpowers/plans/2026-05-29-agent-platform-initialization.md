@@ -1,929 +1,937 @@
-# Agent 平台初始化实现计划
+# RBAC 管理端对齐实现计划
 
-> **给代理工作者：** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal / 目标：** 生成一个可编译、可构建、边界清晰的企业级 AI Agent 平台初始骨架，包含 `admin-web`、`user-web` 和 Maven 多模块 `backend`。
+**Goal:** 完成一套可交付的 RBAC 管理闭环，让 `admin-web` 的页面与交互对齐参考项目，同时由现有 Java 后端提供登录、用户、角色、菜单和动态菜单能力，并补齐依赖服务 Docker 部署目录。
 
-**Architecture / 架构：** 仓库采用单仓库三应用结构。后端按 `common/security/system/ai/agent/chat/server` 拆分 Maven 模块，统一响应、错误码和业务异常放在 `agent-hub-common`，全局异常处理和安全异常响应装配放在 `agent-hub-server`。两个前端分别作为独立 Vite 应用，复用接口风格但不抽公共包。
+**Architecture:** `admin-web` 采用“布局组件 + 路由 + store + API 模块 + RBAC 页面”的前端结构，对齐参考项目的主框架和页面组织，但不照搬其后端接口。`backend` 保持现有多模块架构，在 `system/security/server` 三个方向补齐最小可运行闭环，数据层优先使用内存实现与清晰服务边界。根目录新增 `docker/` 目录承载 PostgreSQL 与 Redis 的部署文件。
 
-**Tech Stack / 技术栈：** Spring Boot 4.0.6、JDK 21、Maven、Spring Security、JWT、PostgreSQL 配置入口、Redis 配置入口、Vue 3、TypeScript、Vite、Naive UI、Pinia、Vue Router、Axios。
+**Tech Stack:** Vue 3、TypeScript、Vite、Naive UI、Pinia、Vue Router、Axios、Spring Boot 4.0.6、JDK 21、Maven、Spring Security、JWT、PostgreSQL、Redis、Docker Compose。
 
 ---
 
 ## 范围检查
 
-本计划实现初始化骨架和最小闭环，不实现完整业务 CRUD，不接入真实外部大模型供应商，不定义 SSE 事件类型、事件协议和流内错误事件格式。
+本计划只覆盖以下内容：
 
-SSE 本次只保留 `/api/chat/stream` 接口入口和前端连接封装。流开始前的 HTTP 错误响应使用统一结构；流开始后的事件细节在后续独立设计中处理。
+- `admin-web` 对齐参考项目的后台壳子、动态菜单、标签页和 RBAC 页面
+- `backend` 的登录、用户、角色、菜单、当前用户菜单树接口
+- `docker/` 依赖服务目录
+- 最终联调与构建验证
+
+本计划明确不包含：
+
+- `user-web` 改造
+- AI、Agent、MCP、Skill 管理页对齐
+- SSE 事件协议设计
+- 后端实现方式对齐参考项目
 
 ## 文件结构
 
-创建以下目录和文件：
+本轮主要修改或新增以下文件：
 
 ```text
 Agent-Hub/
-  .gitignore
-  README.md
-  AGENTS.md
-  docs/superpowers/specs/2026-05-29-agent-platform-design.md
-  docs/superpowers/plans/2026-05-29-agent-platform-initialization.md
-  backend/
-    pom.xml
-    agent-hub-common/
-    agent-hub-security/
-    agent-hub-system/
-    agent-hub-ai/
-    agent-hub-agent/
-    agent-hub-chat/
-    agent-hub-server/
   admin-web/
-  user-web/
+    package.json
+    src/
+      App.vue
+      main.ts
+      api/
+        auth.ts
+        http.ts
+        menu.ts
+        role.ts
+        user.ts
+      components/
+        layout/
+          AppLayout.vue
+          HeaderBar.vue
+          SidebarMenu.vue
+          TabBar.vue
+      constants/
+        icons.ts
+      router/
+        index.ts
+        route-meta.d.ts
+      stores/
+        auth.ts
+        menu.ts
+        tabs.ts
+      styles/
+        global.css
+        theme.ts
+      types/
+        auth.ts
+        menu.ts
+        role.ts
+        user.ts
+      views/
+        dashboard/
+          index.vue
+        login/
+          index.vue
+        system/
+          users.vue
+          roles.vue
+          menus.vue
+  backend/
+    agent-hub-system/
+      src/main/java/com/agenthub/system/
+        auth/
+        menu/
+        role/
+        user/
+      src/test/java/com/agenthub/system/
+        menu/
+        role/
+        user/
+    agent-hub-server/
+      src/main/java/com/agenthub/server/
+        auth/
+        config/
+        system/
+      src/test/java/com/agenthub/server/system/
+    agent-hub-server/src/main/resources/application.yml
+  docker/
+    docker-compose.yml
+    env/
+      postgres.env
+      redis.env
+    README.md
+  README.md
 ```
 
-后端关键包名统一使用 `com.agenthub`：
-
-```text
-com.agenthub.common
-com.agenthub.security
-com.agenthub.system
-com.agenthub.ai
-com.agenthub.agent
-com.agenthub.chat
-com.agenthub.server
-```
-
-## 任务 1：根目录工程约定
+## 任务 1：重构 `admin-web` 的后台壳子与主题
 
 **Files:**
-- Create: `C:\Users\Orange\Documents\Agent-Hub\.gitignore`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\README.md`
-- Modify: `C:\Users\Orange\Documents\Agent-Hub\AGENTS.md`
-
-- [ ] **Step 1: 写入根目录说明**
-
-创建 `README.md`，内容：
-
-```markdown
-# Agent Hub
-
-企业级 AI Agent 平台，采用单仓库结构：
-
-- `admin-web`：管理端前端
-- `user-web`：用户端前端
-- `backend`：Java 后端 Maven 多模块工程
-
-## 技术栈
-
-- 管理端前端：Vue 3、TypeScript、Vite、Naive UI、Pinia、Vue Router、Axios
-- 用户端前端：Vue 3、TypeScript、Vite、Naive UI、Pinia、Vue Router、Axios、SSE 流式聊天入口
-- 后端：Spring Boot 4、JDK 21、Maven、Spring Security、JWT、PostgreSQL、Redis、SSE
-
-## 运行验证
-
-```powershell
-cd backend
-mvn test
-
-cd ..\admin-web
-npm install
-npm run type-check
-npm run build
-
-cd ..\user-web
-npm install
-npm run type-check
-npm run build
-```
-```
-
-- [ ] **Step 2: 写入忽略规则**
-
-创建 `.gitignore`，内容：
-
-```gitignore
-.idea/
-.vscode/
-.DS_Store
-Thumbs.db
-
-target/
-*.class
-
-node_modules/
-dist/
-.vite/
-
-*.log
-.env
-.env.local
-.env.*.local
-```
-
-- [ ] **Step 3: 检查项目记忆**
-
-Run: `Get-Content -Encoding UTF8 AGENTS.md`
-
-Expected: 输出包含“项目内所有文档”和“后端统一规范”。
-
-- [ ] **Step 4: 提交根目录约定**
-
-```powershell
-git add .gitignore README.md AGENTS.md
-git commit -m "docs: add root project conventions"
-```
-
-## 任务 2：后端 Maven 多模块骨架
-
-**Files:**
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\pom.xml`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-common\pom.xml`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-security\pom.xml`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\pom.xml`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-ai\pom.xml`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-agent\pom.xml`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-chat\pom.xml`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\pom.xml`
-
-- [ ] **Step 1: 创建父工程 POM**
-
-`backend/pom.xml` 使用 `spring-boot-starter-parent` 版本 `4.0.6`，`java.version` 为 `21`，模块列表包含七个子模块：
-
-```xml
-<modules>
-  <module>agent-hub-common</module>
-  <module>agent-hub-security</module>
-  <module>agent-hub-system</module>
-  <module>agent-hub-ai</module>
-  <module>agent-hub-agent</module>
-  <module>agent-hub-chat</module>
-  <module>agent-hub-server</module>
-</modules>
-```
-
-依赖版本由 Spring Boot 父工程托管，显式声明 `jjwt.version` 为 `0.12.6`。
-
-- [ ] **Step 2: 创建子模块 POM**
-
-每个子模块的 `artifactId` 与目录名一致。依赖关系：
-
-```text
-agent-hub-common: spring-boot-starter-validation, spring-boot-starter-test
-agent-hub-security: common, spring-boot-starter-security, spring-boot-starter-web, jjwt-api, jjwt-impl, jjwt-jackson, spring-boot-starter-test
-agent-hub-system: common, spring-boot-starter-test
-agent-hub-ai: common, reactor-core, spring-boot-starter-test
-agent-hub-agent: common, agent-hub-ai, reactor-core, spring-boot-starter-test
-agent-hub-chat: common, agent-hub-ai, agent-hub-agent, reactor-core, spring-boot-starter-test
-agent-hub-server: common, security, system, ai, agent, chat, spring-boot-starter-web, spring-boot-starter-security, spring-boot-starter-validation, spring-boot-starter-data-redis, postgresql, spring-boot-starter-test
-```
-
-- [ ] **Step 3: 运行编译红灯**
-
-Run: `cd backend; mvn test`
-
-Expected: FAIL，原因是各模块还没有 Java 源码和启动类，`agent-hub-server` 尚未提供 Spring Boot 入口。
-
-- [ ] **Step 4: 创建最小包目录**
-
-为每个模块创建 `src/main/java` 和 `src/test/java` 下的包目录：
-
-```text
-agent-hub-common/src/main/java/com/agenthub/common
-agent-hub-security/src/main/java/com/agenthub/security
-agent-hub-system/src/main/java/com/agenthub/system
-agent-hub-ai/src/main/java/com/agenthub/ai
-agent-hub-agent/src/main/java/com/agenthub/agent
-agent-hub-chat/src/main/java/com/agenthub/chat
-agent-hub-server/src/main/java/com/agenthub/server
-```
-
-- [ ] **Step 5: 提交 Maven 骨架**
-
-```powershell
-git add backend
-git commit -m "build: add backend maven modules"
-```
-
-## 任务 3：统一响应、错误码和全局异常基础
-
-**Files:**
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-common\src\main\java\com\agenthub\common\api\ApiResponse.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-common\src\main\java\com\agenthub\common\api\ErrorCode.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-common\src\main\java\com\agenthub\common\exception\BusinessException.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-common\src\main\java\com\agenthub\common\exception\ValidationError.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-common\src\test\java\com\agenthub\common\api\ApiResponseTest.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-common\src\test\java\com\agenthub\common\exception\BusinessExceptionTest.java`
-
-- [ ] **Step 1: 写失败测试**
-
-`ApiResponseTest.java`：
-
-```java
-package com.agenthub.common.api;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-import org.junit.jupiter.api.Test;
-
-class ApiResponseTest {
-
-    @Test
-    void successShouldUseZeroCodeAndDefaultMessage() {
-        ApiResponse<String> response = ApiResponse.success("ok-data");
-
-        assertThat(response.code()).isZero();
-        assertThat(response.message()).isEqualTo("ok");
-        assertThat(response.data()).isEqualTo("ok-data");
-    }
-
-    @Test
-    void failureShouldUseErrorCodeMessage() {
-        ApiResponse<Void> response = ApiResponse.failure(ErrorCode.UNAUTHORIZED);
-
-        assertThat(response.code()).isEqualTo(401);
-        assertThat(response.message()).isEqualTo("未登录或登录已过期");
-        assertThat(response.data()).isNull();
-    }
-}
-```
-
-`BusinessExceptionTest.java`：
-
-```java
-package com.agenthub.common.exception;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-import com.agenthub.common.api.ErrorCode;
-import org.junit.jupiter.api.Test;
-
-class BusinessExceptionTest {
-
-    @Test
-    void shouldExposeErrorCodeAndChineseMessage() {
-        BusinessException exception = new BusinessException(ErrorCode.BAD_REQUEST, "请求参数不正确");
-
-        assertThat(exception.errorCode()).isEqualTo(ErrorCode.BAD_REQUEST);
-        assertThat(exception.getMessage()).isEqualTo("请求参数不正确");
-    }
-}
-```
-
-- [ ] **Step 2: 运行红灯**
-
-Run: `cd backend; mvn -pl agent-hub-common test`
-
-Expected: FAIL，原因是 `ApiResponse`、`ErrorCode`、`BusinessException` 尚不存在。
-
-- [ ] **Step 3: 实现最小统一响应模型**
-
-`ErrorCode` 至少包含：
-
-```java
-SUCCESS(0, "ok")
-BAD_REQUEST(400, "请求参数不正确")
-UNAUTHORIZED(401, "未登录或登录已过期")
-FORBIDDEN(403, "没有访问权限")
-NOT_FOUND(404, "资源不存在")
-INTERNAL_ERROR(500, "系统繁忙，请稍后重试")
-```
-
-`ApiResponse<T>` 使用 Java record，并提供：
-
-```java
-public static <T> ApiResponse<T> success(T data)
-public static ApiResponse<Void> success()
-public static ApiResponse<Void> failure(ErrorCode errorCode)
-public static ApiResponse<Void> failure(int code, String message)
-```
-
-`BusinessException` 继承 `RuntimeException`，保存 `ErrorCode errorCode`。
-
-`ValidationError` 使用 record，字段为 `field`、`message`。
-
-- [ ] **Step 4: 运行绿灯**
-
-Run: `cd backend; mvn -pl agent-hub-common test`
-
-Expected: PASS，`ApiResponseTest` 和 `BusinessExceptionTest` 全部通过。
-
-- [ ] **Step 5: 提交统一响应基础**
-
-```powershell
-git add backend/agent-hub-common
-git commit -m "feat: add unified response model"
-```
-
-## 任务 4：JWT、安全主体和认证基础
-
-**Files:**
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-security\src\main\java\com\agenthub\security\jwt\JwtProperties.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-security\src\main\java\com\agenthub\security\jwt\JwtService.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-security\src\main\java\com\agenthub\security\principal\LoginUser.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-security\src\test\java\com\agenthub\security\jwt\JwtServiceTest.java`
-
-- [ ] **Step 1: 写失败测试**
-
-`JwtServiceTest.java`：
-
-```java
-package com.agenthub.security.jwt;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-import com.agenthub.security.principal.LoginUser;
-import java.time.Duration;
-import java.util.List;
-import org.junit.jupiter.api.Test;
-
-class JwtServiceTest {
-
-    @Test
-    void shouldCreateAndParseToken() {
-        JwtProperties properties = new JwtProperties(
-                "agent-hub-test-secret-agent-hub-test-secret",
-                Duration.ofHours(2)
-        );
-        JwtService jwtService = new JwtService(properties);
-        LoginUser loginUser = new LoginUser(
-                1L,
-                "admin",
-                List.of("ADMIN"),
-                List.of("system:user:list", "agent:manage")
-        );
-
-        String token = jwtService.createToken(loginUser);
-        LoginUser parsed = jwtService.parseToken(token);
-
-        assertThat(parsed.userId()).isEqualTo(1L);
-        assertThat(parsed.username()).isEqualTo("admin");
-        assertThat(parsed.roles()).containsExactly("ADMIN");
-        assertThat(parsed.permissions()).containsExactly("system:user:list", "agent:manage");
-    }
-}
-```
-
-- [ ] **Step 2: 运行红灯**
-
-Run: `cd backend; mvn -pl agent-hub-security -am test`
-
-Expected: FAIL，原因是 `JwtService`、`JwtProperties`、`LoginUser` 尚不存在。
-
-- [ ] **Step 3: 实现 JWT 最小能力**
-
-`LoginUser` 使用 record：
-
-```java
-public record LoginUser(Long userId, String username, List<String> roles, List<String> permissions) {}
-```
-
-`JwtProperties` 使用 record：
-
-```java
-public record JwtProperties(String secret, Duration ttl) {}
-```
-
-`JwtService` 使用 JJWT 创建和解析令牌，claims 包含 `userId`、`username`、`roles`、`permissions`，解析失败时抛出 `BusinessException(ErrorCode.UNAUTHORIZED)`。
-
-- [ ] **Step 4: 运行绿灯**
-
-Run: `cd backend; mvn -pl agent-hub-security -am test`
-
-Expected: PASS，JWT 测试通过。
-
-- [ ] **Step 5: 提交认证基础**
-
-```powershell
-git add backend/agent-hub-security
-git commit -m "feat: add jwt security foundation"
-```
-
-## 任务 5：系统模块启动数据与登录服务
-
-**Files:**
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\auth\AuthService.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\auth\LoginCommand.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\auth\LoginResult.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\auth\InMemoryAuthService.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\user\UserProfile.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\menu\MenuItem.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\test\java\com\agenthub\system\auth\InMemoryAuthServiceTest.java`
-
-- [ ] **Step 1: 写失败测试**
-
-```java
-package com.agenthub.system.auth;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-
-import com.agenthub.common.exception.BusinessException;
-import org.junit.jupiter.api.Test;
-
-class InMemoryAuthServiceTest {
-
-    @Test
-    void shouldLoginWithBootstrapAdmin() {
-        AuthService authService = new InMemoryAuthService();
-
-        LoginResult result = authService.login(new LoginCommand("admin", "admin123"));
-
-        assertThat(result.profile().username()).isEqualTo("admin");
-        assertThat(result.profile().roles()).contains("ADMIN");
-        assertThat(result.profile().permissions()).contains("system:user:list", "agent:manage");
-    }
-
-    @Test
-    void shouldRejectWrongPassword() {
-        AuthService authService = new InMemoryAuthService();
-
-        assertThatThrownBy(() -> authService.login(new LoginCommand("admin", "bad")))
-                .isInstanceOf(BusinessException.class)
-                .hasMessage("用户名或密码错误");
-    }
-}
-```
-
-- [ ] **Step 2: 运行红灯**
-
-Run: `cd backend; mvn -pl agent-hub-system -am test`
-
-Expected: FAIL，原因是系统认证类尚不存在。
-
-- [ ] **Step 3: 实现启动登录数据**
-
-`InMemoryAuthService` 提供两个启动用户：
-
-```text
-admin / admin123 / ADMIN / 全部初始管理权限
-user / user123 / USER / chat:conversation:list, chat:conversation:create
-```
-
-权限至少包含：
-
-```text
-system:user:list
-system:role:list
-system:permission:list
-system:menu:list
-ai:provider:list
-ai:model:list
-mcp:server:list
-skill:list
-agent:manage
-chat:conversation:list
-chat:conversation:create
-```
-
-- [ ] **Step 4: 运行绿灯**
-
-Run: `cd backend; mvn -pl agent-hub-system -am test`
-
-Expected: PASS，登录服务测试通过。
-
-- [ ] **Step 5: 提交系统启动数据**
-
-```powershell
-git add backend/agent-hub-system
-git commit -m "feat: add bootstrap system auth"
-```
-
-## 任务 6：AI、Agent 和 Chat 核心接口
-
-**Files:**
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-ai\src\main\java\com\agenthub\ai\llm\LlmClient.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-ai\src\main\java\com\agenthub\ai\llm\ChatRequest.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-ai\src\main\java\com\agenthub\ai\llm\ChatMessage.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-ai\src\main\java\com\agenthub\ai\llm\ChatChunk.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-ai\src\main\java\com\agenthub\ai\llm\MockLlmClient.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-agent\src\main\java\com\agenthub\agent\runtime\AgentRuntime.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-agent\src\main\java\com\agenthub\agent\runtime\RuntimeEvent.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-agent\src\main\java\com\agenthub\agent\tool\ToolRegistry.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-agent\src\main\java\com\agenthub\agent\tool\ToolLoop.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-chat\src\main\java\com\agenthub\chat\ChatStreamService.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-ai\src\test\java\com\agenthub\ai\llm\MockLlmClientTest.java`
-
-- [ ] **Step 1: 写失败测试**
-
-```java
-package com.agenthub.ai.llm;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
-import java.util.List;
-import org.junit.jupiter.api.Test;
-
-class MockLlmClientTest {
-
-    @Test
-    void shouldStreamDeterministicChunks() {
-        LlmClient client = new MockLlmClient();
-        ChatRequest request = new ChatRequest(
-                "mock",
-                List.of(new ChatMessage("user", "你好"))
-        );
-
-        List<ChatChunk> chunks = client.stream(request).collectList().block();
-
-        assertThat(chunks).isNotEmpty();
-        assertThat(chunks.stream().map(ChatChunk::content).toList())
-                .contains("你好，我是 Agent Hub 的模拟助手。");
-    }
-}
-```
-
-- [ ] **Step 2: 运行红灯**
-
-Run: `cd backend; mvn -pl agent-hub-ai -am test`
-
-Expected: FAIL，原因是 LLM Client 类尚不存在。
-
-- [ ] **Step 3: 实现自研 LLM Client 最小接口**
-
-`LlmClient`：
-
-```java
-public interface LlmClient {
-    ChatMessage complete(ChatRequest request);
-    reactor.core.publisher.Flux<ChatChunk> stream(ChatRequest request);
-}
-```
-
-`ChatRequest`、`ChatMessage`、`ChatChunk` 都使用 record。
-
-`MockLlmClient.stream` 返回确定性片段，至少包含：
-
-```text
-你好，我是 Agent Hub 的模拟助手。
-当前响应来自自研 LLM Client 抽象。
-```
-
-- [ ] **Step 4: 实现 Agent 和 Chat 接口骨架**
-
-创建 `AgentRuntime`、`RuntimeEvent`、`ToolRegistry`、`ToolLoop`、`ChatStreamService`，只定义清晰接口和最小默认实现，不定义 SSE 事件协议。
-
-- [ ] **Step 5: 运行绿灯**
-
-Run: `cd backend; mvn -pl agent-hub-ai,agent-hub-agent,agent-hub-chat -am test`
-
-Expected: PASS，AI、Agent、Chat 模块测试通过。
-
-- [ ] **Step 6: 提交 AI/Agent/Chat 接口**
-
-```powershell
-git add backend/agent-hub-ai backend/agent-hub-agent backend/agent-hub-chat
-git commit -m "feat: add ai agent chat contracts"
-```
-
-## 任务 7：后端启动模块、Controller 和全局异常处理
-
-**Files:**
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\java\com\agenthub\server\AgentHubApplication.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\java\com\agenthub\server\config\SecurityConfig.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\java\com\agenthub\server\exception\GlobalExceptionHandler.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\java\com\agenthub\server\auth\AuthController.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\java\com\agenthub\server\system\SystemController.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\java\com\agenthub\server\ai\AiController.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\java\com\agenthub\server\agent\AgentController.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\java\com\agenthub\server\chat\ChatController.java`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\resources\application.yml`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\test\java\com\agenthub\server\exception\GlobalExceptionHandlerTest.java`
-
-- [ ] **Step 1: 写失败测试**
-
-`GlobalExceptionHandlerTest.java` 使用 `@WebMvcTest` 验证业务异常统一响应：
-
-```java
-package com.agenthub.server.exception;
-
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-import com.agenthub.common.api.ErrorCode;
-import com.agenthub.common.exception.BusinessException;
-import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.context.annotation.Import;
-import org.springframework.stereotype.Controller;
-import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.ResponseBody;
-
-@WebMvcTest(controllers = GlobalExceptionHandlerTest.TestController.class)
-@Import(GlobalExceptionHandler.class)
-class GlobalExceptionHandlerTest {
-
-    private final MockMvc mockMvc;
-
-    GlobalExceptionHandlerTest(MockMvc mockMvc) {
-        this.mockMvc = mockMvc;
-    }
-
-    @Test
-    void shouldConvertBusinessExceptionToUnifiedResponse() throws Exception {
-        mockMvc.perform(get("/test/business-error"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value(400))
-                .andExpect(jsonPath("$.message").value("请求参数不正确"));
-    }
-
-    @Controller
-    static class TestController {
-        @GetMapping("/test/business-error")
-        @ResponseBody
-        String businessError() {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "请求参数不正确");
-        }
-    }
-}
-```
-
-- [ ] **Step 2: 运行红灯**
-
-Run: `cd backend; mvn -pl agent-hub-server -am test`
-
-Expected: FAIL，原因是启动模块和异常处理类尚不存在。
-
-- [ ] **Step 3: 实现启动入口和统一异常处理**
-
-`AgentHubApplication` 使用 `@SpringBootApplication(scanBasePackages = "com.agenthub")`。
-
-`GlobalExceptionHandler` 使用 `@RestControllerAdvice`，处理：
-
-```text
-BusinessException -> 对应错误码 HTTP 状态和 ApiResponse.failure
-MethodArgumentNotValidException -> 400 和中文校验提示
-AuthenticationException -> 401
-AccessDeniedException -> 403
-Exception -> 500
-```
-
-- [ ] **Step 4: 实现基础 Controller**
-
-Controller 全部返回 `ApiResponse<T>`。初始接口：
-
-```text
-POST /api/auth/login
-GET /api/auth/me
-GET /api/system/users
-GET /api/system/roles
-GET /api/system/permissions
-GET /api/system/menus
-GET /api/ai/providers
-GET /api/ai/models
-GET /api/mcp/servers
-GET /api/skills
-GET /api/agents
-GET /api/chat/conversations
-GET /api/chat/stream
-```
-
-`/api/chat/stream` 使用框架提供的 SSE 输出能力返回模拟流，不定义自定义事件类型和事件内容结构。
-
-- [ ] **Step 5: 运行绿灯**
-
-Run: `cd backend; mvn test`
-
-Expected: PASS，后端所有模块测试通过。
-
-- [ ] **Step 6: 提交后端启动模块**
-
-```powershell
-git add backend/agent-hub-server
-git commit -m "feat: add backend server module"
-```
-
-## 任务 8：管理端前端骨架
-
-**Files:**
-- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\package.json`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\index.html`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\vite.config.ts`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\tsconfig.json`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\main.ts`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\App.vue`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\router\index.ts`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\stores\auth.ts`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\api\http.ts`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\api\auth.ts`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\layouts\AdminLayout.vue`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\views\LoginView.vue`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\views\DashboardView.vue`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\views\ModuleTableView.vue`
-
-- [ ] **Step 1: 创建 package 和 TypeScript 配置**
-
-`package.json` scripts：
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\admin-web\package.json`
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\App.vue`
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\main.ts`
+- Delete: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\layouts\AdminLayout.vue`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\components\layout\AppLayout.vue`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\components\layout\HeaderBar.vue`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\components\layout\SidebarMenu.vue`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\components\layout\TabBar.vue`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\styles\theme.ts`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\styles\global.css`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\constants\icons.ts`
+
+- [ ] **Step 1: 补齐布局所需依赖并写出红灯**
+
+把 `admin-web/package.json` 的依赖补到以下最小集合：
 
 ```json
 {
-  "scripts": {
-    "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
-    "type-check": "vue-tsc --noEmit"
+  "dependencies": {
+    "@vicons/ionicons5": "^0.13.0",
+    "axios": "^1.9.0",
+    "naive-ui": "^2.40.1",
+    "pinia": "^3.0.2",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.1"
   }
 }
 ```
 
-依赖包含 `@vitejs/plugin-vue`、`vite`、`typescript`、`vue-tsc`、`vue`、`vue-router`、`pinia`、`axios`、`naive-ui`。
-
-- [ ] **Step 2: 写前端红灯**
-
-先创建 `src/router/index.ts`，引用尚未创建的页面：
+将 `src/main.ts` 改为先引入不存在的主题文件：
 
 ```ts
-import LoginView from '../views/LoginView.vue'
-import DashboardView from '../views/DashboardView.vue'
-import ModuleTableView from '../views/ModuleTableView.vue'
+import './styles/global.css'
 ```
 
-Run: `cd admin-web; npm install; npm run type-check`
+Run: `cd C:\Users\Orange\Documents\Agent-Hub\admin-web; npm install; npm run type-check`
 
-Expected: FAIL，原因是 `*.vue` 页面文件尚不存在。
+Expected: FAIL，报错找不到 `./styles/global.css` 或新的布局组件文件。
 
-- [ ] **Step 3: 实现管理端页面骨架**
+- [ ] **Step 2: 实现主题入口与应用根组件**
 
-创建登录页、主布局、仪表盘和通用表格模块页。路由覆盖：
+`src/App.vue` 调整为：
 
-```text
-/login
-/
-/system/users
-/system/roles
-/system/permissions
-/system/menus
-/ai/providers
-/ai/models
-/mcp/servers
-/skills
-/agents
+```vue
+<template>
+  <n-config-provider :theme-overrides="glacierLightTheme">
+    <n-global-style />
+    <router-view />
+  </n-config-provider>
+</template>
+
+<script setup lang="ts">
+import { NConfigProvider, NGlobalStyle } from 'naive-ui'
+import { glacierLightTheme } from './styles/theme'
+</script>
 ```
 
-页面文案使用中文，按钮使用 Naive UI 组件，布局保持企业后台风格。
-
-- [ ] **Step 4: 运行绿灯**
-
-Run: `cd admin-web; npm run type-check; npm run build`
-
-Expected: PASS，管理端类型检查和构建通过。
-
-- [ ] **Step 5: 提交管理端骨架**
-
-```powershell
-git add admin-web
-git commit -m "feat: add admin web skeleton"
-```
-
-## 任务 9：用户端前端骨架
-
-**Files:**
-- Create: `C:\Users\Orange\Documents\Agent-Hub\user-web\package.json`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\user-web\index.html`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\user-web\vite.config.ts`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\user-web\tsconfig.json`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\user-web\src\main.ts`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\user-web\src\App.vue`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\user-web\src\router\index.ts`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\user-web\src\stores\auth.ts`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\user-web\src\api\http.ts`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\user-web\src\api\chat.ts`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\user-web\src\layouts\UserLayout.vue`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\user-web\src\views\LoginView.vue`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\user-web\src\views\HomeView.vue`
-- Create: `C:\Users\Orange\Documents\Agent-Hub\user-web\src\views\ChatView.vue`
-
-- [ ] **Step 1: 创建 package 和 TypeScript 配置**
-
-与 `admin-web` 保持一致，但应用名称为 `agent-hub-user-web`。
-
-- [ ] **Step 2: 写前端红灯**
-
-先创建 `src/api/chat.ts`，导出：
+`src/styles/theme.ts` 至少导出：
 
 ```ts
-export function openChatStream(prompt: string, token: string): EventSource {
-  const url = new URL('/api/chat/stream', window.location.origin)
-  url.searchParams.set('prompt', prompt)
-  url.searchParams.set('token', token)
-  return new EventSource(url)
+import type { GlobalThemeOverrides } from 'naive-ui'
+
+export const glacierLightTheme: GlobalThemeOverrides = {
+  common: {
+    primaryColor: '#2563eb',
+    primaryColorHover: '#1d4ed8',
+    primaryColorPressed: '#1e40af',
+    borderRadius: '8px',
+    fontWeightStrong: '600'
+  },
+  Layout: {
+    color: '#f5f7fb',
+    siderColor: '#ffffff',
+    headerColor: '#ffffff'
+  }
 }
 ```
 
-再创建 `ChatView.vue` 引用 `openChatStream`，但先不创建 `src/api/chat.ts` 的依赖类型辅助。
+`src/styles/global.css` 至少定义：
 
-Run: `cd user-web; npm install; npm run type-check`
+```css
+:root {
+  --color-bg: #f5f7fb;
+  --color-card: #ffffff;
+  --color-border: #e5e7eb;
+  --color-text: #1f2937;
+  --color-text-2: #6b7280;
+}
 
-Expected: FAIL，原因是聊天页面引用的类型或页面文件尚未补齐。
+html,
+body,
+#app {
+  margin: 0;
+  min-height: 100%;
+  background: var(--color-bg);
+}
 
-- [ ] **Step 3: 实现用户端页面骨架**
-
-创建登录页、首页、聊天页和用户布局。聊天页包含：
-
-```text
-会话列表区域
-消息列表区域
-输入框
-发送按钮
-SSE 连接封装调用
+body {
+  color: var(--color-text);
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
 ```
 
-聊天页只处理默认消息追加，不定义自定义 SSE 事件类型、事件协议和流内错误事件格式。
+- [ ] **Step 3: 实现后台壳子布局组件**
+
+`src/components/layout/AppLayout.vue` 采用 `NLayout` 结构，内容至少包含：
+
+```vue
+<template>
+  <n-layout has-sider class="app-layout">
+    <n-layout-sider :width="220" bordered collapse-mode="width">
+      <SidebarMenu />
+    </n-layout-sider>
+    <n-layout>
+      <HeaderBar />
+      <TabBar />
+      <n-layout-content content-style="padding: 16px;">
+        <router-view />
+      </n-layout-content>
+    </n-layout>
+  </n-layout>
+</template>
+```
+
+`HeaderBar.vue` 至少包含面包屑和用户下拉；`SidebarMenu.vue` 先使用空菜单 store 占位；`TabBar.vue` 先使用空 tabs store 占位。组件注释和文案全部使用中文。
 
 - [ ] **Step 4: 运行绿灯**
 
-Run: `cd user-web; npm run type-check; npm run build`
+Run: `cd C:\Users\Orange\Documents\Agent-Hub\admin-web; npm run type-check`
 
-Expected: PASS，用户端类型检查和构建通过。
+Expected: PASS，说明主题、布局和基础依赖已经接好。
 
-- [ ] **Step 5: 提交用户端骨架**
+- [ ] **Step 5: 提交后台壳子**
 
 ```powershell
-git add user-web
-git commit -m "feat: add user web skeleton"
+git add admin-web/package.json admin-web/src/App.vue admin-web/src/main.ts admin-web/src/components admin-web/src/styles admin-web/src/constants
+git commit -m "feat: align admin layout shell"
 ```
 
-## 任务 10：最终联调与文档校验
+## 任务 2：重做 `admin-web` 路由、认证与动态菜单状态
 
 **Files:**
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\router\index.ts`
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\router\route-meta.d.ts`
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\stores\auth.ts`
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\api\auth.ts`
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\api\http.ts`
+- Delete: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\config\module-routes.ts`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\api\menu.ts`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\stores\menu.ts`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\stores\tabs.ts`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\types\auth.ts`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\types\menu.ts`
+
+- [ ] **Step 1: 先写路由与 store 红灯**
+
+将 `src/router/index.ts` 改为引用尚未创建的组件与 store：
+
+```ts
+import AppLayout from '../components/layout/AppLayout.vue'
+import { useMenuStore } from '../stores/menu'
+import { useTabsStore } from '../stores/tabs'
+```
+
+声明路由：
+
+```ts
+{
+  path: '/',
+  component: AppLayout,
+  redirect: '/dashboard',
+  children: [
+    { path: 'dashboard', component: () => import('../views/dashboard/index.vue') },
+    { path: 'system/users', component: () => import('../views/system/users.vue') },
+    { path: 'system/roles', component: () => import('../views/system/roles.vue') },
+    { path: 'system/menus', component: () => import('../views/system/menus.vue') }
+  ]
+}
+```
+
+Run: `cd C:\Users\Orange\Documents\Agent-Hub\admin-web; npm run type-check`
+
+Expected: FAIL，报错缺少 `menu.ts`、`tabs.ts`、新页面或新类型文件。
+
+- [ ] **Step 2: 实现认证与 API 基础类型**
+
+`src/types/auth.ts` 至少定义：
+
+```ts
+export interface LoginPayload {
+  username: string
+  password: string
+}
+
+export interface LoginUserInfo {
+  userId: number
+  username: string
+  nickname: string
+  roles: string[]
+  permissions: string[]
+}
+
+export interface LoginResult {
+  token: string
+  userInfo: LoginUserInfo
+}
+```
+
+`src/api/http.ts` 统一处理 token 注入和 401 跳转，`src/api/auth.ts` 提供：
+
+```ts
+export function login(payload: LoginPayload)
+export function getCurrentUser()
+```
+
+`src/stores/auth.ts` 至少暴露：
+
+```ts
+token
+userInfo
+isAuthenticated
+loginAction
+logout
+restoreSession
+```
+
+- [ ] **Step 3: 实现动态菜单与标签页 store**
+
+`src/types/menu.ts` 至少定义：
+
+```ts
+export interface MenuItem {
+  id: number
+  parentId: number | null
+  name: string
+  title: string
+  path: string
+  component?: string
+  icon?: string
+  permission?: string
+  sort: number
+  visible: boolean
+  children?: MenuItem[]
+}
+```
+
+`src/api/menu.ts` 提供：
+
+```ts
+export function getMenuTree()
+export function getCurrentUserMenus()
+```
+
+`src/stores/menu.ts` 至少暴露：
+
+```ts
+menus
+menuOptions
+fetchCurrentUserMenus
+clearMenus
+```
+
+`src/stores/tabs.ts` 至少暴露：
+
+```ts
+tabs
+activeTab
+addTab
+removeTab
+setActiveTab
+resetTabs
+```
+
+- [ ] **Step 4: 路由守卫接入登录态、菜单和标签页**
+
+在 `src/router/index.ts` 中补充守卫逻辑：
+
+```ts
+router.beforeEach(async (to) => {
+  const authStore = useAuthStore()
+  const menuStore = useMenuStore()
+
+  if (to.path === '/login') {
+    return true
+  }
+
+  authStore.restoreSession()
+  if (!authStore.isAuthenticated) {
+    return { path: '/login', query: { redirect: to.fullPath } }
+  }
+
+  if (!menuStore.menus.length) {
+    await menuStore.fetchCurrentUserMenus()
+  }
+
+  return true
+})
+```
+
+在 `afterEach` 中写入 tabs store。
+
+- [ ] **Step 5: 运行绿灯**
+
+Run: `cd C:\Users\Orange\Documents\Agent-Hub\admin-web; npm run type-check`
+
+Expected: PASS，说明路由、认证、菜单和标签页基础状态已连通。
+
+- [ ] **Step 6: 提交路由与状态管理**
+
+```powershell
+git add admin-web/src/router admin-web/src/stores admin-web/src/api admin-web/src/types
+git commit -m "feat: add admin auth menu and tabs state"
+```
+
+## 任务 3：实现 `admin-web` 登录页、工作台与 RBAC 页面
+
+**Files:**
+- Delete: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\views\LoginView.vue`
+- Delete: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\views\DashboardView.vue`
+- Delete: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\views\ModuleTableView.vue`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\api\user.ts`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\api\role.ts`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\types\user.ts`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\types\role.ts`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\views\login\index.vue`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\views\dashboard\index.vue`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\views\system\users.vue`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\views\system\roles.vue`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\admin-web\src\views\system\menus.vue`
+
+- [ ] **Step 1: 写页面红灯**
+
+先在 `router/index.ts` 中把旧页面引用全部换成新路径：
+
+```ts
+() => import('../views/login/index.vue')
+() => import('../views/dashboard/index.vue')
+() => import('../views/system/users.vue')
+() => import('../views/system/roles.vue')
+() => import('../views/system/menus.vue')
+```
+
+Run: `cd C:\Users\Orange\Documents\Agent-Hub\admin-web; npm run type-check`
+
+Expected: FAIL，报错找不到这些新页面文件。
+
+- [ ] **Step 2: 实现登录页与工作台**
+
+`src/views/login/index.vue` 使用卡片式登录表单，字段为“用户名”“密码”，调用 `authStore.loginAction`。  
+`src/views/dashboard/index.vue` 使用简洁工作台，至少展示欢迎语、当前用户角色和三个统计卡片。
+
+登录页提交核心逻辑至少包含：
+
+```ts
+const handleLogin = async () => {
+  await authStore.loginAction(formValue)
+  router.push((route.query.redirect as string) || '/dashboard')
+}
+```
+
+- [ ] **Step 3: 实现用户管理与角色管理页面**
+
+`src/types/user.ts` 至少定义列表项、表单项和状态字段；`src/api/user.ts` 提供：
+
+```ts
+export function getUserPage()
+export function createUser(payload: UserForm)
+export function updateUser(userId: number, payload: UserForm)
+export function deleteUser(userId: number)
+export function updateUserStatus(userId: number, enabled: boolean)
+```
+
+`src/views/system/users.vue` 采用：
+
+```text
+查询表单
+新增按钮
+NDataTable
+编辑弹窗
+角色选择
+状态开关
+```
+
+`src/api/role.ts` 提供列表、创建、更新、删除、菜单绑定接口；`src/views/system/roles.vue` 采用与用户页一致的组织方式。
+
+- [ ] **Step 4: 实现菜单管理页面**
+
+`src/views/system/menus.vue` 使用树表或树列表组织，至少支持：
+
+```text
+显示菜单树
+新增同级菜单
+新增子菜单
+编辑菜单
+删除菜单
+调整排序值
+```
+
+页面调用 `menu.ts` 中补充的以下函数：
+
+```ts
+getMenuTree
+createMenu
+updateMenu
+deleteMenu
+updateMenuOrder
+```
+
+- [ ] **Step 5: 运行绿灯**
+
+Run: `cd C:\Users\Orange\Documents\Agent-Hub\admin-web; npm run type-check; npm run build`
+
+Expected: PASS，说明主要页面都已经可编译构建。
+
+- [ ] **Step 6: 提交 RBAC 页面**
+
+```powershell
+git add admin-web/src/views admin-web/src/api admin-web/src/types
+git commit -m "feat: add admin rbac management pages"
+```
+
+## 任务 4：补强 `backend` 的 RBAC 领域模型与内存服务
+
+**Files:**
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\menu\MenuItem.java`
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\role\RoleItem.java`
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\user\UserProfile.java`
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\auth\InMemoryAuthService.java`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\menu\MenuCommand.java`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\menu\MenuService.java`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\menu\InMemoryMenuService.java`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\role\RoleCommand.java`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\role\RoleService.java`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\role\InMemoryRoleService.java`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\user\UserCommand.java`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\user\UserService.java`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\main\java\com\agenthub\system\user\InMemoryUserService.java`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\test\java\com\agenthub\system\menu\InMemoryMenuServiceTest.java`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\test\java\com\agenthub\system\role\InMemoryRoleServiceTest.java`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-system\src\test\java\com\agenthub\system\user\InMemoryUserServiceTest.java`
+
+- [ ] **Step 1: 先写内存服务测试**
+
+`InMemoryMenuServiceTest.java` 至少覆盖：
+
+```java
+@Test
+void shouldReturnCurrentUserMenusByPermissions()
+
+@Test
+void shouldCreateAndUpdateMenu()
+```
+
+`InMemoryRoleServiceTest.java` 至少覆盖：
+
+```java
+@Test
+void shouldListRolesAndBindMenus()
+```
+
+`InMemoryUserServiceTest.java` 至少覆盖：
+
+```java
+@Test
+void shouldCreateUpdateAndDisableUser()
+```
+
+Run: `cd C:\Users\Orange\Documents\Agent-Hub\backend; mvn -pl agent-hub-system -am test`
+
+Expected: FAIL，报错缺少新的服务、命令对象或方法。
+
+- [ ] **Step 2: 扩展领域对象与命令模型**
+
+把 `UserProfile`、`RoleItem`、`MenuItem` 扩展为能支撑页面展示和编辑的字段，至少包含：
+
+```text
+UserProfile: userId, username, nickname, enabled, roles, permissions
+RoleItem: roleId, roleCode, roleName, enabled, menuIds
+MenuItem: id, parentId, name, title, path, component, icon, permission, sort, visible, children
+```
+
+新增 `UserCommand`、`RoleCommand`、`MenuCommand` 作为创建/更新命令对象。
+
+- [ ] **Step 3: 实现用户、角色、菜单内存服务**
+
+`UserService` 至少定义：
+
+```java
+List<UserProfile> listUsers();
+UserProfile createUser(UserCommand command);
+UserProfile updateUser(Long userId, UserCommand command);
+void deleteUser(Long userId);
+UserProfile updateUserStatus(Long userId, boolean enabled);
+```
+
+`RoleService` 至少定义：
+
+```java
+List<RoleItem> listRoles();
+RoleItem createRole(RoleCommand command);
+RoleItem updateRole(Long roleId, RoleCommand command);
+void deleteRole(Long roleId);
+RoleItem bindMenus(Long roleId, List<Long> menuIds);
+```
+
+`MenuService` 至少定义：
+
+```java
+List<MenuItem> getMenuTree();
+List<MenuItem> getCurrentUserMenus(Long userId, List<String> permissions);
+MenuItem createMenu(MenuCommand command);
+MenuItem updateMenu(Long menuId, MenuCommand command);
+void deleteMenu(Long menuId);
+void updateMenuOrder(List<Long> orderedIds);
+```
+
+- [ ] **Step 4: 让认证服务与 RBAC 数据联动**
+
+修改 `InMemoryAuthService`，登录成功后返回的 `permissions` 和 `roles` 要与新 `UserService / RoleService / MenuService` 的初始化数据保持一致，至少保证管理员能看到全部 RBAC 菜单。
+
+- [ ] **Step 5: 运行绿灯**
+
+Run: `cd C:\Users\Orange\Documents\Agent-Hub\backend; mvn -pl agent-hub-system -am test`
+
+Expected: PASS，系统模块测试通过。
+
+- [ ] **Step 6: 提交系统服务补强**
+
+```powershell
+git add backend/agent-hub-system
+git commit -m "feat: add rbac in-memory services"
+```
+
+## 任务 5：补齐 `backend` 的 RBAC 控制器、安全配置与接口测试
+
+**Files:**
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\java\com\agenthub\server\config\AppBeans.java`
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\java\com\agenthub\server\config\SecurityConfig.java`
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\java\com\agenthub\server\auth\AuthController.java`
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\java\com\agenthub\server\system\SystemController.java`
+- Modify: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\resources\application.yml`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\java\com\agenthub\server\system\UserRequest.java`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\java\com\agenthub\server\system\RoleRequest.java`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\main\java\com\agenthub\server\system\MenuRequest.java`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\backend\agent-hub-server\src\test\java\com\agenthub\server\system\SystemControllerTest.java`
+
+- [ ] **Step 1: 先写接口红灯测试**
+
+`SystemControllerTest.java` 至少覆盖：
+
+```java
+@Test
+void shouldReturnCurrentUserMenus()
+
+@Test
+void shouldCreateUser()
+
+@Test
+void shouldBindRoleMenus()
+```
+
+测试方式使用 `MockMvcBuilders.standaloneSetup(...)`，接入 `GlobalExceptionHandler`，避免依赖完整切片环境。
+
+Run: `cd C:\Users\Orange\Documents\Agent-Hub\backend; mvn -pl agent-hub-server -am test`
+
+Expected: FAIL，报错控制器方法、请求对象或 bean 不存在。
+
+- [ ] **Step 2: 注册新的系统服务 Bean**
+
+在 `AppBeans.java` 中补充：
+
+```java
+@Bean
+UserService userService()
+
+@Bean
+RoleService roleService()
+
+@Bean
+MenuService menuService()
+```
+
+确保 `AuthService` 和其他现有 bean 不被破坏。
+
+- [ ] **Step 3: 扩展认证与系统接口**
+
+`AuthController` 保持：
+
+```text
+POST /api/auth/login
+GET /api/auth/me
+```
+
+`SystemController` 至少补成：
+
+```text
+GET /api/system/users
+POST /api/system/users
+PUT /api/system/users/{userId}
+DELETE /api/system/users/{userId}
+PATCH /api/system/users/{userId}/status
+GET /api/system/roles
+POST /api/system/roles
+PUT /api/system/roles/{roleId}
+DELETE /api/system/roles/{roleId}
+PUT /api/system/roles/{roleId}/menus
+GET /api/system/menus/tree
+GET /api/system/menus/current
+POST /api/system/menus
+PUT /api/system/menus/{menuId}
+DELETE /api/system/menus/{menuId}
+PUT /api/system/menus/order
+```
+
+所有返回值继续使用 `ApiResponse`。
+
+- [ ] **Step 4: 调整安全放行与鉴权**
+
+`SecurityConfig.java` 至少确保：
+
+```text
+/api/auth/login 允许匿名访问
+/api/** 默认需要认证
+```
+
+保留 JWT 解析逻辑，普通 RBAC 接口只要求已登录即可；更细的权限字符串校验后续再增强。
+
+- [ ] **Step 5: 运行绿灯**
+
+Run: `cd C:\Users\Orange\Documents\Agent-Hub\backend; mvn test`
+
+Expected: PASS，后端所有测试通过。
+
+- [ ] **Step 6: 提交后端接口闭环**
+
+```powershell
+git add backend/agent-hub-server
+git commit -m "feat: add backend rbac api endpoints"
+```
+
+## 任务 6：新增 `docker/` 依赖服务目录与项目文档
+
+**Files:**
+- Create: `C:\Users\Orange\Documents\Agent-Hub\docker\docker-compose.yml`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\docker\env\postgres.env`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\docker\env\redis.env`
+- Create: `C:\Users\Orange\Documents\Agent-Hub\docker\README.md`
 - Modify: `C:\Users\Orange\Documents\Agent-Hub\README.md`
+
+- [ ] **Step 1: 写 docker 目录红灯**
+
+先在根目录 `README.md` 中引用不存在的目录：
+
+```md
+依赖服务部署说明见 `docker/README.md`。
+```
+
+Run: `cd C:\Users\Orange\Documents\Agent-Hub; Test-Path docker\README.md`
+
+Expected: `False`
+
+- [ ] **Step 2: 创建依赖服务 compose 文件**
+
+`docker/docker-compose.yml` 至少包含：
+
+```yaml
+services:
+  postgres:
+    image: postgres:16
+    env_file:
+      - ./env/postgres.env
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+  redis:
+    image: redis:7
+    env_file:
+      - ./env/redis.env
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+
+volumes:
+  postgres-data:
+  redis-data:
+```
+
+- [ ] **Step 3: 创建环境变量文件和中文说明**
+
+`docker/env/postgres.env` 至少包含：
+
+```env
+POSTGRES_DB=agent_hub
+POSTGRES_USER=agent_hub
+POSTGRES_PASSWORD=agent_hub123456
+```
+
+`docker/env/redis.env` 可以仅包含注释或最小配置说明。  
+`docker/README.md` 用中文说明如何在服务器执行：
+
+```powershell
+docker compose up -d
+docker compose ps
+```
+
+并列出默认端口、账号和数据卷。
+
+- [ ] **Step 4: 更新根 README**
+
+根目录 `README.md` 至少补充：
+
+```md
+## 依赖服务
+
+项目根目录提供 `docker/` 目录，用于部署 PostgreSQL 和 Redis。
+```
+
+- [ ] **Step 5: 运行绿灯**
+
+Run: `cd C:\Users\Orange\Documents\Agent-Hub\docker; docker compose config`
+
+Expected: PASS，输出规范化后的 compose 配置。
+
+- [ ] **Step 6: 提交 docker 目录**
+
+```powershell
+git add docker README.md
+git commit -m "chore: add dependency docker deployment"
+```
+
+## 任务 7：最终联调、构建验证与展示入口
+
+**Files:**
 - Modify: `C:\Users\Orange\Documents\Agent-Hub\docs\superpowers\plans\2026-05-29-agent-platform-initialization.md`
 
-- [ ] **Step 1: 后端完整验证**
+- [ ] **Step 1: 验证后端测试**
 
 Run:
 
 ```powershell
-cd backend
+$env:JAVA_HOME='C:\Program Files\Java\jdk-21.0.11'
+$env:MAVEN_HOME='D:\Program Files\apache-maven-3.9.16'
+$env:PATH="$env:JAVA_HOME\bin;$env:MAVEN_HOME\bin;$env:PATH"
+cd C:\Users\Orange\Documents\Agent-Hub\backend
 mvn test
 ```
 
 Expected: PASS，全部 Maven 模块测试通过。
 
-- [ ] **Step 2: 管理端完整验证**
+- [ ] **Step 2: 验证管理端构建**
 
 Run:
 
 ```powershell
-cd admin-web
+cd C:\Users\Orange\Documents\Agent-Hub\admin-web
 npm run type-check
 npm run build
 ```
 
-Expected: PASS，管理端类型检查和构建通过。
+Expected: PASS，管理端类型检查与构建通过。
 
-- [ ] **Step 3: 用户端完整验证**
-
-Run:
-
-```powershell
-cd user-web
-npm run type-check
-npm run build
-```
-
-Expected: PASS，用户端类型检查和构建通过。
-
-- [ ] **Step 4: 文档语言和范围检查**
+- [ ] **Step 3: 启动管理端开发服务**
 
 Run:
 
 ```powershell
-rg -n "待补充|稍后实现|未完成|补齐|错误事件|事件协议|流内错误" AGENTS.md README.md docs
+cd C:\Users\Orange\Documents\Agent-Hub\admin-web
+npm run dev -- --host 127.0.0.1 --port 5173
 ```
 
-Expected: 只允许出现“后续单独设计”或“不纳入本次初始化设计”的 SSE 排除说明，不允许出现未完成实现标记。
+Expected: 出现 `http://127.0.0.1:5173` 可访问提示。
 
-- [ ] **Step 5: 提交最终初始化结果**
+- [ ] **Step 4: 启动后端应用**
+
+Run:
+
+```powershell
+$env:JAVA_HOME='C:\Program Files\Java\jdk-21.0.11'
+$env:MAVEN_HOME='D:\Program Files\apache-maven-3.9.16'
+$env:PATH="$env:JAVA_HOME\bin;$env:MAVEN_HOME\bin;$env:PATH"
+cd C:\Users\Orange\Documents\Agent-Hub\backend
+mvn -pl agent-hub-server spring-boot:run
+```
+
+Expected: 后端启动成功，默认监听本地 HTTP 端口。
+
+- [ ] **Step 5: 手工联调检查**
+
+检查以下结果：
+
+```text
+登录成功
+顶部、侧边栏、标签页正常显示
+当前用户菜单可加载
+用户、角色、菜单页面可打开并返回数据
+菜单变更后可重新加载
+```
+
+- [ ] **Step 6: 提交最终交付**
 
 ```powershell
 git add .
-git commit -m "feat: initialize agent hub platform"
+git commit -m "feat: deliver rbac admin alignment"
 ```
 
 ## 自查结果
 
 规格覆盖：
 
-- 管理端 `admin-web`：任务 8 覆盖。
-- 用户端 `user-web`：任务 9 覆盖。
-- 后端 Maven 多模块：任务 2 覆盖。
-- JWT、Spring Security 和登录认证：任务 4、任务 5、任务 7 覆盖。
-- 全局异常和统一响应：任务 3、任务 7 覆盖。
-- AI 供应商、模型、MCP、Skill、Agent 管理接口入口：任务 7 覆盖。
-- 自研 LLM Client、Agent Runtime、Tool Loop：任务 6 覆盖。
-- 会话和 SSE 流式聊天入口：任务 6、任务 7、任务 9 覆盖。
-- SSE 事件协议不纳入当前设计：范围检查、任务 7、任务 9、任务 10 均明确排除。
+- `admin-web` 页面与布局对齐：任务 1、任务 2、任务 3 覆盖。
+- RBAC 页面范围：任务 3 覆盖。
+- 后端 RBAC 与动态菜单：任务 4、任务 5 覆盖。
+- Docker 依赖服务目录：任务 6 覆盖。
+- 统一响应、全局异常、JWT：任务 4、任务 5 依托现有结构补强。
+- 最终联调与可交付验证：任务 7 覆盖。
 
-未完成标记扫描：
+占位符检查：
 
-- 本计划未使用常见未完成标记作为实现任务。
-- “后续单独设计”仅用于明确排除 SSE 事件协议，符合当前用户要求。
+- 本计划未使用 `TODO`、`TBD`、`稍后实现` 作为执行步骤。
+- 唯一延期内容是 SSE 事件协议，其已在规格中明确排除，不是计划缺项。
 
 类型一致性：
 
-- 统一响应类固定为 `ApiResponse`。
-- 错误码类固定为 `ErrorCode`。
-- 业务异常固定为 `BusinessException`。
-- JWT 服务固定为 `JwtService`。
-- 登录主体固定为 `LoginUser`。
-- LLM 接口固定为 `LlmClient`、`ChatRequest`、`ChatMessage`、`ChatChunk`。
+- 前端菜单类型固定为 `MenuItem`。
+- 前端认证结果固定为 `LoginResult`。
+- 后端用户、角色、菜单命令对象固定为 `UserCommand`、`RoleCommand`、`MenuCommand`。
+- 后端服务接口固定为 `UserService`、`RoleService`、`MenuService`。

@@ -1,22 +1,22 @@
-# Agent Platform Project Initialization Design
+# Agent 平台项目初始化设计
 
-## Goal
+## 目标
 
-Initialize a monorepo for an enterprise AI Agent platform with two Vue 3 frontends and one Spring Boot 4 / JDK 21 Maven multi-module backend. The initial implementation must be runnable, compile cleanly, and provide a foundation for RBAC, JWT authentication, AI provider/model management, MCP/Skill/Agent management, conversation management, SSE streaming chat, a self-owned LLM client abstraction, Agent Runtime, and Tool Loop.
+初始化一个企业级 AI Agent 平台单仓库项目。项目包含两个 Vue 3 前端和一个 Spring Boot 4 / JDK 21 / Maven 多模块后端。初始化结果必须具备可运行、可编译、边界清晰的基础形态，并为 RBAC、JWT 登录认证、AI 供应商管理、AI 模型管理、MCP 管理、Skill 库管理、Agent 管理、会话管理、SSE 流式聊天、自研 LLM Client、自研 Agent Runtime 和自研 Tool Loop 预留稳定扩展点。
 
-## Scope
+## 范围
 
-This initialization creates a production-shaped skeleton and a minimal end-to-end runtime path:
+本次初始化交付“企业级骨架 + 最小可运行闭环”：
 
-- `admin-web`: management console skeleton for login, layout, system management, AI management, MCP, Skill, and Agent modules.
-- `user-web`: user console skeleton for login, conversation list, and SSE streaming chat.
-- `backend`: Maven multi-module Java backend with clear module boundaries, security foundation, basic domain APIs, and a simulated streaming chat path.
+- `admin-web`：管理端前端，包含登录、主布局、系统管理、AI 管理、MCP、Skill 和 Agent 模块页面。
+- `user-web`：用户端前端，包含登录、会话列表和 SSE 流式聊天页面。
+- `backend`：Java 后端，采用 Maven 多模块结构，包含安全认证基础、核心领域模块、基础接口和模拟流式聊天链路。
 
-The first version intentionally avoids full business CRUD depth and avoids external LLM provider integration. Those will be added module by module after the platform baseline is stable.
+第一个版本不追求所有业务模块的完整 CRUD 深度，也不接入真实外部大模型供应商。初始化阶段的重点是建立清晰的工程结构、模块边界、认证链路、接口契约和后续扩展位置。
 
-## Architecture
+## 总体架构
 
-The repository is organized as a monorepo:
+仓库采用单仓库结构：
 
 ```text
 Agent-Hub/
@@ -26,7 +26,7 @@ Agent-Hub/
   docs/
 ```
 
-The backend is a Maven multi-module application:
+后端采用 Maven 多模块结构：
 
 ```text
 backend/
@@ -40,60 +40,60 @@ backend/
   agent-hub-server/
 ```
 
-Responsibilities:
+模块职责：
 
-- `agent-hub-common`: shared response envelope, exceptions, constants, base DTOs, and utility code.
-- `agent-hub-security`: JWT service, security configuration, authentication filter, user principal, and permission helpers.
-- `agent-hub-system`: users, roles, permissions, menus, and login-facing system service contracts.
-- `agent-hub-ai`: AI providers, models, and self-owned LLM client interfaces.
-- `agent-hub-agent`: Agent definitions, MCP server/tool definitions, Skill library, Agent Runtime interfaces, and Tool Loop skeleton.
-- `agent-hub-chat`: conversations, messages, chat orchestration, and SSE streaming contracts.
-- `agent-hub-server`: executable Spring Boot application, REST controllers, configuration, and module wiring.
+- `agent-hub-common`：统一响应、异常模型、常量、基础 DTO 和通用工具。
+- `agent-hub-security`：JWT 服务、Spring Security 配置、认证过滤器、登录主体和权限辅助能力。
+- `agent-hub-system`：用户、角色、权限、菜单和登录所需的系统服务契约。
+- `agent-hub-ai`：AI 供应商、AI 模型和自研 LLM Client 抽象。
+- `agent-hub-agent`：Agent 定义、MCP Server、Tool 定义、Skill 库、Agent Runtime 接口和 Tool Loop 骨架。
+- `agent-hub-chat`：会话、消息、聊天编排和 SSE 流式响应契约。
+- `agent-hub-server`：Spring Boot 启动模块、REST Controller、配置装配和跨模块组合。
 
-The frontends are independent Vite applications. They share conventions but do not introduce a shared package during initialization to keep the first baseline easy to install and run.
+两个前端都是独立的 Vite 应用。它们保持一致的工程习惯和接口风格，但初始化阶段不抽取前端公共包，以降低安装、运行和维护复杂度。
 
-## Backend Design
+## 后端设计
 
-The backend uses Spring Boot 4, Java 21, Maven, Spring Security, JWT, PostgreSQL, Redis, and SSE. It does not use Spring AI.
+后端技术栈为 Spring Boot 4、Java 21、Maven、Spring Security、JWT、PostgreSQL、Redis 和 SSE。不使用 Spring AI。
 
-Initial API groups:
+初始接口分组：
 
-- `/api/auth/login`: username/password login returning JWT and basic user profile.
-- `/api/auth/me`: current authenticated user info.
-- `/api/system/users`: user management skeleton.
-- `/api/system/roles`: role management skeleton.
-- `/api/system/permissions`: permission management skeleton.
-- `/api/system/menus`: menu management skeleton.
-- `/api/ai/providers`: AI provider management skeleton.
-- `/api/ai/models`: AI model management skeleton.
-- `/api/mcp/servers`: MCP server management skeleton.
-- `/api/skills`: Skill library management skeleton.
-- `/api/agents`: Agent management skeleton.
-- `/api/chat/conversations`: conversation management skeleton.
-- `/api/chat/stream`: SSE streaming chat endpoint.
+- `/api/auth/login`：用户名密码登录，返回 JWT 和基础用户信息。
+- `/api/auth/me`：返回当前登录用户信息。
+- `/api/system/users`：用户管理接口。
+- `/api/system/roles`：角色管理接口。
+- `/api/system/permissions`：权限管理接口。
+- `/api/system/menus`：菜单管理接口。
+- `/api/ai/providers`：AI 供应商管理接口。
+- `/api/ai/models`：AI 模型管理接口。
+- `/api/mcp/servers`：MCP Server 管理接口。
+- `/api/skills`：Skill 库管理接口。
+- `/api/agents`：Agent 管理接口。
+- `/api/chat/conversations`：会话管理接口。
+- `/api/chat/stream`：SSE 流式聊天接口。
 
-Persistence starts with simple in-memory services for bootstrapping plus PostgreSQL/Redis configuration entries. This lets the project compile and run immediately while keeping the module seams ready for JPA/MyBatis and Redis-backed implementations.
+初始化阶段使用内存服务提供启动数据，同时提供 PostgreSQL 和 Redis 的配置入口。这样可以保证项目创建后立刻编译运行，也能让后续持久化实现替换服务层时不影响前端接口契约。
 
-Security starts with stateless JWT authentication. Method and route-level authorization are prepared around permission strings such as `system:user:list`, `ai:model:list`, and `agent:manage`.
+安全模型采用无状态 JWT 认证。JWT 中包含用户标识、用户名、角色和权限。后端通过 Spring Security 过滤器解析令牌，并构建当前登录主体。权限字符串采用类似 `system:user:list`、`ai:model:list`、`agent:manage` 的格式。
 
-The LLM client is self-owned:
+自研 LLM Client 从第一版开始建立接口：
 
-- `LlmClient`: provider-neutral streaming and non-streaming completion contract.
-- `ChatRequest`, `ChatMessage`, and `ChatChunk`: common DTOs.
-- `MockLlmClient`: initial local implementation used by the SSE chat endpoint.
+- `LlmClient`：供应商无关的大模型调用接口，支持普通响应和流式响应。
+- `ChatRequest`、`ChatMessage`、`ChatChunk`：通用聊天请求、消息和流式片段 DTO。
+- `MockLlmClient`：本地模拟实现，用于驱动初始 SSE 聊天链路。
 
-The Agent Runtime is self-owned:
+自研 Agent Runtime 从第一版开始建立核心边界：
 
-- `AgentRuntime`: runs an Agent against user input.
-- `ToolRegistry`: resolves callable tools.
-- `ToolLoop`: repeatedly decides whether to call a tool or produce final output.
-- `RuntimeEvent`: emits model/tool/final events for future streaming observability.
+- `AgentRuntime`：负责根据 Agent 定义和用户输入执行一次运行。
+- `ToolRegistry`：负责注册和解析可调用工具。
+- `ToolLoop`：负责模型输出、工具调用和最终回答之间的循环。
+- `RuntimeEvent`：负责表达模型片段、工具调用、工具结果和最终回答等运行事件。
 
-## Frontend Design
+## 前端设计
 
-Both frontends use Vue 3, TypeScript, Vite, Naive UI, Pinia, Vue Router, and Axios.
+两个前端都使用 Vue 3、TypeScript、Vite、Naive UI、Pinia、Vue Router 和 Axios。
 
-`admin-web` initial routes:
+`admin-web` 初始路由：
 
 - `/login`
 - `/`
@@ -107,45 +107,45 @@ Both frontends use Vue 3, TypeScript, Vite, Naive UI, Pinia, Vue Router, and Axi
 - `/skills`
 - `/agents`
 
-The admin UI includes a persistent shell, route-driven menu, auth store, API client with bearer-token injection, and table-style module pages ready for CRUD expansion.
+管理端包含持久化布局、基于路由的菜单、认证状态管理、自动注入 Bearer Token 的 Axios 客户端，以及面向 CRUD 扩展的表格型模块页面。
 
-`user-web` initial routes:
+`user-web` 初始路由：
 
 - `/login`
 - `/`
 - `/chat`
 
-The user UI includes a chat workspace, conversation list panel, message list, prompt input, and SSE client that consumes `/api/chat/stream`.
+用户端包含聊天工作区、会话列表面板、消息列表、输入区和连接 `/api/chat/stream` 的 SSE 客户端。流式返回时，前端会把服务端片段持续追加到当前助手消息中。
 
-## Data Flow
+## 数据流
 
-Authentication:
+登录认证流程：
 
-1. Frontend posts username/password to `/api/auth/login`.
-2. Backend validates against bootstrap users.
-3. Backend signs a JWT containing user id, username, roles, and permissions.
-4. Frontend stores the token in Pinia/local storage.
-5. Axios attaches `Authorization: Bearer <token>` to API requests.
-6. Backend filter validates the token and builds the security principal.
+1. 前端向 `/api/auth/login` 提交用户名和密码。
+2. 后端使用启动用户数据完成校验。
+3. 后端签发包含用户标识、用户名、角色和权限的 JWT。
+4. 前端将令牌保存到 Pinia 和本地存储。
+5. Axios 请求拦截器自动附加 `Authorization: Bearer <token>`。
+6. 后端认证过滤器校验令牌，并构建 Spring Security 登录主体。
 
-Streaming chat:
+流式聊天流程：
 
-1. User sends a prompt from `user-web`.
-2. Frontend opens an SSE request to `/api/chat/stream`.
-3. `agent-hub-chat` delegates to the Agent Runtime or LLM client.
-4. Initial implementation streams deterministic mock chunks.
-5. Frontend appends chunks to the active assistant message.
+1. 用户在 `user-web` 输入问题。
+2. 前端向 `/api/chat/stream` 建立 SSE 请求。
+3. `agent-hub-chat` 调用 Agent Runtime 或 LLM Client。
+4. 初始化版本通过 `MockLlmClient` 输出确定性的模拟片段。
+5. 前端持续追加片段，形成流式回复体验。
 
-Management modules:
+管理模块流程：
 
-1. Admin pages call module APIs through typed API clients.
-2. Backend controllers delegate to module services.
-3. Initial services return bootstrap data and stable DTO shapes.
-4. Future persistence implementations can replace services without changing frontend contracts.
+1. 管理端页面通过类型化 API 客户端调用后端接口。
+2. 后端 Controller 将请求转发到对应模块服务。
+3. 初始化服务返回启动数据和稳定 DTO 结构。
+4. 后续可以替换为数据库和 Redis 实现，而不改变前端调用契约。
 
-## Error Handling
+## 错误处理
 
-Backend responses use a consistent envelope:
+后端 REST 响应使用统一结构：
 
 ```json
 {
@@ -155,35 +155,35 @@ Backend responses use a consistent envelope:
 }
 ```
 
-Validation and security failures return structured error responses. SSE errors are emitted as stream events where possible and fall back to HTTP status errors before the stream starts.
+参数校验、认证失败和授权失败都返回结构化错误。SSE 在流开始前失败时返回 HTTP 错误；流开始后失败时尽量通过流事件返回错误信息。
 
-Frontend Axios interceptors normalize HTTP errors into user-facing Naive UI notifications. Login expiry clears local auth state and routes back to `/login`.
+前端 Axios 拦截器负责把 HTTP 错误转换成 Naive UI 消息提示。登录过期时清理本地认证状态，并跳转回 `/login`。
 
-## Testing And Verification
+## 测试与验证
 
-Initial verification commands:
+初始化后的验证命令：
 
-- Backend: `mvn test` from `backend/`.
-- Admin frontend: `npm install`, `npm run type-check`, `npm run build` from `admin-web/`.
-- User frontend: `npm install`, `npm run type-check`, `npm run build` from `user-web/`.
+- 后端：在 `backend/` 下执行 `mvn test`。
+- 管理端前端：在 `admin-web/` 下执行 `npm install`、`npm run type-check` 和 `npm run build`。
+- 用户端前端：在 `user-web/` 下执行 `npm install`、`npm run type-check` 和 `npm run build`。
 
-Initial tests focus on high-value seams:
+首批测试聚焦高价值边界：
 
-- JWT creation and parsing.
-- Permission principal construction.
-- Mock LLM streaming behavior.
-- Agent Runtime event flow.
-- Vue build/type checks for both frontends.
+- JWT 创建和解析。
+- 登录主体和权限集合构建。
+- `MockLlmClient` 流式片段输出。
+- Agent Runtime 事件流。
+- 两个前端项目的类型检查和构建检查。
 
-## Non-Goals
+## 非目标
 
-- No Spring AI dependency.
-- No real external LLM provider calls in the initialization baseline.
-- No full database migration suite in the first skeleton.
-- No full CRUD implementation for every management module in the first skeleton.
-- No microservice split.
+- 初始化阶段不使用 Spring AI。
+- 初始化阶段不接入真实外部大模型供应商。
+- 初始化阶段不完成完整数据库迁移体系。
+- 初始化阶段不为每个管理模块实现完整 CRUD。
+- 初始化阶段不拆分微服务。
 
-## References
+## 参考资料
 
-- Spring Boot 4 official documentation: https://docs.spring.io/spring-boot/documentation.html
-- Spring Security official documentation: https://docs.spring.io/spring-security/reference/
+- Spring Boot 4 官方文档：https://docs.spring.io/spring-boot/documentation.html
+- Spring Security 官方文档：https://docs.spring.io/spring-security/reference/

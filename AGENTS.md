@@ -13,3 +13,11 @@
 本项目是一个单体多模块的企业级 AI Agent 平台，包含管理端前端 `admin-web`、用户端前端 `user-web` 和 Java 后端 `backend`。
 
 后端负责用户、角色、权限、菜单、JWT 登录认证、Spring Security 权限控制、AI 供应商、AI 模型、MCP、Skill 库、Agent、会话、SSE 流式聊天、自研 LLM Client、自研 Agent Runtime 和自研 Tool Loop。
+
+## 后端统一规范
+
+- 全局异常处理必须统一管理，不允许业务模块各自定义独立异常返回格式。
+- REST 接口响应必须统一封装，不允许 Controller 直接返回零散的 `Map`、字符串或不一致结构。
+- 统一响应、错误码、业务异常、参数校验异常模型放在 `agent-hub-common`。
+- 全局异常拦截和安全异常响应装配放在 `agent-hub-server`，业务模块只抛出统一异常或返回统一 DTO。
+- SSE 流式接口可以使用事件流协议，但错误事件格式也必须遵循统一错误码和中文错误信息约定。

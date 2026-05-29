@@ -42,19 +42,21 @@ backend/
 
 模块职责：
 
-- `agent-hub-common`：统一响应、异常模型、常量、基础 DTO 和通用工具。
+- `agent-hub-common`：统一响应、统一错误码、业务异常模型、参数校验异常模型、常量、基础 DTO 和通用工具。
 - `agent-hub-security`：JWT 服务、Spring Security 配置、认证过滤器、登录主体和权限辅助能力。
 - `agent-hub-system`：用户、角色、权限、菜单和登录所需的系统服务契约。
 - `agent-hub-ai`：AI 供应商、AI 模型和自研 LLM Client 抽象。
 - `agent-hub-agent`：Agent 定义、MCP Server、Tool 定义、Skill 库、Agent Runtime 接口和 Tool Loop 骨架。
 - `agent-hub-chat`：会话、消息、聊天编排和 SSE 流式响应契约。
-- `agent-hub-server`：Spring Boot 启动模块、REST Controller、配置装配和跨模块组合。
+- `agent-hub-server`：Spring Boot 启动模块、REST Controller、全局异常处理、安全异常响应装配、配置装配和跨模块组合。
 
 两个前端都是独立的 Vite 应用。它们保持一致的工程习惯和接口风格，但初始化阶段不抽取前端公共包，以降低安装、运行和维护复杂度。
 
 ## 后端设计
 
 后端技术栈为 Spring Boot 4、Java 21、Maven、Spring Security、JWT、PostgreSQL、Redis 和 SSE。不使用 Spring AI。
+
+后端基础设施必须统一管理。`agent-hub-common` 提供 `ApiResponse`、`ErrorCode`、`BusinessException` 和参数校验错误模型；`agent-hub-server` 通过 `GlobalExceptionHandler` 统一处理业务异常、参数校验异常、认证异常、授权异常和未知异常。业务 Controller 不直接返回零散的 `Map`、字符串或不一致响应结构。
 
 初始接口分组：
 
@@ -145,7 +147,7 @@ backend/
 
 ## 错误处理
 
-后端 REST 响应使用统一结构：
+后端 REST 响应和异常返回由统一基础设施管理。所有普通 REST 接口使用统一结构：
 
 ```json
 {
@@ -155,7 +157,9 @@ backend/
 }
 ```
 
-参数校验、认证失败和授权失败都返回结构化错误。SSE 在流开始前失败时返回 HTTP 错误；流开始后失败时尽量通过流事件返回错误信息。
+`code` 为 `0` 表示成功，非 `0` 表示失败。错误码由 `agent-hub-common` 统一定义，错误信息默认使用中文。参数校验、业务异常、认证失败、授权失败和未知异常都由 `GlobalExceptionHandler` 统一转换为结构化响应。业务模块只抛出统一业务异常或返回明确 DTO，不自行拼装异常响应。
+
+SSE 接口遵循事件流协议，不强行包装为普通 JSON 响应。流开始前失败时返回统一 HTTP 错误响应；流开始后失败时发送统一错误事件，事件内容包含错误码、中文错误信息和可选追踪标识。
 
 前端 Axios 拦截器负责把 HTTP 错误转换成 Naive UI 消息提示。登录过期时清理本地认证状态，并跳转回 `/login`。
 
@@ -169,6 +173,7 @@ backend/
 
 首批测试聚焦高价值边界：
 
+- 统一响应结构和全局异常处理。
 - JWT 创建和解析。
 - 登录主体和权限集合构建。
 - `MockLlmClient` 流式片段输出。

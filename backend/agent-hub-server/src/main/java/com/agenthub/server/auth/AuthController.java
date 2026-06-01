@@ -34,8 +34,7 @@ public class AuthController {
         String token = jwtService.createToken(new LoginUser(
                 profile.userId(),
                 profile.username(),
-                profile.roles(),
-                profile.permissions()
+                profile.roles()
         ));
 
         return ApiResponse.success(new LoginResponse(token, profile));

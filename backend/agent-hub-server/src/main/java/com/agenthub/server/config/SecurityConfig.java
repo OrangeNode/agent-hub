@@ -6,6 +6,10 @@ import com.agenthub.common.exception.BusinessException;
 import com.agenthub.security.jwt.JwtProperties;
 import com.agenthub.security.jwt.JwtService;
 import com.agenthub.security.principal.LoginUser;
+import com.agenthub.system.auth.AuthService;
+import com.agenthub.system.user.UserAccount;
+import com.agenthub.system.user.UserProfile;
+import com.agenthub.system.user.UserService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -14,6 +18,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.stream.Stream;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.MediaType;
@@ -33,10 +38,13 @@ import tools.jackson.databind.ObjectMapper;
 public class SecurityConfig {
 
     @Bean
-    JwtProperties jwtProperties() {
+    JwtProperties jwtProperties(
+            @Value("${agent-hub.security.jwt.secret:agent-hub-demo-secret-agent-hub-demo-secret}") String secret,
+            @Value("${agent-hub.security.jwt.ttl-hours:12}") long ttlHours
+    ) {
         return new JwtProperties(
-                "agent-hub-demo-secret-agent-hub-demo-secret",
-                Duration.ofHours(12)
+                secret,
+                Duration.ofHours(ttlHours)
         );
     }
 
@@ -46,7 +54,13 @@ public class SecurityConfig {
     }
 
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http, JwtService jwtService, ObjectMapper objectMapper)
+    SecurityFilterChain securityFilterChain(
+            HttpSecurity http,
+            JwtService jwtService,
+            AuthService authService,
+            UserService userService,
+            ObjectMapper objectMapper
+    )
             throws Exception {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
@@ -62,7 +76,7 @@ public class SecurityConfig {
                         .accessDeniedHandler((request, response, exception) ->
                                 writeError(response, objectMapper, HttpServletResponse.SC_FORBIDDEN, ErrorCode.FORBIDDEN))
                 )
-                .addFilterBefore(new JwtAuthenticationFilter(jwtService, objectMapper), UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(new JwtAuthenticationFilter(jwtService, authService, userService, objectMapper), UsernamePasswordAuthenticationFilter.class)
                 .logout(Customizer.withDefaults())
                 .build();
     }
@@ -78,10 +92,19 @@ public class SecurityConfig {
     private static class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         private final JwtService jwtService;
+        private final AuthService authService;
+        private final UserService userService;
         private final ObjectMapper objectMapper;
 
-        private JwtAuthenticationFilter(JwtService jwtService, ObjectMapper objectMapper) {
+        private JwtAuthenticationFilter(
+                JwtService jwtService,
+                AuthService authService,
+                UserService userService,
+                ObjectMapper objectMapper
+        ) {
             this.jwtService = jwtService;
+            this.authService = authService;
+            this.userService = userService;
             this.objectMapper = objectMapper;
         }
 
@@ -94,16 +117,30 @@ public class SecurityConfig {
                 String token = header.substring(7);
                 try {
                     LoginUser loginUser = jwtService.parseToken(token);
+                    UserAccount userAccount = userService.findAccountById(loginUser.userId())
+                            .orElseThrow(() -> new BusinessException(ErrorCode.UNAUTHORIZED));
+                    UserProfile profile = authService.currentUser(userAccount.username());
+                    LoginUser resolvedLoginUser = new LoginUser(
+                            profile.userId(),
+                            profile.username(),
+                            profile.roles()
+                    );
                     Collection<? extends GrantedAuthority> authorities = Stream.concat(
-                                    loginUser.roles().stream().map(role -> new SimpleGrantedAuthority("ROLE_" + role)),
-                                    loginUser.permissions().stream().map(SimpleGrantedAuthority::new)
+                                    profile.roles().stream().map(role -> new SimpleGrantedAuthority("ROLE_" + role)),
+                                    profile.permissions().stream().map(SimpleGrantedAuthority::new)
                             )
                             .toList();
                     UsernamePasswordAuthenticationToken authenticationToken =
-                            new UsernamePasswordAuthenticationToken(loginUser, token, authorities);
+                            new UsernamePasswordAuthenticationToken(resolvedLoginUser, token, authorities);
                     SecurityContextHolder.getContext().setAuthentication(authenticationToken);
                 } catch (BusinessException exception) {
-                    writeError(response, objectMapper, HttpServletResponse.SC_UNAUTHORIZED, ErrorCode.UNAUTHORIZED);
+                    int status = exception.errorCode() == ErrorCode.FORBIDDEN
+                            ? HttpServletResponse.SC_FORBIDDEN
+                            : HttpServletResponse.SC_UNAUTHORIZED;
+                    ErrorCode errorCode = exception.errorCode() == ErrorCode.FORBIDDEN
+                            ? ErrorCode.FORBIDDEN
+                            : ErrorCode.UNAUTHORIZED;
+                    writeError(response, objectMapper, status, errorCode);
                     return;
                 }
             }

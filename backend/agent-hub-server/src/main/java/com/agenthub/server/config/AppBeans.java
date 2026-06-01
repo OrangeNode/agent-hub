@@ -1,77 +1,52 @@
 package com.agenthub.server.config;
 
-import com.agenthub.ai.llm.LlmClient;
-import com.agenthub.ai.llm.MockLlmClient;
-import com.agenthub.agent.runtime.AgentRuntime;
-import com.agenthub.agent.runtime.DefaultAgentRuntime;
-import com.agenthub.agent.tool.SimpleToolLoop;
-import com.agenthub.agent.tool.SimpleToolRegistry;
-import com.agenthub.agent.tool.ToolLoop;
-import com.agenthub.agent.tool.ToolRegistry;
-import com.agenthub.chat.ChatStreamService;
-import com.agenthub.chat.DefaultChatStreamService;
 import com.agenthub.system.auth.AuthService;
-import com.agenthub.system.auth.InMemoryAuthService;
-import com.agenthub.system.menu.InMemoryMenuService;
+import com.agenthub.system.auth.AuthServiceImpl;
+import com.agenthub.system.menu.MenuServiceImpl;
 import com.agenthub.system.menu.MenuService;
-import com.agenthub.system.role.InMemoryRoleService;
+import com.agenthub.system.menu.persistence.MenuMapper;
+import com.agenthub.system.role.RoleServiceImpl;
 import com.agenthub.system.role.RoleService;
-import com.agenthub.system.support.InMemorySystemStore;
-import com.agenthub.system.user.InMemoryUserService;
+import com.agenthub.system.role.persistence.RoleMapper;
+import com.agenthub.system.user.UserServiceImpl;
 import com.agenthub.system.user.UserService;
+import com.agenthub.system.user.persistence.UserMapper;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 @Configuration
 public class AppBeans {
 
     @Bean
-    InMemorySystemStore inMemorySystemStore() {
-        return new InMemorySystemStore();
+    UserService userService(UserMapper userMapper, RoleMapper roleMapper, PasswordEncoder passwordEncoder) {
+        return new UserServiceImpl(userMapper, roleMapper, passwordEncoder);
     }
 
     @Bean
-    UserService userService(InMemorySystemStore store) {
-        return new InMemoryUserService(store);
+    RoleService roleService(RoleMapper roleMapper, UserMapper userMapper, MenuMapper menuMapper) {
+        return new RoleServiceImpl(roleMapper, userMapper, menuMapper);
     }
 
     @Bean
-    RoleService roleService(InMemorySystemStore store) {
-        return new InMemoryRoleService(store);
+    MenuService menuService(MenuMapper menuMapper, RoleMapper roleMapper) {
+        return new MenuServiceImpl(menuMapper, roleMapper);
     }
 
     @Bean
-    MenuService menuService(InMemorySystemStore store) {
-        return new InMemoryMenuService(store);
+    PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
     }
 
     @Bean
-    AuthService authService(UserService userService, RoleService roleService, MenuService menuService) {
-        return new InMemoryAuthService(userService, roleService, menuService);
+    AuthService authService(
+            UserService userService,
+            RoleService roleService,
+            MenuService menuService,
+            PasswordEncoder passwordEncoder
+    ) {
+        return new AuthServiceImpl(userService, roleService, menuService, passwordEncoder);
     }
 
-    @Bean
-    LlmClient llmClient() {
-        return new MockLlmClient();
-    }
-
-    @Bean
-    ToolRegistry toolRegistry() {
-        return new SimpleToolRegistry();
-    }
-
-    @Bean
-    ToolLoop toolLoop(LlmClient llmClient) {
-        return new SimpleToolLoop(llmClient);
-    }
-
-    @Bean
-    AgentRuntime agentRuntime(ToolLoop toolLoop) {
-        return new DefaultAgentRuntime(toolLoop);
-    }
-
-    @Bean
-    ChatStreamService chatStreamService(LlmClient llmClient) {
-        return new DefaultChatStreamService(llmClient);
-    }
 }

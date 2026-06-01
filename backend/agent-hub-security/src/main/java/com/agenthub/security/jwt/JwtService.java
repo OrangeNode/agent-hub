@@ -30,7 +30,6 @@ public class JwtService {
                 .claim("userId", loginUser.userId())
                 .claim("username", loginUser.username())
                 .claim("roles", loginUser.roles())
-                .claim("permissions", loginUser.permissions())
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plus(properties.ttl())))
                 .signWith(secretKey)
@@ -48,8 +47,7 @@ public class JwtService {
             return new LoginUser(
                     claims.get("userId", Long.class),
                     claims.get("username", String.class),
-                    castStringList(claims.get("roles")),
-                    castStringList(claims.get("permissions"))
+                    castStringList(claims.get("roles"))
             );
         } catch (Exception exception) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);

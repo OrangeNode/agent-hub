@@ -13,17 +13,25 @@ import com.agenthub.system.user.UserService;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
-public class InMemoryAuthService implements AuthService {
+public class AuthServiceImpl implements AuthService {
 
     private final UserService userService;
     private final RoleService roleService;
     private final MenuService menuService;
+    private final PasswordEncoder passwordEncoder;
 
-    public InMemoryAuthService(UserService userService, RoleService roleService, MenuService menuService) {
+    public AuthServiceImpl(
+            UserService userService,
+            RoleService roleService,
+            MenuService menuService,
+            PasswordEncoder passwordEncoder
+    ) {
         this.userService = userService;
         this.roleService = roleService;
         this.menuService = menuService;
+        this.passwordEncoder = passwordEncoder;
     }
 
     @Override
@@ -31,12 +39,8 @@ public class InMemoryAuthService implements AuthService {
         UserAccount userAccount = userService.findAccountByUsername(command.username())
                 .orElseThrow(() -> new BusinessException(ErrorCode.BAD_REQUEST, "用户名或密码错误"));
 
-        if (!userAccount.password().equals(command.password())) {
+        if (!passwordEncoder.matches(command.password(), userAccount.password())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "用户名或密码错误");
-        }
-
-        if (!userAccount.enabled()) {
-            throw new BusinessException(ErrorCode.FORBIDDEN, "用户已被禁用");
         }
 
         return new LoginResult(buildProfile(userAccount));
@@ -60,7 +64,15 @@ public class InMemoryAuthService implements AuthService {
     }
 
     private UserProfile buildProfile(UserAccount userAccount) {
+        if (!userAccount.enabled()) {
+            throw new BusinessException(ErrorCode.FORBIDDEN, "用户已被禁用");
+        }
+
         List<RoleItem> roles = roleService.findByCodes(userAccount.roles());
+        List<String> roleCodes = roles.stream()
+                .map(RoleItem::code)
+                .distinct()
+                .toList();
         Set<String> permissions = new LinkedHashSet<>();
 
         for (RoleItem role : roles) {
@@ -75,7 +87,7 @@ public class InMemoryAuthService implements AuthService {
                 userAccount.username(),
                 userAccount.displayName(),
                 userAccount.enabled(),
-                userAccount.roles(),
+                roleCodes,
                 List.copyOf(permissions)
         );
     }

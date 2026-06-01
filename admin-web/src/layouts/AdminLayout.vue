@@ -56,18 +56,46 @@
       </n-layout-header>
 
       <div class="tab-bar">
-        <n-tag
-          v-for="item in tabsStore.tabs"
-          :key="item.key"
-          :bordered="false"
-          class="tab-item"
-          :class="{ active: item.path === tabsStore.activeTab }"
-          :closable="item.closable"
-          :on-close="item.closable ? ($event: MouseEvent) => handleCloseTab($event, item.path) : undefined"
-          @click="handleTabClick(item.path)"
-        >
-          {{ item.title }}
-        </n-tag>
+        <div class="tab-scroll">
+          <div
+            v-for="item in tabsStore.tabs"
+            :key="item.key"
+            class="tab-chip"
+            :class="{
+              active: item.path === tabsStore.activeTab,
+              fixed: !item.closable,
+              dragging: draggedTabPath === item.path
+            }"
+            :draggable="item.closable"
+            @click="handleTabClick(item.path)"
+            @contextmenu.prevent="openTabContextMenu($event, item.path)"
+            @dragstart="handleDragStart(item.path)"
+            @dragover.prevent="handleDragOver(item.path)"
+            @drop.prevent="handleDrop(item.path)"
+            @dragend="handleDragEnd"
+          >
+            <span class="tab-chip__label">{{ item.title }}</span>
+            <button
+              v-if="item.closable"
+              class="tab-chip__close"
+              type="button"
+              @click.stop="handleCloseTab(item.path)"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+
+        <n-dropdown
+          trigger="manual"
+          placement="bottom-start"
+          :show="showContextMenu"
+          :x="contextMenuX"
+          :y="contextMenuY"
+          :options="contextMenuOptions"
+          @clickoutside="closeContextMenu"
+          @select="handleContextMenuSelect"
+        />
       </div>
 
       <n-layout-content class="content-shell" content-style="padding: 18px 18px 20px;">
@@ -100,8 +128,7 @@ import {
   NLayoutContent,
   NLayoutHeader,
   NLayoutSider,
-  NMenu,
-  NTag
+  NMenu
 } from 'naive-ui'
 import { useAuthStore } from '../stores/auth'
 import { useMenuStore } from '../stores/menu'
@@ -113,6 +140,11 @@ const authStore = useAuthStore()
 const menuStore = useMenuStore()
 const tabsStore = useTabsStore()
 const collapsed = ref(false)
+const draggedTabPath = ref('')
+const contextTabPath = ref('/dashboard')
+const showContextMenu = ref(false)
+const contextMenuX = ref(0)
+const contextMenuY = ref(0)
 
 const iconMap = {
   grid: GridOutline,
@@ -166,6 +198,17 @@ const userOptions: DropdownOption[] = [
     key: 'logout'
   }
 ]
+
+const contextMenuOptions = computed<DropdownOption[]>(() => {
+  const isDashboard = contextTabPath.value === '/dashboard'
+
+  return [
+    { label: '关闭当前', key: 'close-current', disabled: isDashboard },
+    { label: '关闭其他', key: 'close-others' },
+    { label: '关闭右侧', key: 'close-right' },
+    { label: '关闭全部', key: 'close-all' }
+  ]
+})
 
 function renderIcon(name?: string | null) {
   if (!name) {
@@ -222,14 +265,68 @@ function findMenuByKey(records: Array<{ key: string; routePath: string; children
 }
 
 function handleTabClick(path: string) {
+  tabsStore.setActiveTab(path)
   void router.push(path)
 }
 
-function handleCloseTab(event: MouseEvent, path: string) {
-  event.stopPropagation()
+function handleCloseTab(path: string) {
   const fallback = tabsStore.removeTab(path)
   if (route.path === path) {
     void router.push(fallback)
+  }
+}
+
+function handleDragStart(path: string) {
+  draggedTabPath.value = path
+}
+
+function handleDragOver(path: string) {
+  if (!draggedTabPath.value || draggedTabPath.value === path) {
+    return
+  }
+
+  tabsStore.moveTab(draggedTabPath.value, path)
+}
+
+function handleDrop(path: string) {
+  if (draggedTabPath.value) {
+    tabsStore.moveTab(draggedTabPath.value, path)
+  }
+  draggedTabPath.value = ''
+}
+
+function handleDragEnd() {
+  draggedTabPath.value = ''
+}
+
+function openTabContextMenu(event: MouseEvent, path: string) {
+  contextTabPath.value = path
+  contextMenuX.value = event.clientX
+  contextMenuY.value = event.clientY
+  showContextMenu.value = true
+}
+
+function closeContextMenu() {
+  showContextMenu.value = false
+}
+
+function handleContextMenuSelect(key: string) {
+  closeContextMenu()
+
+  let targetPath = route.path
+
+  if (key === 'close-current') {
+    targetPath = tabsStore.removeTab(contextTabPath.value)
+  } else if (key === 'close-others') {
+    targetPath = tabsStore.closeOtherTabs(contextTabPath.value)
+  } else if (key === 'close-right') {
+    targetPath = tabsStore.closeTabsToRight(contextTabPath.value)
+  } else if (key === 'close-all') {
+    targetPath = tabsStore.closeAllTabs()
+  }
+
+  if (targetPath !== route.path) {
+    void router.push(targetPath)
   }
 }
 
@@ -336,23 +433,81 @@ function goDashboard() {
 }
 
 .tab-bar {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 42px;
+  min-height: 46px;
   padding: 0 16px;
   border-bottom: 1px solid #e5e7eb;
   background: #fff;
-  overflow-x: auto;
 }
 
-.tab-item {
+.tab-scroll {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  overflow-x: auto;
+  padding: 8px 0;
+}
+
+.tab-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 220px;
+  padding: 0 12px;
+  height: 30px;
+  border: 1px solid #dbe3ef;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #334155;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.18s ease;
+}
+
+.tab-chip:hover {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.tab-chip.active {
+  border-color: #93c5fd;
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.tab-chip.fixed {
+  font-weight: 600;
+}
+
+.tab-chip.dragging {
+  opacity: 0.6;
+}
+
+.tab-chip__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-chip__close {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
 }
 
-.tab-item.active {
-  background: #dbeafe;
-  color: #1d4ed8;
+.tab-chip__close:hover {
+  background: rgba(148, 163, 184, 0.18);
 }
 
 :deep(.n-layout-sider-scroll-container) {

@@ -36,8 +36,14 @@ const themeOverrides: GlobalThemeOverrides = {
 }
 
 body {
+  min-height: 100%;
   margin: 0;
   background: #f5f7fb;
+}
+
+html,
+#app {
+  min-height: 100%;
 }
 
 #app {

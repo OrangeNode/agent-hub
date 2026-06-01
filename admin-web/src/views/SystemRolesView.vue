@@ -216,7 +216,10 @@ onMounted(() => {
 
 <style scoped>
 .page {
-  display: grid;
+  display: flex;
+  flex: 1;
+  min-height: 100%;
+  flex-direction: column;
   gap: 16px;
 }
 
@@ -245,6 +248,16 @@ onMounted(() => {
 
 .toolbar :deep(.n-input) {
   max-width: 320px;
+}
+
+:deep(.n-card) {
+  flex: 1;
+}
+
+:deep(.n-card__content) {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
 }
 
 @media (max-width: 900px) {

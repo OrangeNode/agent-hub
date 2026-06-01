@@ -12,7 +12,17 @@
     </div>
 
     <n-card :bordered="false" size="small">
-      <n-data-table :columns="columns" :data="flatMenus" :loading="loading" :pagination="false" />
+      <n-data-table
+        :columns="columns"
+        :data="tableData"
+        :loading="loading"
+        :pagination="false"
+        :bordered="false"
+        :single-line="false"
+        :scroll-x="1160"
+        children-key="children"
+        :row-key="(row: MenuRecord) => row.menuId ?? row.name"
+      />
     </n-card>
 
     <n-modal
@@ -20,7 +30,7 @@
       preset="card"
       :title="editingMenu ? '编辑菜单' : '新增菜单'"
       class="form-modal"
-      :style="{ width: 'min(760px, calc(100vw - 32px))' }"
+      :style="{ width: 'min(820px, calc(100vw - 32px))' }"
     >
       <n-form :model="formValue" label-placement="top">
         <n-form-item label="上级菜单">
@@ -32,18 +42,22 @@
         <n-form-item label="菜单标题">
           <n-input v-model:value="formValue.title" />
         </n-form-item>
-        <n-form-item label="路由路径">
-          <n-input v-model:value="formValue.path" />
-        </n-form-item>
-        <n-form-item label="组件路径">
-          <n-input v-model:value="formValue.component" />
-        </n-form-item>
-        <n-form-item label="图标">
-          <n-input v-model:value="formValue.icon" />
-        </n-form-item>
-        <n-form-item label="权限标识">
-          <n-input v-model:value="formValue.permission" />
-        </n-form-item>
+        <div class="grid-form">
+          <n-form-item label="路由路径">
+            <n-input v-model:value="formValue.path" />
+          </n-form-item>
+          <n-form-item label="组件路径">
+            <n-input v-model:value="formValue.component" />
+          </n-form-item>
+        </div>
+        <div class="grid-form">
+          <n-form-item label="图标">
+            <n-input v-model:value="formValue.icon" />
+          </n-form-item>
+          <n-form-item label="权限标识">
+            <n-input v-model:value="formValue.permission" />
+          </n-form-item>
+        </div>
         <div class="grid-form">
           <n-form-item label="菜单类型">
             <n-select v-model:value="formValue.menuType" :options="menuTypeOptions" />
@@ -68,7 +82,7 @@
 
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue'
-import type { DataTableColumns, TreeSelectOption } from 'naive-ui'
+import type { DataTableColumns } from 'naive-ui'
 import {
   NButton,
   NCard,
@@ -88,6 +102,7 @@ import {
 } from 'naive-ui'
 import { createMenu, deleteMenu, fetchMenuTree, reorderMenus, updateMenu } from '../api/menu'
 import type { MenuFormRecord, MenuRecord } from '../types/rbac'
+import { buildMenuParentOptions, buildMenuTableData } from './system-menu.helpers'
 
 const message = useMessage()
 const loading = ref(false)
@@ -112,27 +127,55 @@ const menuTypeOptions = [
   { label: '菜单', value: 'MENU' }
 ]
 
-const parentOptions = computed<TreeSelectOption[]>(() => mapParentOptions(menus.value))
+const parentOptions = computed(() => buildMenuParentOptions(menus.value))
+const tableData = computed(() => buildMenuTableData(menus.value))
 
-const flatMenus = computed(() => flattenMenus(menus.value))
-
-const columns: DataTableColumns<MenuRecord & { depth: number }> = [
+const columns: DataTableColumns<MenuRecord> = [
   {
     title: '菜单标题',
     key: 'title',
-    render: (row) => h('div', { style: { paddingLeft: `${row.depth * 18}px`, fontWeight: row.depth === 0 ? '600' : '400' } }, row.title)
+    minWidth: 240,
+    ellipsis: { tooltip: true },
+    render: (row) => h('span', { class: 'menu-title-cell' }, row.title)
   },
-  { title: '路由路径', key: 'path' },
-  { title: '权限标识', key: 'permission' },
-  { title: '排序', key: 'sort' },
+  {
+    title: '路由路径',
+    key: 'path',
+    minWidth: 180,
+    ellipsis: { tooltip: true }
+  },
+  {
+    title: '组件路径',
+    key: 'component',
+    minWidth: 190,
+    ellipsis: { tooltip: true }
+  },
+  {
+    title: '权限标识',
+    key: 'permission',
+    minWidth: 180,
+    ellipsis: { tooltip: true }
+  },
+  {
+    title: '排序',
+    key: 'sort',
+    width: 92
+  },
   {
     title: '状态',
     key: 'visible',
-    render: (row) => h(NTag, { type: row.visible ? 'success' : 'warning', bordered: false }, { default: () => (row.visible ? '显示' : '隐藏') })
+    width: 110,
+    render: (row) =>
+      h(
+        NTag,
+        { type: row.visible ? 'success' : 'warning', bordered: false },
+        { default: () => (row.visible ? '显示' : '隐藏') }
+      )
   },
   {
     title: '操作',
     key: 'actions',
+    width: 220,
     render: (row) =>
       h(NSpace, { wrap: false }, {
         default: () => [
@@ -150,22 +193,6 @@ const columns: DataTableColumns<MenuRecord & { depth: number }> = [
       })
   }
 ]
-
-function flattenMenus(records: MenuRecord[], depth = 0): Array<MenuRecord & { depth: number }> {
-  return records.flatMap((item) => [
-    { ...item, depth },
-    ...flattenMenus(item.children ?? [], depth + 1)
-  ])
-}
-
-function mapParentOptions(records: MenuRecord[]): TreeSelectOption[] {
-  return records.map((item) => ({
-    label: item.title,
-    key: item.menuId ?? 0,
-    value: item.menuId ?? 0,
-    children: item.children?.length ? mapParentOptions(item.children) : undefined
-  }))
-}
 
 function resetForm() {
   formValue.parentId = null
@@ -234,11 +261,15 @@ async function submitForm() {
 }
 
 async function syncOrder() {
-  const orders = flatMenus.value.map((item) => ({
+  const orders = flattenForOrder(tableData.value).map((item) => ({
     menuId: item.menuId ?? 0,
     sort: item.sort ?? 0
   }))
   await reorderMenus(orders)
+}
+
+function flattenForOrder(records: MenuRecord[]): MenuRecord[] {
+  return records.flatMap((item) => [item, ...flattenForOrder(item.children ?? [])])
 }
 
 async function handleDelete(menuId: number) {
@@ -258,7 +289,10 @@ onMounted(() => {
 
 <style scoped>
 .page {
-  display: grid;
+  display: flex;
+  flex: 1;
+  min-height: 100%;
+  flex-direction: column;
   gap: 16px;
 }
 
@@ -278,20 +312,41 @@ onMounted(() => {
   color: #64748b;
 }
 
-.toolbar {
-  display: flex;
-  justify-content: flex-end;
-}
-
 .grid-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
+.menu-title-cell {
+  font-weight: 600;
+}
+
+:deep(.n-card) {
+  flex: 1;
+}
+
+:deep(.n-card__content) {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+:deep(.n-data-table) {
+  flex: 1;
+}
+
+:deep(.n-data-table-wrapper) {
+  min-width: 0;
+}
+
+:deep(.n-data-table-base-table-body) td,
+:deep(.n-data-table-base-table-header) th {
+  vertical-align: middle;
+}
+
 @media (max-width: 900px) {
-  .page-header,
-  .toolbar {
+  .page-header {
     flex-direction: column;
     align-items: stretch;
   }

@@ -2,6 +2,7 @@
   <n-layout has-sider class="admin-layout">
     <n-layout-sider
       bordered
+      class="admin-sider"
       collapse-mode="width"
       :collapsed="collapsed"
       :collapsed-width="72"
@@ -26,7 +27,7 @@
       />
     </n-layout-sider>
 
-    <n-layout>
+    <n-layout class="layout-main">
       <n-layout-header bordered class="header">
         <div class="header-left">
           <n-button quaternary circle @click="collapsed = !collapsed">
@@ -69,8 +70,10 @@
         </n-tag>
       </div>
 
-      <n-layout-content content-style="padding: 16px;">
-        <router-view />
+      <n-layout-content class="content-shell" content-style="padding: 18px 18px 20px;">
+        <div class="content-body">
+          <router-view />
+        </div>
       </n-layout-content>
     </n-layout>
   </n-layout>
@@ -250,7 +253,29 @@ function goDashboard() {
 
 <style scoped>
 .admin-layout {
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.admin-sider {
+  height: 100vh;
+}
+
+.layout-main {
+  display: flex;
+  min-width: 0;
+  height: 100vh;
+  flex-direction: column;
+}
+
+.content-shell {
+  flex: 1;
+  min-height: 0;
+}
+
+.content-body {
+  display: flex;
+  min-height: 100%;
 }
 
 .brand {
@@ -328,6 +353,21 @@ function goDashboard() {
 .tab-item.active {
   background: #dbeafe;
   color: #1d4ed8;
+}
+
+:deep(.n-layout-sider-scroll-container) {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+}
+
+:deep(.n-menu) {
+  flex: 1;
+  min-height: 0;
+}
+
+:deep(.n-layout-scroll-container) {
+  height: 100%;
 }
 
 @media (max-width: 960px) {

@@ -34,36 +34,76 @@
     >
       <n-form :model="formValue" label-placement="top">
         <n-form-item label="上级菜单">
-          <n-tree-select v-model:value="formValue.parentId" clearable :options="parentOptions" />
+          <n-tree-select
+            v-model:value="formValue.parentId"
+            clearable
+            :options="parentOptions"
+            placeholder="请选择上级菜单，不选则为一级菜单"
+          />
         </n-form-item>
         <n-form-item label="菜单名称">
-          <n-input v-model:value="formValue.name" />
+          <n-input v-model:value="formValue.name" placeholder="请输入唯一名称，例如 systemUsers" />
         </n-form-item>
         <n-form-item label="菜单标题">
-          <n-input v-model:value="formValue.title" />
+          <n-input v-model:value="formValue.title" placeholder="请输入展示标题，例如 用户管理" />
         </n-form-item>
         <div class="grid-form">
           <n-form-item label="路由路径">
-            <n-input v-model:value="formValue.path" />
+            <n-input v-model:value="formValue.path" placeholder="请输入路由路径，例如 /system/users" />
           </n-form-item>
           <n-form-item label="组件路径">
-            <n-input v-model:value="formValue.component" />
+            <n-input
+              v-model:value="formValue.component"
+              placeholder="请输入组件路径，例如 system/users/index"
+            />
           </n-form-item>
         </div>
         <div class="grid-form">
-          <n-form-item label="图标">
-            <n-input v-model:value="formValue.icon" />
+          <n-form-item label="图标选择">
+            <div class="icon-field">
+              <n-select
+                v-model:value="formValue.icon"
+                clearable
+                filterable
+                :options="iconSelectOptions"
+                placeholder="请选择内置图标，例如 UserOutlined"
+              />
+              <n-input
+                v-model:value="formValue.icon"
+                clearable
+                placeholder="也可以直接输入图标名，例如 ApiOutlined"
+              />
+              <div class="icon-preview">
+                <template v-if="selectedIconComponent">
+                  <n-icon size="18">
+                    <component :is="selectedIconComponent" />
+                  </n-icon>
+                  <span>{{ formValue.icon }}</span>
+                </template>
+                <span v-else-if="formValue.icon" class="icon-preview__text">
+                  当前图标名：{{ formValue.icon }}（未在内置库中匹配到预览）
+                </span>
+                <span v-else class="icon-preview__text">请选择或输入图标名称</span>
+              </div>
+            </div>
           </n-form-item>
           <n-form-item label="权限标识">
-            <n-input v-model:value="formValue.permission" />
+            <n-input
+              v-model:value="formValue.permission"
+              placeholder="请输入权限标识，例如 system:user:list"
+            />
           </n-form-item>
         </div>
         <div class="grid-form">
           <n-form-item label="菜单类型">
-            <n-select v-model:value="formValue.menuType" :options="menuTypeOptions" />
+            <n-select
+              v-model:value="formValue.menuType"
+              :options="menuTypeOptions"
+              placeholder="请选择菜单类型"
+            />
           </n-form-item>
           <n-form-item label="排序值">
-            <n-input-number v-model:value="formValue.sort" :min="0" />
+            <n-input-number v-model:value="formValue.sort" :min="0" placeholder="例如 10" />
           </n-form-item>
         </div>
         <n-form-item label="是否可见">
@@ -82,13 +122,14 @@
 
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue'
-import type { DataTableColumns } from 'naive-ui'
+import type { DataTableColumns, SelectOption } from 'naive-ui'
 import {
   NButton,
   NCard,
   NDataTable,
   NForm,
   NFormItem,
+  NIcon,
   NInput,
   NInputNumber,
   NModal,
@@ -103,6 +144,7 @@ import {
 import { createMenu, deleteMenu, fetchMenuTree, reorderMenus, updateMenu } from '../api/menu'
 import type { MenuFormRecord, MenuRecord } from '../types/rbac'
 import { buildMenuParentOptions, buildMenuTableData } from './system-menu.helpers'
+import { buildMenuIconOptions, resolveMenuIcon } from './menu-icon-registry'
 
 const message = useMessage()
 const loading = ref(false)
@@ -122,13 +164,21 @@ const formValue = reactive<MenuFormRecord>({
   sort: 10
 })
 
-const menuTypeOptions = [
-  { label: '目录', value: 'CATALOG' },
+const menuTypeOptions: SelectOption[] = [
+  { label: '目录', value: 'DIRECTORY' },
   { label: '菜单', value: 'MENU' }
 ]
 
+const iconSelectOptions = computed<SelectOption[]>(() =>
+  buildMenuIconOptions().map((item) => ({
+    label: item.label,
+    value: item.value
+  }))
+)
+
 const parentOptions = computed(() => buildMenuParentOptions(menus.value))
 const tableData = computed(() => buildMenuTableData(menus.value))
+const selectedIconComponent = computed(() => resolveMenuIcon(formValue.icon))
 
 const columns: DataTableColumns<MenuRecord> = [
   {
@@ -316,6 +366,28 @@ onMounted(() => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.icon-field {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.icon-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  color: #475569;
+  background: #f8fafc;
+}
+
+.icon-preview__text {
+  font-size: 13px;
 }
 
 .menu-title-cell {

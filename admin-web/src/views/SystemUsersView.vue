@@ -3,7 +3,7 @@
     <div class="page-header">
       <div>
         <h2>用户管理</h2>
-        <p>维护后台账号、角色归属与可用状态。</p>
+        <p>维护后台账号、角色归属与启用状态。</p>
       </div>
       <n-space>
         <n-button @click="loadData">刷新</n-button>
@@ -13,9 +13,38 @@
 
     <n-card :bordered="false" size="small">
       <div class="toolbar">
-        <n-input v-model:value="keyword" clearable placeholder="搜索用户名或显示名称" />
+        <n-input
+          v-model:value="searchForm.username"
+          clearable
+          placeholder="按用户名搜索，例如 zhangsan"
+          @keyup.enter="handleSearch"
+        />
+        <n-input
+          v-model:value="searchForm.displayName"
+          clearable
+          placeholder="按显示名称搜索，例如 张三"
+          @keyup.enter="handleSearch"
+        />
+        <n-select
+          v-model:value="searchForm.enabled"
+          clearable
+          :options="statusOptions"
+          placeholder="按状态筛选"
+        />
+        <n-select
+          v-model:value="searchForm.roleCode"
+          clearable
+          filterable
+          :options="roleOptions"
+          placeholder="按角色筛选"
+        />
+        <n-space>
+          <n-button type="primary" @click="handleSearch">搜索</n-button>
+          <n-button @click="resetSearch">重置</n-button>
+        </n-space>
       </div>
-      <n-data-table :columns="columns" :data="filteredUsers" :loading="loading" :pagination="false" />
+
+      <n-data-table :columns="columns" :data="users" :loading="loading" :pagination="false" />
     </n-card>
 
     <n-modal
@@ -27,16 +56,30 @@
     >
       <n-form :model="formValue" label-placement="top">
         <n-form-item label="用户名">
-          <n-input v-model:value="formValue.username" :disabled="Boolean(editingUser)" />
+          <n-input
+            v-model:value="formValue.username"
+            :disabled="Boolean(editingUser)"
+            placeholder="请输入登录用户名，例如 zhangsan"
+          />
         </n-form-item>
         <n-form-item label="显示名称">
-          <n-input v-model:value="formValue.displayName" />
+          <n-input v-model:value="formValue.displayName" placeholder="请输入展示名称，例如 张三" />
         </n-form-item>
-        <n-form-item v-if="!editingUser" label="密码">
-          <n-input v-model:value="formValue.password" type="password" show-password-on="click" />
+        <n-form-item v-if="!editingUser" label="登录密码">
+          <n-input
+            v-model:value="formValue.password"
+            type="password"
+            show-password-on="click"
+            placeholder="请输入登录密码，建议不少于 6 位"
+          />
         </n-form-item>
         <n-form-item label="角色">
-          <n-select v-model:value="formValue.roles" multiple :options="roleOptions" />
+          <n-select
+            v-model:value="formValue.roles"
+            multiple
+            :options="roleOptions"
+            placeholder="请选择用户角色，可多选"
+          />
         </n-form-item>
         <n-form-item label="启用状态">
           <n-switch v-model:value="formValue.enabled" />
@@ -72,15 +115,20 @@ import {
 } from 'naive-ui'
 import { createUser, deleteUser, fetchUsers, updateUser, updateUserStatus } from '../api/user'
 import { fetchRoles } from '../api/role'
-import type { RoleRecord, UserFormPayload, UserRecord } from '../types/rbac'
+import type { RoleRecord, UserFormPayload, UserRecord, UserSearchForm } from '../types/rbac'
 
 const message = useMessage()
 const loading = ref(false)
 const showModal = ref(false)
-const keyword = ref('')
 const users = ref<UserRecord[]>([])
 const roles = ref<RoleRecord[]>([])
 const editingUser = ref<UserRecord | null>(null)
+const searchForm = reactive<UserSearchForm>({
+  username: '',
+  displayName: '',
+  enabled: null,
+  roleCode: null
+})
 const formValue = reactive<UserFormPayload>({
   username: '',
   displayName: '',
@@ -96,13 +144,10 @@ const roleOptions = computed<SelectOption[]>(() =>
   }))
 )
 
-const filteredUsers = computed(() =>
-  users.value.filter((item) =>
-    !keyword.value ||
-    item.username.includes(keyword.value) ||
-    item.displayName.includes(keyword.value)
-  )
-)
+const statusOptions: SelectOption[] = [
+  { label: '启用', value: 'true' },
+  { label: '停用', value: 'false' }
+]
 
 const columns: DataTableColumns<UserRecord> = [
   { title: '用户名', key: 'username' },
@@ -157,6 +202,14 @@ function resetForm() {
   formValue.roles = roles.value[0] ? [roles.value[0].code] : []
 }
 
+function resetSearch() {
+  searchForm.username = ''
+  searchForm.displayName = ''
+  searchForm.enabled = null
+  searchForm.roleCode = null
+  void loadData()
+}
+
 function openCreate() {
   editingUser.value = null
   resetForm()
@@ -173,10 +226,14 @@ function openEdit(user: UserRecord) {
   showModal.value = true
 }
 
+function handleSearch() {
+  void loadData()
+}
+
 async function loadData() {
   loading.value = true
   try {
-    const [userData, roleData] = await Promise.all([fetchUsers(), fetchRoles()])
+    const [userData, roleData] = await Promise.all([fetchUsers(searchForm), fetchRoles()])
     users.value = userData
     roles.value = roleData
   } catch (error) {
@@ -258,14 +315,10 @@ onMounted(() => {
 }
 
 .toolbar {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 16px;
-}
-
-.toolbar :deep(.n-input) {
-  max-width: 320px;
 }
 
 :deep(.n-card) {
@@ -278,15 +331,20 @@ onMounted(() => {
   min-height: 100%;
 }
 
-@media (max-width: 900px) {
-  .page-header,
+@media (max-width: 1200px) {
   .toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .page-header {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .toolbar :deep(.n-input) {
-    max-width: none;
+  .toolbar {
+    grid-template-columns: 1fr;
   }
 }
 </style>

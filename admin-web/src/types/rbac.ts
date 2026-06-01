@@ -89,6 +89,13 @@ export interface UserFormPayload {
   roles: string[]
 }
 
+export interface UserSearchForm {
+  username: string
+  displayName: string
+  enabled: 'true' | 'false' | null
+  roleCode: string | null
+}
+
 export interface RoleFormPayload {
   code: string
   name: string

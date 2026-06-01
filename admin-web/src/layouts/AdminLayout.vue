@@ -111,13 +111,7 @@
 import { computed, h, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { DropdownOption, MenuOption } from 'naive-ui'
-import {
-  GridOutline,
-  ListOutline,
-  MenuOutline,
-  PeopleOutline,
-  ShieldOutline
-} from '@vicons/ionicons5'
+import { MenuOutline } from '@vicons/ionicons5'
 import {
   NBreadcrumb,
   NBreadcrumbItem,
@@ -133,6 +127,7 @@ import {
 import { useAuthStore } from '../stores/auth'
 import { useMenuStore } from '../stores/menu'
 import { useTabsStore } from '../stores/tabs'
+import { resolveMenuIcon } from '../views/menu-icon-registry'
 
 const route = useRoute()
 const router = useRouter()
@@ -145,19 +140,6 @@ const contextTabPath = ref('/dashboard')
 const showContextMenu = ref(false)
 const contextMenuX = ref(0)
 const contextMenuY = ref(0)
-
-const iconMap = {
-  grid: GridOutline,
-  people: PeopleOutline,
-  shield: ShieldOutline,
-  menu: MenuOutline,
-  list: ListOutline,
-  DashboardOutlined: GridOutline,
-  UserOutlined: PeopleOutline,
-  TeamOutlined: ShieldOutline,
-  MenuOutlined: MenuOutline,
-  SettingOutlined: ListOutline
-} as const
 
 const selectedKey = computed(() => {
   const matched = findMenuByPath(menuStore.userMenus, route.path)
@@ -211,11 +193,7 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
 })
 
 function renderIcon(name?: string | null) {
-  if (!name) {
-    return undefined
-  }
-
-  const icon = iconMap[name as keyof typeof iconMap]
+  const icon = resolveMenuIcon(name)
   if (!icon) {
     return undefined
   }

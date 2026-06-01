@@ -19,6 +19,7 @@ import com.agenthub.system.role.RoleService;
 import com.agenthub.system.user.CreateUserCommand;
 import com.agenthub.system.user.UserAccount;
 import com.agenthub.system.user.UserProfile;
+import com.agenthub.system.user.UserQuery;
 import com.agenthub.system.user.UserService;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
@@ -167,6 +168,46 @@ class SystemControllerTest {
                 true,
                 List.of("USER")
         )));
+    }
+
+    @Test
+    void shouldPassMultiConditionFiltersWhenListingUsers() throws Exception {
+        UserAccount account = new UserAccount(1L, "admin", "平台管理员", "ignored", true, List.of("ADMIN"));
+        UserProfile currentUser = new UserProfile(
+                1L,
+                "admin",
+                "平台管理员",
+                true,
+                List.of("ADMIN"),
+                List.of("system:user:list")
+        );
+        UserProfile filteredUser = new UserProfile(
+                2L,
+                "zhangsan",
+                "张三",
+                true,
+                List.of("USER"),
+                List.of()
+        );
+        String token = createToken(1L, "admin", List.of("ADMIN"));
+
+        when(userService.findAccountById(1L)).thenReturn(Optional.of(account));
+        when(authService.currentUser("admin")).thenReturn(currentUser);
+        when(userService.list(any(UserQuery.class))).thenReturn(List.of(filteredUser));
+
+        mockMvc.perform(get("/api/system/users")
+                        .header("Authorization", "Bearer " + token)
+                        .param("username", "zhang")
+                        .param("displayName", "张三")
+                        .param("enabled", "true")
+                        .param("roleCode", "USER"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.data[0].username").value("zhangsan"));
+
+        verify(userService).findAccountById(1L);
+        verify(authService).currentUser("admin");
+        verify(userService).list(eq(new UserQuery("zhang", "张三", true, "USER")));
     }
 
     private String createToken(Long userId, String username, List<String> roles) {

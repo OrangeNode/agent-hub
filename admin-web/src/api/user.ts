@@ -1,5 +1,6 @@
 import http from './http'
-import type { ApiResponse, UserFormPayload, UserProfile, UserRecord } from '../types/rbac'
+import type { ApiResponse, UserFormPayload, UserProfile, UserRecord, UserSearchForm } from '../types/rbac'
+import { buildUserSearchParams } from '../views/system-user.helpers'
 
 function mapUserProfile(profile: UserProfile, index: number): UserRecord {
   return {
@@ -12,8 +13,10 @@ function mapUserProfile(profile: UserProfile, index: number): UserRecord {
   }
 }
 
-export async function fetchUsers() {
-  const response = await http.get<ApiResponse<UserProfile[]>>('/system/users')
+export async function fetchUsers(filters?: UserSearchForm) {
+  const response = await http.get<ApiResponse<UserProfile[]>>('/system/users', {
+    params: filters ? buildUserSearchParams(filters) : undefined
+  })
   return response.data.data.map(mapUserProfile)
 }
 

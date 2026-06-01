@@ -16,6 +16,7 @@ import com.agenthub.system.role.UpdateRoleCommand;
 import com.agenthub.system.user.CreateUserCommand;
 import com.agenthub.system.user.UpdateUserCommand;
 import com.agenthub.system.user.UserProfile;
+import com.agenthub.system.user.UserQuery;
 import com.agenthub.system.user.UserService;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -54,8 +55,13 @@ public class SystemController {
     }
 
     @GetMapping("/users")
-    public ApiResponse<List<UserProfile>> listUsers() {
-        return ApiResponse.success(userService.list());
+    public ApiResponse<List<UserProfile>> listUsers(
+            @RequestParam(required = false) String username,
+            @RequestParam(required = false) String displayName,
+            @RequestParam(required = false) Boolean enabled,
+            @RequestParam(required = false) String roleCode
+    ) {
+        return ApiResponse.success(userService.list(new UserQuery(username, displayName, enabled, roleCode)));
     }
 
     @PostMapping("/users")

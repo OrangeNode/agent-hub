@@ -1,26 +1,36 @@
-# 依赖服务部署说明
+# Docker 依赖与后端启动说明
 
-本目录用于部署 Agent Hub 运行所需的基础依赖服务，当前包含：
+当前 `docker/` 目录用于部署 Agent Hub 运行所需的基础依赖服务，并提供一份后端环境变量样例。
+
+当前包含：
 
 - PostgreSQL 16
 - Redis 7.2
+- PostgreSQL 初始化脚本
+- 后端环境变量样例
 
 ## 目录结构
 
 ```text
 docker
-├─ docker-compose.yml
-├─ env
-│  ├─ postgres.env
-│  └─ redis.env
-└─ README.md
+├── docker-compose.yml
+├── env
+│   ├── backend.env
+│   ├── postgres.env
+│   └── redis.env
+├── initdb
+│   └── 01-init-rbac.sql
+└── README.md
 ```
 
 ## 使用方式
 
-1. 根据实际环境修改 `env/postgres.env` 与 `env/redis.env`
-2. 在服务器或本机进入当前目录
-3. 执行启动命令
+1. 根据实际环境修改：
+   - `env/postgres.env`
+   - `env/redis.env`
+   - `env/backend.env`
+2. 在服务器或本机进入 `docker/` 目录
+3. 启动 PostgreSQL 与 Redis
 
 ```bash
 docker compose up -d
@@ -43,31 +53,48 @@ docker compose down
 - PostgreSQL：`5432`
 - Redis：`6379`
 
-## 默认数据卷
+## PostgreSQL 初始化
 
-- `postgres-data`：PostgreSQL 数据目录
-- `redis-data`：Redis 数据目录
+`docker-compose.yml` 已挂载：
 
-## 配置说明
+- `./initdb:/docker-entrypoint-initdb.d`
 
-### PostgreSQL
+当 PostgreSQL 使用全新数据卷首次启动时，会自动执行：
 
-`env/postgres.env` 默认提供以下变量：
+- [01-init-rbac.sql](/D:/project/Agent-Hub/docker/initdb/01-init-rbac.sql)
 
-- `POSTGRES_DB`：数据库名称
-- `POSTGRES_USER`：数据库用户名
-- `POSTGRES_PASSWORD`：数据库密码
-- `TZ`：时区
+该脚本会初始化：
 
-### Redis
+- `sys_user`
+- `sys_role`
+- `sys_menu`
+- `sys_user_role`
+- `sys_role_menu`
 
-`env/redis.env` 默认提供以下变量：
+并写入默认种子数据：
 
-- `REDIS_PASSWORD`：Redis 密码
-- `TZ`：时区
+- 管理员账号：`admin` / `admin123`
+- 普通用户账号：`user` / `user123`
+
+如果你的 PostgreSQL 容器已经启动且数据卷已存在，这个脚本不会自动补跑；这时应通过后端 Flyway 启动迁移，或手动在库里执行同内容 SQL。
+
+## 后端环境变量
+
+[backend.env](/D:/project/Agent-Hub/docker/env/backend.env) 提供了后端启动所需的默认变量：
+
+- `SPRING_DATASOURCE_URL`
+- `SPRING_DATASOURCE_USERNAME`
+- `SPRING_DATASOURCE_PASSWORD`
+- `SPRING_DATA_REDIS_HOST`
+- `SPRING_DATA_REDIS_PORT`
+- `SPRING_DATA_REDIS_PASSWORD`
+- `AGENT_HUB_JWT_SECRET`
+- `AGENT_HUB_JWT_TTL_HOURS`
+
+如果后端和数据库不在同一台机器，请把 `127.0.0.1` 改成实际服务地址。
 
 ## 注意事项
 
-- 当前默认密码仅用于本地开发或初始化环境，请在部署前替换为正式密码
-- `docker-compose.yml` 预留了 `./initdb` 挂载目录，后续如果需要初始化 SQL，可直接在本目录新增 `initdb` 文件夹并放入脚本
-- 如果服务器已占用 `5432` 或 `6379` 端口，请先调整 `docker-compose.yml` 中的端口映射
+- 默认密码仅用于初始化环境，部署前应替换
+- `AGENT_HUB_JWT_SECRET` 必须改成正式密钥
+- 如果服务端口已被占用，请调整 `docker-compose.yml` 中的映射

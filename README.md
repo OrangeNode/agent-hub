@@ -12,21 +12,20 @@
 - 用户端前端：Vue 3、TypeScript、Vite、Naive UI、Pinia、Vue Router、Axios、SSE
 - 后端：Spring Boot 4、JDK 21、Maven、Spring Security、JWT、PostgreSQL、Redis
 
-## Docker 部署
+## Docker 与依赖
 
-完整的容器化部署说明位于 `docker/README.md`。当前 `docker/` 已提供：
+依赖服务和后端环境变量说明位于 `docker/README.md`。当前 `docker/` 已提供：
 
 - PostgreSQL 16
 - Redis 7.2
-- `agent-hub-server`
-- `admin-web`
-- `user-web`
+- PostgreSQL 初始化脚本
+- 后端环境变量样例
 
 快速启动：
 
 ```powershell
 cd docker
-docker compose up -d --build
+docker compose up -d
 ```
 
 如需修改数据库名、用户名、密码、Redis 密码或 JWT 密钥，请先调整：

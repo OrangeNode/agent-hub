@@ -8,6 +8,7 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+    baseline-on-migrate: true
     validate-on-migrate: true
   data:
     redis:
@@ -22,5 +23,17 @@ agent-hub:
     jwt:
       secret: ${AGENT_HUB_JWT_SECRET:agent-hub-demo-secret-agent-hub-demo-secret}
       ttl-hours: ${AGENT_HUB_JWT_TTL_HOURS:12}
+  logging:
+    path: logs/agent-hub
+    access-log-enabled: true
+    max-history: 15
+    max-file-size: 20MB
+logging:
+  level:
+    root: INFO
+    com.agenthub: INFO
+    org.springframework.security: WARN
+    com.baomidou.mybatisplus: INFO
+    org.flywaydb: INFO
 server:
   port: ${SERVER_PORT:8080}

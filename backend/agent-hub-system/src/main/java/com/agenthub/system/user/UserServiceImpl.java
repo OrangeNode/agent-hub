@@ -30,8 +30,8 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    public List<UserProfile> list() {
-        return userMapper.selectList(new LambdaQueryWrapper<SysUser>().orderByAsc(SysUser::getId)).stream()
+    public List<UserProfile> list(UserQuery query) {
+        return userMapper.selectByQuery(query).stream()
                 .map(this::toProfile)
                 .toList();
     }

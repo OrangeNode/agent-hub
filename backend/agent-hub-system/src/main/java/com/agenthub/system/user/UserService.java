@@ -5,7 +5,7 @@ import java.util.Optional;
 
 public interface UserService {
 
-    List<UserProfile> list();
+    List<UserProfile> list(UserQuery query);
 
     Optional<UserAccount> findAccountByUsername(String username);
 

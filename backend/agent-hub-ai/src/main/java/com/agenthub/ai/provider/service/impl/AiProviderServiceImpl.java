@@ -36,6 +36,11 @@ public class AiProviderServiceImpl implements AiProviderService {
     }
 
     @Override
+    public AiProviderItem requireById(Long providerId) {
+        return toItem(requireProvider(providerId));
+    }
+
+    @Override
     @Transactional
     public AiProviderItem create(CreateProviderCommand command) {
         boolean existed = providerMapper.selectCount(new LambdaQueryWrapper<AiProvider>()

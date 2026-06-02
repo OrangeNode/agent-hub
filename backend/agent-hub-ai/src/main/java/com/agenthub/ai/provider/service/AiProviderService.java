@@ -9,6 +9,8 @@ public interface AiProviderService {
 
     List<AiProviderItem> list();
 
+    AiProviderItem requireById(Long providerId);
+
     AiProviderItem create(CreateProviderCommand command);
 
     AiProviderItem update(Long providerId, UpdateProviderCommand command);

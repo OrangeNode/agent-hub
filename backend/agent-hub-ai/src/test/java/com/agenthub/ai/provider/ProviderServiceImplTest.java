@@ -9,12 +9,16 @@ import static org.mockito.Mockito.when;
 
 import com.agenthub.ai.provider.command.CreateProviderCommand;
 import com.agenthub.ai.provider.command.UpdateProviderCommand;
+import com.agenthub.ai.provider.controller.request.CreateProviderRequest;
 import com.agenthub.ai.provider.dto.AiProviderItem;
 import com.agenthub.ai.provider.entity.AiProvider;
 import com.agenthub.ai.provider.mapper.AiProviderMapper;
 import com.agenthub.ai.provider.service.impl.AiProviderServiceImpl;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
+import jakarta.validation.ValidatorFactory;
 import java.lang.reflect.RecordComponent;
 import java.util.Arrays;
 import org.junit.jupiter.api.Test;
@@ -146,6 +150,57 @@ class ProviderServiceImplTest {
                 .hasMessage("供应商不存在")
                 .extracting("errorCode")
                 .isEqualTo(ErrorCode.NOT_FOUND);
+    }
+
+    @Test
+    void shouldRequireProviderByIdAndReturnItem() {
+        AiProviderMapper mapper = mock(AiProviderMapper.class);
+        AiProviderServiceImpl service = new AiProviderServiceImpl(mapper);
+        when(mapper.selectById(1L)).thenReturn(provider(1L, "openai", "secret"));
+
+        AiProviderItem item = service.requireById(1L);
+
+        assertThat(item.providerId()).isEqualTo(1L);
+        assertThat(item.code()).isEqualTo("openai");
+        assertThat(item.hasApiKey()).isTrue();
+    }
+
+    @Test
+    void shouldRejectRequiringNonexistentProvider() {
+        AiProviderMapper mapper = mock(AiProviderMapper.class);
+        AiProviderServiceImpl service = new AiProviderServiceImpl(mapper);
+        when(mapper.selectById(99L)).thenReturn(null);
+
+        assertThatThrownBy(() -> service.requireById(99L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("供应商不存在")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.NOT_FOUND);
+    }
+
+    @Test
+    void shouldRejectCreateProviderRequestWhenTextExceedsSizeLimit() {
+        try (ValidatorFactory factory = Validation.buildDefaultValidatorFactory()) {
+            Validator validator = factory.getValidator();
+            CreateProviderRequest request = new CreateProviderRequest(
+                    "a".repeat(65),
+                    "OpenAI",
+                    "LLM",
+                    "OPENAI",
+                    "https://api.example.com/" + "v".repeat(512),
+                    "sk-test",
+                    "BEARER",
+                    "v1",
+                    "{}",
+                    "{}",
+                    true,
+                    0
+            );
+
+            assertThat(validator.validate(request))
+                    .extracting(violation -> violation.getPropertyPath().toString())
+                    .contains("code", "baseUrl");
+        }
     }
 
     private AiProvider provider(Long id, String code, String apiKeyCipher) {

@@ -12,7 +12,7 @@ class ConversationTitleServiceTest {
     void shouldFallbackToFirstFifteenVisibleCharacters() {
         String title = conversationTitleService.generateFallbackTitle("请帮我重新整理模型管理和供应商管理接口");
 
-        assertThat(title).isEqualTo("请帮我重新整理模型管理");
+        assertThat(title).isEqualTo("请帮我重新整理模型管理和供应商");
         assertThat(title.length()).isLessThanOrEqualTo(15);
     }
 

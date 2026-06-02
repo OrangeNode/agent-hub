@@ -72,17 +72,45 @@ CREATE TABLE chat_message (
     CONSTRAINT fk_chat_message_model FOREIGN KEY (model_id) REFERENCES ai_model (id)
 );
 
-INSERT INTO sys_menu (id, parent_id, name, title, path, component, icon, permission, menu_type, visible, sort, created_by, updated_by)
-VALUES
-    (6, 0, 'ai', 'AI 管理', '/ai', NULL, 'RobotOutlined', NULL, 'DIRECTORY', TRUE, 3, 1, 1),
-    (7, 6, 'aiProviders', '供应商管理', '/ai/providers', 'ai/providers/index', 'ApiOutlined', 'ai:provider:list', 'MENU', TRUE, 1, 1, 1),
-    (8, 6, 'aiModels', '模型管理', '/ai/models', 'ai/models/index', 'PartitionOutlined', 'ai:model:list', 'MENU', TRUE, 2, 1, 1);
+INSERT INTO sys_menu (parent_id, name, title, path, component, icon, permission, menu_type, visible, sort, created_by, updated_by)
+SELECT 0, 'ai', 'AI 管理', '/ai', NULL, 'RobotOutlined', NULL, 'DIRECTORY', TRUE, 3, 1, 1
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM sys_menu
+    WHERE parent_id = 0
+        AND name = 'ai'
+);
 
-INSERT INTO sys_role_menu (id, role_id, menu_id, created_by, updated_by)
-VALUES
-    (7, 1, 6, 1, 1),
-    (8, 1, 7, 1, 1),
-    (9, 1, 8, 1, 1);
+INSERT INTO sys_menu (parent_id, name, title, path, component, icon, permission, menu_type, visible, sort, created_by, updated_by)
+SELECT parent.id, 'aiProviders', '供应商管理', '/ai/providers', 'ai/providers/index', 'ApiOutlined', 'ai:provider:list', 'MENU', TRUE, 1, 1, 1
+FROM sys_menu parent
+WHERE parent.name = 'ai'
+    AND NOT EXISTS (
+        SELECT 1
+        FROM sys_menu child
+        WHERE child.parent_id = parent.id
+            AND child.name = 'aiProviders'
+    );
 
-ALTER TABLE sys_menu ALTER COLUMN id RESTART WITH 9;
-ALTER TABLE sys_role_menu ALTER COLUMN id RESTART WITH 10;
+INSERT INTO sys_menu (parent_id, name, title, path, component, icon, permission, menu_type, visible, sort, created_by, updated_by)
+SELECT parent.id, 'aiModels', '模型管理', '/ai/models', 'ai/models/index', 'PartitionOutlined', 'ai:model:list', 'MENU', TRUE, 2, 1, 1
+FROM sys_menu parent
+WHERE parent.name = 'ai'
+    AND NOT EXISTS (
+        SELECT 1
+        FROM sys_menu child
+        WHERE child.parent_id = parent.id
+            AND child.name = 'aiModels'
+    );
+
+INSERT INTO sys_role_menu (role_id, menu_id, created_by, updated_by)
+SELECT sr.id, sm.id, 1, 1
+FROM sys_role sr
+JOIN sys_menu sm ON sm.name IN ('ai', 'aiProviders', 'aiModels')
+WHERE sr.code = 'ADMIN'
+    AND NOT EXISTS (
+        SELECT 1
+        FROM sys_role_menu srm
+        WHERE srm.role_id = sr.id
+            AND srm.menu_id = sm.id
+    );

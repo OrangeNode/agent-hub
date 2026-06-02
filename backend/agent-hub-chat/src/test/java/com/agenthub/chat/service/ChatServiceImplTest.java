@@ -26,6 +26,7 @@ import com.agenthub.sse.SseEventType;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executor;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -50,7 +51,8 @@ class ChatServiceImplTest {
                 modelService,
                 new ConversationTitleService(),
                 sender,
-                protocolType -> llmClient
+                protocolType -> llmClient,
+                Runnable::run
         );
         when(modelService.requireDefaultRuntimeConfig()).thenReturn(runtimeConfig());
         when(conversationMapper.insert(any(ChatConversation.class))).thenAnswer(invocation -> {
@@ -177,7 +179,8 @@ class ChatServiceImplTest {
                 modelService,
                 new ConversationTitleService(),
                 sender,
-                protocolType -> throwingClient
+                protocolType -> throwingClient,
+                Runnable::run
         );
         when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
@@ -222,6 +225,107 @@ class ChatServiceImplTest {
         );
     }
 
+    @Test
+    void shouldKeepAnswerContentWhenLlmThrowsAfterAnswerDelta() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        LlmClient throwingClient = (request, chunkConsumer) -> {
+            chunkConsumer.accept(LlmStreamChunk.answer("已经生成"));
+            throw new RuntimeException("网络异常");
+        };
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                sender,
+                protocolType -> throwingClient,
+                Runnable::run
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+
+        service.stream(7L, 100L, 10L, null, "继续");
+
+        ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        ChatMessage failedAssistantMessage = updatedMessageCaptor.getValue();
+        assertThat(failedAssistantMessage.getStatus()).isEqualTo("FAILED");
+        assertThat(failedAssistantMessage.getContent()).isEqualTo("已经生成");
+        assertThat(failedAssistantMessage.getErrorMessage()).isEqualTo("网络异常");
+    }
+
+    @Test
+    void shouldKeepReasoningAndAnswerContentWhenLlmReturnsErrorChunk() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, sender,
+                new RecordingLlmClient(List.of(
+                        LlmStreamChunk.reasoning("推理片段"),
+                        LlmStreamChunk.answer("回答片段"),
+                        LlmStreamChunk.error("模型返回错误")
+                )));
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+
+        service.stream(7L, 100L, 10L, null, "继续");
+
+        ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        ChatMessage failedAssistantMessage = updatedMessageCaptor.getValue();
+        assertThat(failedAssistantMessage.getStatus()).isEqualTo("FAILED");
+        assertThat(failedAssistantMessage.getReasoningContent()).isEqualTo("推理片段");
+        assertThat(failedAssistantMessage.getContent()).isEqualTo("回答片段");
+        assertThat(failedAssistantMessage.getErrorMessage()).isEqualTo("模型返回错误");
+        assertThat(sender.eventDataOf(SseEventData.Error.class).code()).isEqualTo("LLM_STREAM_FAILED");
+    }
+
+    @Test
+    void shouldReturnEmitterBeforeExecutingLlmTask() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        ManualExecutor executor = new ManualExecutor();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.answer("异步回答"), LlmStreamChunk.done()));
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                sender,
+                protocolType -> llmClient,
+                executor
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+
+        SseEmitter emitter = service.stream(7L, 100L, 10L, null, "继续");
+
+        assertThat(emitter).isNotNull();
+        assertThat(executor.captured).isNotNull();
+        assertThat(sender.eventTypes()).containsExactly(SseEventType.CONVERSATION, SseEventType.MESSAGE);
+        verify(messageMapper, never()).updateById(any(ChatMessage.class));
+
+        executor.runCaptured();
+
+        assertThat(sender.eventTypes()).containsExactly(
+                SseEventType.CONVERSATION,
+                SseEventType.MESSAGE,
+                SseEventType.ANSWER_DELTA,
+                SseEventType.MESSAGE_COMPLETED,
+                SseEventType.DONE
+        );
+        verify(messageMapper).updateById(any(ChatMessage.class));
+    }
+
     private ChatServiceImpl service(
             ChatConversationMapper conversationMapper,
             ChatMessageMapper messageMapper,
@@ -235,7 +339,8 @@ class ChatServiceImplTest {
                 modelService,
                 new ConversationTitleService(),
                 sender,
-                protocolType -> llmClient
+                protocolType -> llmClient,
+                Runnable::run
         );
     }
 
@@ -357,6 +462,28 @@ class ChatServiceImplTest {
 
         private List<SseEventType> eventTypes() {
             return eventTypes;
+        }
+
+        private <T extends SseEventData> T eventDataOf(Class<T> type) {
+            return eventData.stream()
+                    .filter(type::isInstance)
+                    .map(type::cast)
+                    .findFirst()
+                    .orElseThrow();
+        }
+    }
+
+    private static class ManualExecutor implements Executor {
+
+        private Runnable captured;
+
+        @Override
+        public void execute(Runnable command) {
+            this.captured = command;
+        }
+
+        private void runCaptured() {
+            captured.run();
         }
     }
 }

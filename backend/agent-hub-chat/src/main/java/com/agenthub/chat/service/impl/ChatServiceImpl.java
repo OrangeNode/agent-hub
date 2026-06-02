@@ -24,8 +24,9 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import java.io.IOException;
 import java.time.OffsetDateTime;
 import java.util.List;
-import java.util.function.Function;
+import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,6 +43,8 @@ public class ChatServiceImpl implements ChatService {
     private static final String STATUS_FAILED = "FAILED";
     private static final String ROLE_USER = "USER";
     private static final String ROLE_ASSISTANT = "ASSISTANT";
+    private static final String LLM_STREAM_FAILED = "LLM_STREAM_FAILED";
+    private static final String SSE_CONNECTION_CLOSED = "SSE 连接已断开";
 
     private final ChatConversationMapper conversationMapper;
     private final ChatMessageMapper messageMapper;
@@ -49,6 +52,7 @@ public class ChatServiceImpl implements ChatService {
     private final ConversationTitleService titleService;
     private final SseEventSender sseEventSender;
     private final Function<String, LlmClient> llmClientFactory;
+    private final Executor streamExecutor;
 
     @Autowired
     public ChatServiceImpl(
@@ -57,7 +61,8 @@ public class ChatServiceImpl implements ChatService {
             AiModelService modelService,
             ConversationTitleService titleService
     ) {
-        this(conversationMapper, messageMapper, modelService, titleService, new SseEventSender(), LlmClientFactory::create);
+        this(conversationMapper, messageMapper, modelService, titleService, new SseEventSender(),
+                LlmClientFactory::create, defaultStreamExecutor());
     }
 
     public ChatServiceImpl(
@@ -66,7 +71,8 @@ public class ChatServiceImpl implements ChatService {
             AiModelService modelService,
             ConversationTitleService titleService,
             SseEventSender sseEventSender,
-            Function<String, LlmClient> llmClientFactory
+            Function<String, LlmClient> llmClientFactory,
+            Executor streamExecutor
     ) {
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
@@ -74,23 +80,33 @@ public class ChatServiceImpl implements ChatService {
         this.titleService = titleService;
         this.sseEventSender = sseEventSender;
         this.llmClientFactory = llmClientFactory;
+        this.streamExecutor = streamExecutor;
     }
 
     @Override
-    @Transactional
     public SseEmitter stream(Long userId, Long conversationId, Long modelId, String agentKey, String prompt) {
         String normalizedPrompt = requirePrompt(prompt);
         AiModelRuntimeConfig runtimeConfig = requireRuntimeConfig(modelId);
         ChatConversation conversation = resolveConversation(userId, conversationId, agentKey, runtimeConfig, normalizedPrompt);
-        ChatMessage userMessage = saveUserMessage(userId, conversation.getId(), normalizedPrompt, runtimeConfig);
+        saveUserMessage(userId, conversation.getId(), normalizedPrompt, runtimeConfig);
         ChatMessage assistantMessage = saveAssistantMessage(userId, conversation.getId(), runtimeConfig);
         touchConversation(conversation);
 
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT);
-        send(emitter, SseEventType.CONVERSATION, new SseEventData.Conversation(conversation.getId(), conversation.getTitle()));
-        send(emitter, SseEventType.MESSAGE, new SseEventData.Message(assistantMessage.getId(), ROLE_ASSISTANT));
-        streamLlm(emitter, runtimeConfig, normalizedPrompt, assistantMessage);
+        boolean connected = send(emitter, SseEventType.CONVERSATION,
+                new SseEventData.Conversation(conversation.getId(), conversation.getTitle()))
+                && send(emitter, SseEventType.MESSAGE, new SseEventData.Message(assistantMessage.getId(), ROLE_ASSISTANT));
+        if (connected) {
+            streamExecutor.execute(() -> streamLlm(emitter, runtimeConfig, normalizedPrompt, assistantMessage));
+        } else {
+            failAssistantMessage(assistantMessage, new StringBuilder(), new StringBuilder(), SSE_CONNECTION_CLOSED);
+            sseEventSender.complete(emitter);
+        }
         return emitter;
+    }
+
+    private static Executor defaultStreamExecutor() {
+        return command -> Thread.ofVirtual().name("chat-stream-").start(command);
     }
 
     @Override
@@ -241,7 +257,7 @@ public class ChatServiceImpl implements ChatService {
                     handleChunk(emitter, assistantMessage, content, reasoningContent, finished, chunk));
         } catch (Exception exception) {
             if (finished.compareAndSet(false, true)) {
-                failAssistantMessage(emitter, assistantMessage, exception.getMessage());
+                failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent, exception.getMessage());
             }
         } finally {
             send(emitter, SseEventType.DONE, new SseEventData.Done());
@@ -276,16 +292,22 @@ public class ChatServiceImpl implements ChatService {
             case REASONING_DELTA -> {
                 reasoningContent.append(defaultString(chunk.content()));
                 assistantMessage.setReasoningContent(reasoningContent.toString());
-                send(emitter, SseEventType.REASONING_DELTA, new SseEventData.Delta(defaultString(chunk.content())));
+                if (!send(emitter, SseEventType.REASONING_DELTA, new SseEventData.Delta(defaultString(chunk.content())))
+                        && finished.compareAndSet(false, true)) {
+                    failAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED);
+                }
             }
             case ANSWER_DELTA -> {
                 content.append(defaultString(chunk.content()));
                 assistantMessage.setContent(content.toString());
-                send(emitter, SseEventType.ANSWER_DELTA, new SseEventData.Delta(defaultString(chunk.content())));
+                if (!send(emitter, SseEventType.ANSWER_DELTA, new SseEventData.Delta(defaultString(chunk.content())))
+                        && finished.compareAndSet(false, true)) {
+                    failAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED);
+                }
             }
             case ERROR -> {
                 if (finished.compareAndSet(false, true)) {
-                    failAssistantMessage(emitter, assistantMessage, chunk.errorMessage());
+                    failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent, chunk.errorMessage());
                 }
             }
             case DONE -> {
@@ -309,24 +331,46 @@ public class ChatServiceImpl implements ChatService {
         assistantMessage.setStatus(STATUS_COMPLETED);
         assistantMessage.setCompletedAt(OffsetDateTime.now());
         messageMapper.updateById(assistantMessage);
-        send(emitter, SseEventType.MESSAGE_COMPLETED,
-                new SseEventData.MessageCompleted(assistantMessage.getId(), STATUS_COMPLETED));
+        if (!send(emitter, SseEventType.MESSAGE_COMPLETED,
+                new SseEventData.MessageCompleted(assistantMessage.getId(), STATUS_COMPLETED))) {
+            failAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED);
+        }
     }
 
-    private void failAssistantMessage(SseEmitter emitter, ChatMessage assistantMessage, String errorMessage) {
+    private void failAssistantMessageAndSendError(
+            SseEmitter emitter,
+            ChatMessage assistantMessage,
+            StringBuilder content,
+            StringBuilder reasoningContent,
+            String errorMessage
+    ) {
+        String resolvedMessage = failAssistantMessage(assistantMessage, content, reasoningContent, errorMessage);
+        send(emitter, SseEventType.ERROR, new SseEventData.Error(LLM_STREAM_FAILED, resolvedMessage));
+    }
+
+    private String failAssistantMessage(
+            ChatMessage assistantMessage,
+            StringBuilder content,
+            StringBuilder reasoningContent,
+            String errorMessage
+    ) {
         String resolvedMessage = errorMessage == null || errorMessage.isBlank() ? "模型调用失败" : errorMessage;
+        assistantMessage.setContent(content.toString());
+        assistantMessage.setReasoningContent(reasoningContent.toString());
         assistantMessage.setStatus(STATUS_FAILED);
         assistantMessage.setErrorMessage(resolvedMessage);
         assistantMessage.setCompletedAt(OffsetDateTime.now());
         messageMapper.updateById(assistantMessage);
-        send(emitter, SseEventType.ERROR, new SseEventData.Error(ErrorCode.INTERNAL_ERROR.name(), resolvedMessage));
+        return resolvedMessage;
     }
 
-    private void send(SseEmitter emitter, SseEventType eventType, SseEventData data) {
+    private boolean send(SseEmitter emitter, SseEventType eventType, SseEventData data) {
         try {
             sseEventSender.send(emitter, eventType, data);
+            return true;
         } catch (IOException exception) {
             sseEventSender.completeWithError(emitter, exception);
+            return false;
         }
     }
 

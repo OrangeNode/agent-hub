@@ -40,5 +40,21 @@ export const routeMenuDefinitions: RouteMenuDefinition[] = [
     icon: 'menu',
     permission: 'system:menu:list',
     component: () => import('../views/SystemMenusView.vue')
+  },
+  {
+    path: '/ai/providers',
+    name: 'ai-providers',
+    title: '供应商管理',
+    icon: 'api',
+    permission: 'ai:provider:list',
+    component: () => import('../views/AiProvidersView.vue')
+  },
+  {
+    path: '/ai/models',
+    name: 'ai-models',
+    title: '模型管理',
+    icon: 'partition',
+    permission: 'ai:model:list',
+    component: () => import('../views/AiModelsView.vue')
   }
 ]

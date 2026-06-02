@@ -3,6 +3,7 @@ package com.agenthub.server.ai;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
+import java.util.Map;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,5 +35,21 @@ class AiChatMigrationSmokeTest {
 
         assertThat(tableNames)
                 .containsExactlyInAnyOrder("ai_provider", "ai_model", "chat_conversation", "chat_message");
+    }
+
+    @Test
+    void shouldConstrainConversationTitleLengthAndNullability() {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+
+        Map<String, Object> titleColumn = jdbcTemplate.queryForMap("""
+                SELECT character_maximum_length, is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                    AND table_name = 'chat_conversation'
+                    AND column_name = 'title'
+                """);
+
+        assertThat(((Number) titleColumn.get("character_maximum_length")).longValue()).isEqualTo(30L);
+        assertThat(titleColumn.get("is_nullable")).isEqualTo("NO");
     }
 }

@@ -8,7 +8,11 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 @MapperScan({
         "com.agenthub.system.user.mapper",
         "com.agenthub.system.role.mapper",
-        "com.agenthub.system.menu.mapper"
+        "com.agenthub.system.menu.mapper",
+        "com.agenthub.ai.provider.mapper",
+        "com.agenthub.ai.model.mapper",
+        "com.agenthub.chat.conversation.mapper",
+        "com.agenthub.chat.message.mapper"
 })
 public class AgentHubApplication {
 

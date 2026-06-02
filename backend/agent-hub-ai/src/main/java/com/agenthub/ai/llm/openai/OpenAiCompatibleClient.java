@@ -83,7 +83,7 @@ public class OpenAiCompatibleClient implements LlmClient {
     private HttpRequest buildRequest(LlmStreamRequest request) throws IOException {
         String body = OBJECT_MAPPER.writeValueAsString(buildRequestBody(request));
         return HttpRequest.newBuilder()
-                .uri(URI.create(trimTrailingSlash(request.baseUrl()) + "/v1/chat/completions"))
+                .uri(URI.create(endpoint(request.baseUrl(), "/chat/completions")))
                 .header("Authorization", "Bearer " + request.apiKey())
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body))
@@ -129,6 +129,14 @@ public class OpenAiCompatibleClient implements LlmClient {
             }
         }
         return null;
+    }
+
+    private String endpoint(String baseUrl, String v1Path) {
+        String normalizedBaseUrl = trimTrailingSlash(baseUrl);
+        if (normalizedBaseUrl.endsWith("/v1")) {
+            return normalizedBaseUrl + v1Path;
+        }
+        return normalizedBaseUrl + "/v1" + v1Path;
     }
 
     private String trimTrailingSlash(String baseUrl) {

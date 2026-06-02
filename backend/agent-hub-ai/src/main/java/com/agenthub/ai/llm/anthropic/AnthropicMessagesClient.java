@@ -20,6 +20,7 @@ import java.util.stream.Stream;
 
 public class AnthropicMessagesClient implements LlmClient {
 
+    private static final int DEFAULT_MAX_TOKENS = 4096;
     private static final String DEFAULT_API_VERSION = "2023-06-01";
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
@@ -116,7 +117,7 @@ public class AnthropicMessagesClient implements LlmClient {
     private HttpRequest buildRequest(LlmStreamRequest request) throws IOException {
         String body = OBJECT_MAPPER.writeValueAsString(buildRequestBody(request));
         return HttpRequest.newBuilder()
-                .uri(URI.create(trimTrailingSlash(request.baseUrl()) + "/v1/messages"))
+                .uri(URI.create(endpoint(request.baseUrl(), "/messages")))
                 .header("x-api-key", request.apiKey())
                 .header("anthropic-version", apiVersion(request))
                 .header("Content-Type", "application/json")
@@ -129,8 +130,11 @@ public class AnthropicMessagesClient implements LlmClient {
         body.put("model", request.model());
         body.put("messages", toMessages(request.messages()));
         body.put("stream", true);
-        if (request.maxOutputTokens() != null) {
-            body.put("max_tokens", request.maxOutputTokens());
+        body.put("max_tokens", request.maxOutputTokens() == null ? DEFAULT_MAX_TOKENS : request.maxOutputTokens());
+
+        String system = systemPrompt(request.messages());
+        if (system != null) {
+            body.put("system", system);
         }
         return body;
     }
@@ -140,6 +144,7 @@ public class AnthropicMessagesClient implements LlmClient {
             return List.of();
         }
         return messages.stream()
+                .filter(message -> !"system".equals(message.role()))
                 .map(message -> {
                     Map<String, String> item = new LinkedHashMap<>();
                     item.put("role", message.role());
@@ -149,11 +154,32 @@ public class AnthropicMessagesClient implements LlmClient {
                 .toList();
     }
 
+    private String systemPrompt(List<LlmMessage> messages) {
+        if (messages == null) {
+            return null;
+        }
+        String system = messages.stream()
+                .filter(message -> "system".equals(message.role()))
+                .map(LlmMessage::content)
+                .filter(content -> content != null && !content.isBlank())
+                .reduce((left, right) -> left + "\n" + right)
+                .orElse(null);
+        return system == null || system.isBlank() ? null : system;
+    }
+
     private String apiVersion(LlmStreamRequest request) {
         if (request.apiVersion() == null || request.apiVersion().isBlank()) {
             return DEFAULT_API_VERSION;
         }
         return request.apiVersion();
+    }
+
+    private String endpoint(String baseUrl, String v1Path) {
+        String normalizedBaseUrl = trimTrailingSlash(baseUrl);
+        if (normalizedBaseUrl.endsWith("/v1")) {
+            return normalizedBaseUrl + v1Path;
+        }
+        return normalizedBaseUrl + "/v1" + v1Path;
     }
 
     private String trimTrailingSlash(String baseUrl) {

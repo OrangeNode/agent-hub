@@ -888,17 +888,14 @@ svg {
   width: min(100%, var(--chat-column-width));
   padding: 10px 16px;
   border: 1px solid #d9d9e3;
-  border-radius: 999px;
+  border-radius: 24px;
   background: #ffffff;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
-  transition: border-radius 0.2s ease, padding 0.2s ease;
   position: relative;
 }
 
 .landing-composer.is-multiline {
-  border-radius: 24px;
-  padding: 10px 16px;
-  gap: 8px;
+  gap: 4px;
 }
 
 .landing-composer.compact {
@@ -1289,12 +1286,7 @@ svg {
   }
 
   .landing-composer {
-    border-radius: 20px;
     padding: 8px 12px;
-  }
-
-  .landing-composer.is-multiline {
-    border-radius: 20px;
   }
 
   .model-select {

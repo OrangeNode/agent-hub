@@ -142,6 +142,34 @@ class ModelServiceImplTest {
     }
 
     @Test
+    void shouldRequireDefaultRuntimeConfig() {
+        AiModelMapper mapper = mock(AiModelMapper.class);
+        AiProviderService providerService = mock(AiProviderService.class);
+        AiModelServiceImpl service = new AiModelServiceImpl(mapper, providerService);
+        when(mapper.selectDefaultRuntimeConfig()).thenReturn(runtimeConfig(1L, true, true));
+
+        AiModelRuntimeConfig config = service.requireDefaultRuntimeConfig();
+
+        assertThat(config.modelId()).isEqualTo(1L);
+        assertThat(config.providerCode()).isEqualTo("openai");
+        verify(mapper).selectDefaultRuntimeConfig();
+    }
+
+    @Test
+    void shouldRejectDefaultRuntimeConfigWhenProviderDisabled() {
+        AiModelMapper mapper = mock(AiModelMapper.class);
+        AiProviderService providerService = mock(AiProviderService.class);
+        AiModelServiceImpl service = new AiModelServiceImpl(mapper, providerService);
+        when(mapper.selectDefaultRuntimeConfig()).thenReturn(runtimeConfig(1L, true, false));
+
+        assertThatThrownBy(service::requireDefaultRuntimeConfig)
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("供应商不可用")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+    }
+
+    @Test
     void shouldRejectRuntimeConfigWhenModelDisabled() {
         AiModelMapper mapper = mock(AiModelMapper.class);
         AiProviderService providerService = mock(AiProviderService.class);

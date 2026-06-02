@@ -42,8 +42,18 @@ public class AiModelServiceImpl implements AiModelService {
     @Override
     public AiModelRuntimeConfig requireAvailableRuntimeConfig(Long modelId) {
         AiModelRuntimeConfig config = modelMapper.selectRuntimeConfigById(modelId);
+        return requireUsableRuntimeConfig(config, "模型不存在");
+    }
+
+    @Override
+    public AiModelRuntimeConfig requireDefaultRuntimeConfig() {
+        AiModelRuntimeConfig config = modelMapper.selectDefaultRuntimeConfig();
+        return requireUsableRuntimeConfig(config, "默认模型不存在");
+    }
+
+    private AiModelRuntimeConfig requireUsableRuntimeConfig(AiModelRuntimeConfig config, String notFoundMessage) {
         if (config == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "模型不存在");
+            throw new BusinessException(ErrorCode.NOT_FOUND, notFoundMessage);
         }
         if (!config.enabled()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "模型不可用");

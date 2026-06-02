@@ -14,6 +14,8 @@ public interface AiModelService {
 
     AiModelRuntimeConfig requireAvailableRuntimeConfig(Long modelId);
 
+    AiModelRuntimeConfig requireDefaultRuntimeConfig();
+
     AiModelItem create(CreateModelCommand command);
 
     AiModelItem update(Long modelId, UpdateModelCommand command);

@@ -137,11 +137,61 @@ class SecurityConfigIntegrationTest {
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
 
+    @Test
+    void shouldAuthenticateChatStreamTokenFromQueryParameter() throws Exception {
+        UserAccount account = new UserAccount(1L, "admin", "管理员", "ignored", true, List.of("TOKEN_ROLE"));
+        UserProfile profile = new UserProfile(
+                1L,
+                "admin",
+                "管理员",
+                true,
+                List.of("ADMIN"),
+                List.of("chat:stream")
+        );
+        String token = createToken(1L, "admin", List.of("TOKEN_ROLE"));
+
+        when(userService.findAccountById(1L)).thenReturn(Optional.of(account));
+        when(authService.currentUser("admin")).thenReturn(profile);
+
+        mockMvc.perform(get("/api/chat/stream")
+                        .param("token", token)
+                        .param("prompt", "你好"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.username").value("admin"))
+                .andExpect(jsonPath("$.roles[0]").value("ADMIN"))
+                .andExpect(jsonPath("$.authorities[0]").value("ROLE_ADMIN"))
+                .andExpect(jsonPath("$.authorities[1]").value("chat:stream"));
+    }
+
+    @Test
+    void shouldNotAuthenticateNonChatStreamTokenFromQueryParameter() throws Exception {
+        String token = createToken(1L, "admin", List.of("ADMIN"));
+
+        mockMvc.perform(get("/test/security/authorities")
+                        .param("token", token))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value(ErrorCode.UNAUTHORIZED.code()))
+                .andExpect(jsonPath("$.data").doesNotExist());
+
+        verify(userService, never()).findAccountById(1L);
+        verify(authService, never()).currentUser("admin");
+    }
+
     @RestController
     static class AuthorityProbeController {
 
         @GetMapping("/test/security/authorities")
         AuthoritySnapshot current(Authentication authentication) {
+            LoginUser loginUser = (LoginUser) authentication.getPrincipal();
+            return new AuthoritySnapshot(
+                    loginUser.username(),
+                    loginUser.roles(),
+                    authentication.getAuthorities().stream().map(authority -> authority.getAuthority()).toList()
+            );
+        }
+
+        @GetMapping("/api/chat/stream")
+        AuthoritySnapshot chatStream(Authentication authentication) {
             LoginUser loginUser = (LoginUser) authentication.getPrincipal();
             return new AuthoritySnapshot(
                     loginUser.username(),

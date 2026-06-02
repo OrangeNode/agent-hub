@@ -111,10 +111,9 @@ public class SecurityConfig {
         @Override
         protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
                 throws ServletException, IOException {
-            String header = request.getHeader("Authorization");
+            String token = resolveToken(request);
 
-            if (header != null && header.startsWith("Bearer ")) {
-                String token = header.substring(7);
+            if (token != null) {
                 try {
                     LoginUser loginUser = jwtService.parseToken(token);
                     UserAccount userAccount = userService.findAccountById(loginUser.userId())
@@ -146,6 +145,21 @@ public class SecurityConfig {
             }
 
             filterChain.doFilter(request, response);
+        }
+
+        private String resolveToken(HttpServletRequest request) {
+            String header = request.getHeader("Authorization");
+            if (header != null && header.startsWith("Bearer ")) {
+                String token = header.substring(7);
+                return token.isBlank() ? null : token;
+            }
+
+            if ("/api/chat/stream".equals(request.getRequestURI())) {
+                String token = request.getParameter("token");
+                return token == null || token.isBlank() ? null : token;
+            }
+
+            return null;
         }
     }
 }

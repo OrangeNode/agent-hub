@@ -8,7 +8,9 @@ import com.agenthub.ai.model.dto.AiModelItem;
 import com.agenthub.ai.model.service.AiModelService;
 import com.agenthub.common.api.ApiResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
 import java.util.List;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+@Validated
 @RestController
 @RequestMapping("/api/ai/models")
 public class AiModelController {
@@ -52,7 +55,7 @@ public class AiModelController {
 
     @PutMapping("/{modelId}")
     public ApiResponse<AiModelItem> updateModel(
-            @PathVariable Long modelId,
+            @PathVariable @Positive(message = "模型必须为正数") Long modelId,
             @Valid @RequestBody UpdateModelRequest request
     ) {
         return ApiResponse.success(modelService.update(modelId, new UpdateModelCommand(
@@ -71,7 +74,9 @@ public class AiModelController {
     }
 
     @DeleteMapping("/{modelId}")
-    public ApiResponse<Void> deleteModel(@PathVariable Long modelId) {
+    public ApiResponse<Void> deleteModel(
+            @PathVariable @Positive(message = "模型必须为正数") Long modelId
+    ) {
         modelService.delete(modelId);
         return ApiResponse.success();
     }

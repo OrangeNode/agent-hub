@@ -3,15 +3,18 @@ package com.agenthub.ai.model.service.impl;
 import com.agenthub.ai.model.command.CreateModelCommand;
 import com.agenthub.ai.model.command.UpdateModelCommand;
 import com.agenthub.ai.model.dto.AiModelItem;
+import com.agenthub.ai.model.dto.AiModelRuntimeConfig;
 import com.agenthub.ai.model.entity.AiModel;
 import com.agenthub.ai.model.mapper.AiModelMapper;
 import com.agenthub.ai.model.service.AiModelService;
+import com.agenthub.ai.provider.dto.AiProviderItem;
 import com.agenthub.ai.provider.service.AiProviderService;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import java.io.Serializable;
 import java.util.List;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,14 +40,30 @@ public class AiModelServiceImpl implements AiModelService {
     }
 
     @Override
+    public AiModelRuntimeConfig requireAvailableRuntimeConfig(Long modelId) {
+        AiModelRuntimeConfig config = modelMapper.selectRuntimeConfigById(modelId);
+        if (config == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "模型不存在");
+        }
+        if (!config.enabled()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "模型不可用");
+        }
+        if (!config.providerEnabled()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "供应商不可用");
+        }
+        return config;
+    }
+
+    @Override
     @Transactional
     public AiModelItem create(CreateModelCommand command) {
-        providerService.requireById(command.providerId());
+        AiProviderItem provider = providerService.requireById(command.providerId());
         rejectDuplicateCode(command.providerId(), command.modelCode(), null);
+        rejectUnavailableDefaultModel(command.defaultModel(), command.enabled(), provider);
 
         AiModel model = new AiModel();
         fillModel(model, command);
-        modelMapper.insert(model);
+        insertModel(model);
         if (Boolean.TRUE.equals(model.getDefaultModel())) {
             modelMapper.clearDefaultModelExcept(model.getId());
         }
@@ -55,13 +74,14 @@ public class AiModelServiceImpl implements AiModelService {
     @Transactional
     public AiModelItem update(Long modelId, UpdateModelCommand command) {
         AiModel existed = requireModel(modelId);
-        providerService.requireById(command.providerId());
+        AiProviderItem provider = providerService.requireById(command.providerId());
         rejectDuplicateCode(command.providerId(), command.modelCode(), existed.getId());
+        rejectUnavailableDefaultModel(command.defaultModel(), command.enabled(), provider);
 
         AiModel updated = new AiModel();
         updated.setId(existed.getId());
         fillModel(updated, command);
-        modelMapper.updateById(updated);
+        updateModel(updated);
         if (Boolean.TRUE.equals(updated.getDefaultModel())) {
             modelMapper.clearDefaultModelExcept(updated.getId());
         }
@@ -83,6 +103,22 @@ public class AiModelServiceImpl implements AiModelService {
         return model;
     }
 
+    private void insertModel(AiModel model) {
+        try {
+            modelMapper.insert(model);
+        } catch (DuplicateKeyException exception) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "模型编码已存在");
+        }
+    }
+
+    private void updateModel(AiModel model) {
+        try {
+            modelMapper.updateById(model);
+        } catch (DuplicateKeyException exception) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "模型编码已存在");
+        }
+    }
+
     private void rejectDuplicateCode(Long providerId, String modelCode, Long excludedModelId) {
         LambdaQueryWrapper<AiModel> wrapper = new LambdaQueryWrapper<AiModel>()
                 .eq(AiModel::getProviderId, providerId)
@@ -93,6 +129,18 @@ public class AiModelServiceImpl implements AiModelService {
         boolean existed = modelMapper.selectCount(wrapper) > 0;
         if (existed) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "模型编码已存在");
+        }
+    }
+
+    private void rejectUnavailableDefaultModel(Boolean defaultModel, Boolean enabled, AiProviderItem provider) {
+        if (!Boolean.TRUE.equals(defaultModel)) {
+            return;
+        }
+        if (!defaultEnabled(enabled)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "默认模型必须处于可用状态");
+        }
+        if (!provider.enabled()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "供应商不可用");
         }
     }
 

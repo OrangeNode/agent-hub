@@ -3,6 +3,7 @@ package com.agenthub.ai.model.service;
 import com.agenthub.ai.model.command.CreateModelCommand;
 import com.agenthub.ai.model.command.UpdateModelCommand;
 import com.agenthub.ai.model.dto.AiModelItem;
+import com.agenthub.ai.model.dto.AiModelRuntimeConfig;
 import java.util.List;
 
 public interface AiModelService {
@@ -10,6 +11,8 @@ public interface AiModelService {
     List<AiModelItem> list();
 
     List<AiModelItem> listAvailable();
+
+    AiModelRuntimeConfig requireAvailableRuntimeConfig(Long modelId);
 
     AiModelItem create(CreateModelCommand command);
 

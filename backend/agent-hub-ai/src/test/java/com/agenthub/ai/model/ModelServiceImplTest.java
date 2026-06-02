@@ -9,7 +9,9 @@ import static org.mockito.Mockito.when;
 
 import com.agenthub.ai.model.command.CreateModelCommand;
 import com.agenthub.ai.model.command.UpdateModelCommand;
+import com.agenthub.ai.model.controller.request.CreateModelRequest;
 import com.agenthub.ai.model.dto.AiModelItem;
+import com.agenthub.ai.model.dto.AiModelRuntimeConfig;
 import com.agenthub.ai.model.entity.AiModel;
 import com.agenthub.ai.model.mapper.AiModelMapper;
 import com.agenthub.ai.model.service.impl.AiModelServiceImpl;
@@ -17,9 +19,13 @@ import com.agenthub.ai.provider.dto.AiProviderItem;
 import com.agenthub.ai.provider.service.AiProviderService;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
+import jakarta.validation.ValidatorFactory;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.dao.DuplicateKeyException;
 
 class ModelServiceImplTest {
 
@@ -121,6 +127,175 @@ class ModelServiceImplTest {
                 .isEqualTo(ErrorCode.NOT_FOUND);
     }
 
+    @Test
+    void shouldRequireAvailableRuntimeConfig() {
+        AiModelMapper mapper = mock(AiModelMapper.class);
+        AiProviderService providerService = mock(AiProviderService.class);
+        AiModelServiceImpl service = new AiModelServiceImpl(mapper, providerService);
+        when(mapper.selectRuntimeConfigById(1L)).thenReturn(runtimeConfig(1L, true, true));
+
+        AiModelRuntimeConfig config = service.requireAvailableRuntimeConfig(1L);
+
+        assertThat(config.modelId()).isEqualTo(1L);
+        assertThat(config.providerCode()).isEqualTo("openai");
+        assertThat(config.apiKeyCipher()).isEqualTo("sk-cipher");
+    }
+
+    @Test
+    void shouldRejectRuntimeConfigWhenModelDisabled() {
+        AiModelMapper mapper = mock(AiModelMapper.class);
+        AiProviderService providerService = mock(AiProviderService.class);
+        AiModelServiceImpl service = new AiModelServiceImpl(mapper, providerService);
+        when(mapper.selectRuntimeConfigById(1L)).thenReturn(runtimeConfig(1L, false, true));
+
+        assertThatThrownBy(() -> service.requireAvailableRuntimeConfig(1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("模型不可用")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+    }
+
+    @Test
+    void shouldRejectRuntimeConfigWhenModelNotFound() {
+        AiModelMapper mapper = mock(AiModelMapper.class);
+        AiProviderService providerService = mock(AiProviderService.class);
+        AiModelServiceImpl service = new AiModelServiceImpl(mapper, providerService);
+        when(mapper.selectRuntimeConfigById(99L)).thenReturn(null);
+
+        assertThatThrownBy(() -> service.requireAvailableRuntimeConfig(99L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("模型不存在")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.NOT_FOUND);
+    }
+
+    @Test
+    void shouldRejectRuntimeConfigWhenProviderDisabled() {
+        AiModelMapper mapper = mock(AiModelMapper.class);
+        AiProviderService providerService = mock(AiProviderService.class);
+        AiModelServiceImpl service = new AiModelServiceImpl(mapper, providerService);
+        when(mapper.selectRuntimeConfigById(1L)).thenReturn(runtimeConfig(1L, true, false));
+
+        assertThatThrownBy(() -> service.requireAvailableRuntimeConfig(1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("供应商不可用")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+    }
+
+    @Test
+    void shouldConvertDuplicateKeyExceptionWhenCreateModel() {
+        AiModelMapper mapper = mock(AiModelMapper.class);
+        AiProviderService providerService = mock(AiProviderService.class);
+        AiModelServiceImpl service = new AiModelServiceImpl(mapper, providerService);
+        when(providerService.requireById(1L)).thenReturn(providerItem(1L));
+        when(mapper.selectCount(any())).thenReturn(0L);
+        when(mapper.insert(org.mockito.ArgumentMatchers.<AiModel>any()))
+                .thenThrow(new DuplicateKeyException("uk_ai_model_provider_code"));
+
+        assertThatThrownBy(() -> service.create(createCommand(1L, "gpt-4o", false)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("模型编码已存在")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+    }
+
+    @Test
+    void shouldConvertDuplicateKeyExceptionWhenUpdateModel() {
+        AiModelMapper mapper = mock(AiModelMapper.class);
+        AiProviderService providerService = mock(AiProviderService.class);
+        AiModelServiceImpl service = new AiModelServiceImpl(mapper, providerService);
+        when(mapper.selectById(1L)).thenReturn(model(1L, 1L, "gpt-4o"));
+        when(providerService.requireById(1L)).thenReturn(providerItem(1L));
+        when(mapper.selectCount(any())).thenReturn(0L);
+        when(mapper.updateById(org.mockito.ArgumentMatchers.<AiModel>any()))
+                .thenThrow(new DuplicateKeyException("uk_ai_model_provider_code"));
+
+        assertThatThrownBy(() -> service.update(1L, updateCommand(1L, "gpt-4o-mini", false)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("模型编码已存在")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+    }
+
+    @Test
+    void shouldRejectDefaultModelWhenModelDisabled() {
+        AiModelMapper mapper = mock(AiModelMapper.class);
+        AiProviderService providerService = mock(AiProviderService.class);
+        AiModelServiceImpl service = new AiModelServiceImpl(mapper, providerService);
+        when(providerService.requireById(1L)).thenReturn(providerItem(1L));
+        when(mapper.selectCount(any())).thenReturn(0L);
+
+        assertThatThrownBy(() -> service.create(new CreateModelCommand(
+                1L,
+                "gpt-4o",
+                "GPT-4o",
+                "CHAT",
+                true,
+                false,
+                128000,
+                4096,
+                true,
+                false,
+                0
+        )))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("默认模型必须处于可用状态")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+    }
+
+    @Test
+    void shouldRejectDefaultModelWhenProviderDisabled() {
+        AiModelMapper mapper = mock(AiModelMapper.class);
+        AiProviderService providerService = mock(AiProviderService.class);
+        AiModelServiceImpl service = new AiModelServiceImpl(mapper, providerService);
+        when(providerService.requireById(1L)).thenReturn(new AiProviderItem(
+                1L,
+                "openai",
+                "OpenAI",
+                "LLM",
+                "OPENAI",
+                "https://api.openai.com/v1",
+                "BEARER",
+                "v1",
+                true,
+                false,
+                0
+        ));
+        when(mapper.selectCount(any())).thenReturn(0L);
+
+        assertThatThrownBy(() -> service.create(createCommand(1L, "gpt-4o", true)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("供应商不可用")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+    }
+
+    @Test
+    void shouldValidateCreateModelRequestNumberAndCapabilityLimits() {
+        try (ValidatorFactory factory = Validation.buildDefaultValidatorFactory()) {
+            Validator validator = factory.getValidator();
+            CreateModelRequest request = new CreateModelRequest(
+                    0L,
+                    "gpt-4o",
+                    "GPT-4o",
+                    "c".repeat(65),
+                    true,
+                    false,
+                    -1,
+                    -2,
+                    false,
+                    true,
+                    -1
+            );
+
+            assertThat(validator.validate(request))
+                    .extracting(violation -> violation.getPropertyPath().toString())
+                    .contains("providerId", "capabilityType", "contextWindow", "maxOutputTokens", "sort");
+        }
+    }
+
     private CreateModelCommand createCommand(Long providerId, String modelCode, Boolean defaultModel) {
         return new CreateModelCommand(
                 providerId,
@@ -202,6 +377,31 @@ class ModelServiceImplTest {
                 defaultModel,
                 enabled,
                 0
+        );
+    }
+
+    private AiModelRuntimeConfig runtimeConfig(Long modelId, boolean modelEnabled, boolean providerEnabled) {
+        return new AiModelRuntimeConfig(
+                modelId,
+                1L,
+                "openai",
+                "OpenAI",
+                "LLM",
+                "OPENAI",
+                "https://api.openai.com/v1",
+                "sk-cipher",
+                "BEARER",
+                "v1",
+                "{}",
+                "{}",
+                "gpt-4o",
+                "GPT-4o",
+                true,
+                false,
+                128000,
+                4096,
+                modelEnabled,
+                providerEnabled
         );
     }
 }

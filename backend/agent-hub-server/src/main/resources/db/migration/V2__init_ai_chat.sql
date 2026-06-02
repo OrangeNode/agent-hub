@@ -84,7 +84,8 @@ WHERE NOT EXISTS (
 INSERT INTO sys_menu (parent_id, name, title, path, component, icon, permission, menu_type, visible, sort, created_by, updated_by)
 SELECT parent.id, 'aiProviders', '供应商管理', '/ai/providers', 'ai/providers/index', 'ApiOutlined', 'ai:provider:list', 'MENU', TRUE, 1, 1, 1
 FROM sys_menu parent
-WHERE parent.name = 'ai'
+WHERE parent.parent_id = 0
+    AND parent.name = 'ai'
     AND NOT EXISTS (
         SELECT 1
         FROM sys_menu child
@@ -95,7 +96,8 @@ WHERE parent.name = 'ai'
 INSERT INTO sys_menu (parent_id, name, title, path, component, icon, permission, menu_type, visible, sort, created_by, updated_by)
 SELECT parent.id, 'aiModels', '模型管理', '/ai/models', 'ai/models/index', 'PartitionOutlined', 'ai:model:list', 'MENU', TRUE, 2, 1, 1
 FROM sys_menu parent
-WHERE parent.name = 'ai'
+WHERE parent.parent_id = 0
+    AND parent.name = 'ai'
     AND NOT EXISTS (
         SELECT 1
         FROM sys_menu child
@@ -106,7 +108,19 @@ WHERE parent.name = 'ai'
 INSERT INTO sys_role_menu (role_id, menu_id, created_by, updated_by)
 SELECT sr.id, sm.id, 1, 1
 FROM sys_role sr
-JOIN sys_menu sm ON sm.name IN ('ai', 'aiProviders', 'aiModels')
+JOIN (
+    SELECT root.id
+    FROM sys_menu root
+    WHERE root.parent_id = 0
+        AND root.name = 'ai'
+    UNION ALL
+    SELECT child.id
+    FROM sys_menu root
+    JOIN sys_menu child ON child.parent_id = root.id
+    WHERE root.parent_id = 0
+        AND root.name = 'ai'
+        AND child.name IN ('aiProviders', 'aiModels')
+) sm ON 1 = 1
 WHERE sr.code = 'ADMIN'
     AND NOT EXISTS (
         SELECT 1

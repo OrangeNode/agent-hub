@@ -62,7 +62,15 @@ class AiChatMigrationSmokeTest {
         List<Map<String, Object>> menus = jdbcTemplate.queryForList("""
                 SELECT name, title
                 FROM sys_menu
-                WHERE name IN ('ai', 'aiProviders', 'aiModels')
+                WHERE parent_id = 0
+                    AND name = 'ai'
+                UNION ALL
+                SELECT child.name, child.title
+                FROM sys_menu root
+                JOIN sys_menu child ON child.parent_id = root.id
+                WHERE root.parent_id = 0
+                    AND root.name = 'ai'
+                    AND child.name IN ('aiProviders', 'aiModels')
                 """);
 
         assertThat(menus)
@@ -73,12 +81,55 @@ class AiChatMigrationSmokeTest {
                 SELECT COUNT(*)
                 FROM sys_role_menu srm
                 JOIN sys_role sr ON sr.id = srm.role_id
+                JOIN sys_menu root ON root.parent_id = 0
+                    AND root.name = 'ai'
                 JOIN sys_menu sm ON sm.id = srm.menu_id
+                    AND (
+                        sm.id = root.id
+                        OR sm.parent_id = root.id
+                    )
                 WHERE sr.code = 'ADMIN'
                     AND sm.name IN ('ai', 'aiProviders', 'aiModels')
                 """, Integer.class);
 
         assertThat(adminMenuCount).isEqualTo(3);
+    }
+
+    @Test
+    void shouldNotAuthorizeSameNamedMenusOutsideTargetAiTree() {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+
+        jdbcTemplate.update("""
+                INSERT INTO sys_menu (parent_id, name, title, path, component, icon, permission, menu_type, visible, sort, created_by, updated_by)
+                VALUES (2, 'aiProviders', '非目标供应商菜单', '/system/ai-providers-shadow', NULL, NULL, 'shadow:provider:list', 'MENU', TRUE, 99, 1, 1)
+                """);
+
+        Integer adminBoundTargetAiMenus = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM sys_role_menu srm
+                JOIN sys_role sr ON sr.id = srm.role_id
+                JOIN sys_menu root ON root.parent_id = 0
+                    AND root.name = 'ai'
+                JOIN sys_menu sm ON sm.id = srm.menu_id
+                    AND (
+                        sm.id = root.id
+                        OR sm.parent_id = root.id
+                    )
+                WHERE sr.code = 'ADMIN'
+                    AND sm.name IN ('ai', 'aiProviders', 'aiModels')
+                """, Integer.class);
+
+        Integer adminBoundShadowMenus = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM sys_role_menu srm
+                JOIN sys_role sr ON sr.id = srm.role_id
+                JOIN sys_menu sm ON sm.id = srm.menu_id
+                WHERE sr.code = 'ADMIN'
+                    AND sm.path = '/system/ai-providers-shadow'
+                """, Integer.class);
+
+        assertThat(adminBoundTargetAiMenus).isEqualTo(3);
+        assertThat(adminBoundShadowMenus).isZero();
     }
 
     @Test
@@ -124,5 +175,8 @@ class AiChatMigrationSmokeTest {
         assertThat(scriptContent).doesNotContain("INSERT INTO sys_menu (id");
         assertThat(scriptContent).doesNotContain("INSERT INTO sys_role_menu (id");
         assertThat(scriptContent).doesNotContain("RESTART WITH");
+        assertThat(scriptContent).doesNotContain("WHERE parent.name = 'ai'");
+        assertThat(scriptContent).doesNotContain("JOIN sys_menu sm ON sm.name IN");
+        assertThat(scriptContent).contains("parent.parent_id = 0");
     }
 }

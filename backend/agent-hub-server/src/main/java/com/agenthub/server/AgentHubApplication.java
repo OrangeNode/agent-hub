@@ -6,9 +6,9 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication(scanBasePackages = "com.agenthub")
 @MapperScan({
-        "com.agenthub.system.user.persistence",
-        "com.agenthub.system.role.persistence",
-        "com.agenthub.system.menu.persistence"
+        "com.agenthub.system.user.mapper",
+        "com.agenthub.system.role.mapper",
+        "com.agenthub.system.menu.mapper"
 })
 public class AgentHubApplication {
 

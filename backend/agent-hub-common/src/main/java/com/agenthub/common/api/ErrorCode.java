@@ -1,7 +1,7 @@
 package com.agenthub.common.api;
 
 public enum ErrorCode {
-    SUCCESS(0, "ok"),
+    SUCCESS(200, "成功"),
     BAD_REQUEST(400, "请求参数不正确"),
     UNAUTHORIZED(401, "未登录或登录已过期"),
     FORBIDDEN(403, "没有访问权限"),

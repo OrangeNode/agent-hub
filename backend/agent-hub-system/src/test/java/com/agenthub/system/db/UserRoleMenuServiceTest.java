@@ -4,23 +4,23 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.agenthub.common.exception.BusinessException;
-import com.agenthub.system.menu.CreateMenuCommand;
-import com.agenthub.system.menu.MenuServiceImpl;
-import com.agenthub.system.menu.MenuItem;
-import com.agenthub.system.menu.persistence.MenuMapper;
-import com.agenthub.system.menu.persistence.SysMenu;
-import com.agenthub.system.role.CreateRoleCommand;
-import com.agenthub.system.role.RoleServiceImpl;
-import com.agenthub.system.role.RoleItem;
-import com.agenthub.system.role.persistence.RoleMapper;
-import com.agenthub.system.role.persistence.SysRole;
-import com.agenthub.system.role.persistence.SysRoleMenu;
-import com.agenthub.system.user.CreateUserCommand;
-import com.agenthub.system.user.UserServiceImpl;
-import com.agenthub.system.user.UserAccount;
-import com.agenthub.system.user.persistence.SysUser;
-import com.agenthub.system.user.persistence.SysUserRole;
-import com.agenthub.system.user.persistence.UserMapper;
+import com.agenthub.system.menu.command.CreateMenuCommand;
+import com.agenthub.system.menu.dto.MenuItem;
+import com.agenthub.system.menu.entity.SysMenu;
+import com.agenthub.system.menu.mapper.MenuMapper;
+import com.agenthub.system.menu.service.impl.MenuServiceImpl;
+import com.agenthub.system.role.command.CreateRoleCommand;
+import com.agenthub.system.role.dto.RoleItem;
+import com.agenthub.system.role.entity.SysRole;
+import com.agenthub.system.role.entity.SysRoleMenu;
+import com.agenthub.system.role.mapper.RoleMapper;
+import com.agenthub.system.role.service.impl.RoleServiceImpl;
+import com.agenthub.system.user.command.CreateUserCommand;
+import com.agenthub.system.user.dto.UserAccount;
+import com.agenthub.system.user.entity.SysUser;
+import com.agenthub.system.user.entity.SysUserRole;
+import com.agenthub.system.user.mapper.UserMapper;
+import com.agenthub.system.user.service.impl.UserServiceImpl;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -58,13 +58,13 @@ class UserRoleMenuServiceTest {
 
         assertThatThrownBy(() -> context.userService.create(new CreateUserCommand(
                 "operator",
-                "运营",
+                "运营人员",
                 "operator123",
                 true,
                 List.of("DISABLED")
         )))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("禁用角色不能绑定用户");
+                .hasMessageContaining("角色已被禁用");
     }
 
     @Test
@@ -87,7 +87,7 @@ class UserRoleMenuServiceTest {
 
         context.userService.create(new CreateUserCommand(
                 "operator",
-                "运营",
+                "运营人员",
                 "operator123",
                 true,
                 List.of("USER")
@@ -105,7 +105,7 @@ class UserRoleMenuServiceTest {
 
         assertThatThrownBy(() -> context.roleService.delete(1L))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("角色已被用户绑定，不能删除");
+                .hasMessageContaining("当前角色已分配给用户");
     }
 
     @Test
@@ -115,7 +115,7 @@ class UserRoleMenuServiceTest {
         assertThatThrownBy(() -> context.menuService.create(new CreateMenuCommand(
                 999L,
                 "orphanMenu",
-                "孤儿菜单",
+                "孤立菜单",
                 "/orphan",
                 "system/orphan/index",
                 null,
@@ -125,7 +125,7 @@ class UserRoleMenuServiceTest {
                 9
         )))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("父菜单不存在");
+                .hasMessageContaining("上级菜单不存在");
     }
 
     private static final class TestContext {
@@ -160,7 +160,7 @@ class UserRoleMenuServiceTest {
             db.addMenu(4L, 2L, "systemRoles", "角色管理", "/system/roles", "MENU", 2);
             db.addMenu(5L, 2L, "systemMenus", "菜单管理", "/system/menus", "MENU", 3);
 
-            db.addRole(1L, "ADMIN", "管理员", true, List.of(1L, 2L, 3L, 4L, 5L));
+            db.addRole(1L, "ADMIN", "平台管理员", true, List.of(1L, 2L, 3L, 4L, 5L));
             db.addRole(2L, "USER", "普通用户", true, List.of(1L));
             db.addRole(3L, "DISABLED", "禁用角色", false, List.of(1L));
 
@@ -200,20 +200,30 @@ class UserRoleMenuServiceTest {
                     case "selectRoleCodesByUserId" -> db.roleCodesByUserId((Long) args[0]);
                     case "selectRoleIdsByUserId" -> new ArrayList<>(db.userRoles.getOrDefault((Long) args[0], List.of()));
                     case "insertUserRole" -> {
-                        SysUserRole relation = (SysUserRole) args[0];
+                        SysUserRole relation = args[0] instanceof SysUserRole userRole
+                                ? userRole
+                                : (SysUserRole) args[1];
                         db.userRoles.computeIfAbsent(relation.getUserId(), key -> new ArrayList<>()).add(relation.getRoleId());
                         yield 1;
                     }
                     case "deleteUserRolesByUserId" -> {
-                        db.userRoles.remove((Long) args[0]);
+                        Long userId = args[0] instanceof Long value ? value : (Long) args[1];
+                        db.userRoles.remove(userId);
                         yield 1;
                     }
                     case "deleteUserRolesByRoleId" -> {
-                        Long roleId = (Long) args[0];
+                        Long roleId = args[0] instanceof Long value ? value : (Long) args[1];
                         db.userRoles.values().forEach(roleIds -> roleIds.removeIf(id -> Objects.equals(id, roleId)));
                         yield 1;
                     }
-                    case "countUsersByRoleId" -> db.countUsersByRoleId((Long) args[0]);
+                    case "countUsersByRoleId" -> {
+                        Long roleId = args[0] instanceof Long value ? value : (Long) args[1];
+                        yield db.countUsersByRoleId(roleId);
+                    }
+                    case "selectByQuery" -> {
+                        Object queryArg = args[0] != null ? args[0] : args[1];
+                        yield db.findUsersByQuery(queryArg);
+                    }
                     default -> defaultValue(method.getReturnType());
                 });
     }
@@ -223,10 +233,10 @@ class UserRoleMenuServiceTest {
                 UserRoleMenuServiceTest.class.getClassLoader(),
                 new Class<?>[]{RoleMapper.class},
                 (proxy, method, args) -> switch (method.getName()) {
-                    case "selectByCodes" -> db.rolesByCodes((List<String>) args[0], false);
-                    case "selectEnabledByCodes" -> db.rolesByCodes((List<String>) args[0], true);
-                    case "selectMenuIdsByRoleId" -> new ArrayList<>(db.roleMenus.getOrDefault((Long) args[0], List.of()));
-                    case "selectMenuIdsByRoleCodes" -> db.menuIdsByRoleCodes((List<String>) args[0]);
+                    case "selectByCodes" -> db.rolesByCodes((List<String>) valueArg(args), false);
+                    case "selectEnabledByCodes" -> db.rolesByCodes((List<String>) valueArg(args), true);
+                    case "selectMenuIdsByRoleId" -> new ArrayList<>(db.roleMenus.getOrDefault((Long) valueArg(args), List.of()));
+                    case "selectMenuIdsByRoleCodes" -> db.menuIdsByRoleCodes((List<String>) valueArg(args));
                     case "selectList" -> new ArrayList<>(db.roles.values());
                     case "selectCount" -> 0L;
                     case "selectById" -> db.roles.get((Long) args[0]);
@@ -250,16 +260,19 @@ class UserRoleMenuServiceTest {
                         yield 1;
                     }
                     case "insertRoleMenu" -> {
-                        SysRoleMenu relation = (SysRoleMenu) args[0];
+                        SysRoleMenu relation = args[0] instanceof SysRoleMenu roleMenu
+                                ? roleMenu
+                                : (SysRoleMenu) args[1];
                         db.roleMenus.computeIfAbsent(relation.getRoleId(), key -> new ArrayList<>()).add(relation.getMenuId());
                         yield 1;
                     }
                     case "deleteRoleMenusByRoleId" -> {
-                        db.roleMenus.remove((Long) args[0]);
+                        Long roleId = (Long) valueArg(args);
+                        db.roleMenus.remove(roleId);
                         yield 1;
                     }
                     case "deleteRoleMenusByMenuIds" -> {
-                        List<Long> menuIds = (List<Long>) args[0];
+                        List<Long> menuIds = (List<Long>) valueArg(args);
                         db.roleMenus.values().forEach(ids -> ids.removeIf(menuIds::contains));
                         yield 1;
                     }
@@ -297,6 +310,10 @@ class UserRoleMenuServiceTest {
                     }
                     default -> defaultValue(method.getReturnType());
                 });
+    }
+
+    private static Object valueArg(Object[] args) {
+        return args.length == 1 ? args[0] : args[1];
     }
 
     private static SysUser copyUser(SysUser source) {
@@ -463,6 +480,10 @@ class UserRoleMenuServiceTest {
                     .filter(user -> Objects.equals(user.getUsername(), username))
                     .findFirst()
                     .orElse(null);
+        }
+
+        private List<Object> findUsersByQuery(Object queryArg) {
+            return new ArrayList<>(users.values());
         }
 
         private List<String> roleCodesByUserId(Long userId) {

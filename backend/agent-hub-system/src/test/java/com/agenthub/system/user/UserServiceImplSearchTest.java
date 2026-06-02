@@ -5,9 +5,12 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.agenthub.system.role.persistence.RoleMapper;
-import com.agenthub.system.user.persistence.SysUser;
-import com.agenthub.system.user.persistence.UserMapper;
+import com.agenthub.system.role.mapper.RoleMapper;
+import com.agenthub.system.user.command.UserQuery;
+import com.agenthub.system.user.dto.UserProfile;
+import com.agenthub.system.user.entity.SysUser;
+import com.agenthub.system.user.mapper.UserMapper;
+import com.agenthub.system.user.service.impl.UserServiceImpl;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.crypto.password.PasswordEncoder;

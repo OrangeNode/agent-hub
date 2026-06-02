@@ -22,33 +22,23 @@ public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(BusinessException.class)
-    public ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException exception) {
-        HttpStatus status = switch (exception.errorCode()) {
-            case BAD_REQUEST -> HttpStatus.BAD_REQUEST;
-            case UNAUTHORIZED -> HttpStatus.UNAUTHORIZED;
-            case FORBIDDEN -> HttpStatus.FORBIDDEN;
-            case NOT_FOUND -> HttpStatus.NOT_FOUND;
-            default -> HttpStatus.INTERNAL_SERVER_ERROR;
-        };
-
-        return ResponseEntity.status(status)
-                .body(ApiResponse.failure(exception.errorCode().code(), exception.getMessage()));
+    public ApiResponse<Void> handleBusinessException(BusinessException exception) {
+        return ApiResponse.failure(exception.errorCode().code(), exception.getMessage());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ApiResponse<List<ValidationError>>> handleValidationException(
-            MethodArgumentNotValidException exception) {
+    public ApiResponse<List<ValidationError>> handleValidationException(MethodArgumentNotValidException exception) {
         List<ValidationError> errors = exception.getBindingResult()
                 .getFieldErrors()
                 .stream()
                 .map(this::toValidationError)
                 .toList();
 
-        return ResponseEntity.badRequest().body(new ApiResponse<>(
+        return new ApiResponse<>(
                 ErrorCode.BAD_REQUEST.code(),
                 "请求参数不正确",
                 errors
-        ));
+        );
     }
 
     @ExceptionHandler(AuthenticationException.class)
@@ -62,9 +52,9 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ApiResponse<Void>> handleUnknownException(Exception exception) {
+    public ApiResponse<Void> handleUnknownException(Exception exception) {
         log.error("未处理异常", exception);
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(ApiResponse.failure(ErrorCode.INTERNAL_ERROR));
+        return ApiResponse.failure(ErrorCode.INTERNAL_ERROR);
     }
 
     private ValidationError toValidationError(FieldError fieldError) {

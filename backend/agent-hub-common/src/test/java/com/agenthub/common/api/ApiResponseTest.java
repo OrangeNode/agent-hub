@@ -7,16 +7,16 @@ import org.junit.jupiter.api.Test;
 class ApiResponseTest {
 
     @Test
-    void successShouldUseZeroCodeAndDefaultMessage() {
-        ApiResponse<String> response = ApiResponse.success("ok-data");
+    void shouldBuildSuccessResponseWithData() {
+        ApiResponse<String> response = ApiResponse.success("ok");
 
-        assertThat(response.code()).isZero();
-        assertThat(response.message()).isEqualTo("ok");
-        assertThat(response.data()).isEqualTo("ok-data");
+        assertThat(response.code()).isEqualTo(200);
+        assertThat(response.message()).isEqualTo("成功");
+        assertThat(response.data()).isEqualTo("ok");
     }
 
     @Test
-    void failureShouldUseErrorCodeMessage() {
+    void shouldBuildFailureResponse() {
         ApiResponse<Void> response = ApiResponse.failure(ErrorCode.UNAUTHORIZED);
 
         assertThat(response.code()).isEqualTo(401);

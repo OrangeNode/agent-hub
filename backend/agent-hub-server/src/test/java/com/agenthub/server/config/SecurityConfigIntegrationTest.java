@@ -12,12 +12,12 @@ import com.agenthub.common.exception.BusinessException;
 import com.agenthub.security.jwt.JwtProperties;
 import com.agenthub.security.principal.LoginUser;
 import com.agenthub.server.support.ServerWebTestApplication;
-import com.agenthub.system.auth.AuthService;
-import com.agenthub.system.menu.MenuService;
-import com.agenthub.system.role.RoleService;
-import com.agenthub.system.user.UserAccount;
-import com.agenthub.system.user.UserProfile;
-import com.agenthub.system.user.UserService;
+import com.agenthub.system.auth.service.AuthService;
+import com.agenthub.system.menu.service.MenuService;
+import com.agenthub.system.role.service.RoleService;
+import com.agenthub.system.user.dto.UserAccount;
+import com.agenthub.system.user.dto.UserProfile;
+import com.agenthub.system.user.service.UserService;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import java.nio.charset.StandardCharsets;
@@ -35,9 +35,9 @@ import org.springframework.security.web.FilterChainProxy;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
-import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.WebApplicationContext;
 
 @SpringBootTest(
         classes = {ServerWebTestApplication.class, SecurityConfigIntegrationTest.TestProbeConfiguration.class},

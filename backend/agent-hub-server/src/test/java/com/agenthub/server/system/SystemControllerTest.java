@@ -12,15 +12,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.agenthub.security.jwt.JwtProperties;
 import com.agenthub.server.support.ServerWebTestApplication;
-import com.agenthub.system.auth.AuthService;
-import com.agenthub.system.menu.MenuItem;
-import com.agenthub.system.menu.MenuService;
-import com.agenthub.system.role.RoleService;
-import com.agenthub.system.user.CreateUserCommand;
-import com.agenthub.system.user.UserAccount;
-import com.agenthub.system.user.UserProfile;
-import com.agenthub.system.user.UserQuery;
-import com.agenthub.system.user.UserService;
+import com.agenthub.system.auth.service.AuthService;
+import com.agenthub.system.menu.dto.MenuItem;
+import com.agenthub.system.menu.service.MenuService;
+import com.agenthub.system.role.service.RoleService;
+import com.agenthub.system.user.command.CreateUserCommand;
+import com.agenthub.system.user.command.UserQuery;
+import com.agenthub.system.user.dto.UserAccount;
+import com.agenthub.system.user.dto.UserProfile;
+import com.agenthub.system.user.service.UserService;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import java.nio.charset.StandardCharsets;
@@ -130,7 +130,7 @@ class SystemControllerTest {
         UserProfile createdUser = new UserProfile(
                 2L,
                 "editor",
-                "内容编辑",
+                "编辑人员",
                 true,
                 List.of("USER"),
                 List.of()
@@ -139,7 +139,7 @@ class SystemControllerTest {
         String requestBody = """
                 {
                   "username": "editor",
-                  "displayName": "内容编辑",
+                  "displayName": "编辑人员",
                   "password": "editor123",
                   "enabled": true,
                   "roles": ["USER"]
@@ -155,7 +155,7 @@ class SystemControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(requestBody))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.data.username").value("editor"))
                 .andExpect(jsonPath("$.data.roles[0]").value("USER"));
 
@@ -163,7 +163,7 @@ class SystemControllerTest {
         verify(authService).currentUser("admin");
         verify(userService).create(eq(new CreateUserCommand(
                 "editor",
-                "内容编辑",
+                "编辑人员",
                 "editor123",
                 true,
                 List.of("USER")
@@ -202,7 +202,7 @@ class SystemControllerTest {
                         .param("enabled", "true")
                         .param("roleCode", "USER"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(0))
+                .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.data[0].username").value("zhangsan"));
 
         verify(userService).findAccountById(1L);

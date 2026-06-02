@@ -32,7 +32,7 @@ class GlobalExceptionHandlerTest {
     @Test
     void shouldConvertBusinessExceptionToUnifiedResponse() throws Exception {
         mockMvc.perform(get("/test/business-error"))
-                .andExpect(status().isBadRequest())
+                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(400))
                 .andExpect(jsonPath("$.message").value("请求参数不正确"));
     }

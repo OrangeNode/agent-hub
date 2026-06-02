@@ -1,16 +1,12 @@
 <template>
-  <div class="login-page">
-    <section class="hero">
-      <div class="hero-copy">
-        <span class="eyebrow">Agent Hub 用户端</span>
-        <h1>登录后继续你的会话工作流</h1>
-        <p>这里提供登录入口、会话导航和 SSE 流式聊天基础体验。</p>
+  <main class="login-page">
+    <section class="login-card">
+      <div class="brand-mark">A</div>
+      <div class="heading">
+        <p>Agent Hub 用户端</p>
+        <h1>登录后开始对话</h1>
+        <span>当前为初始化骨架，输入任意用户名和密码即可进入。</span>
       </div>
-    </section>
-
-    <section class="panel">
-      <n-h2 style="margin: 0">账号登录</n-h2>
-      <n-p depth="3" style="margin-top: 8px">当前为初始化骨架，输入任意用户名即可进入。</n-p>
 
       <n-form ref="formRef" :model="formValue" :rules="rules" size="large">
         <n-form-item path="username" label="用户名">
@@ -26,16 +22,18 @@
           />
         </n-form-item>
 
-        <n-button block type="primary" :loading="submitting" @click="handleLogin">登录</n-button>
+        <n-button block type="primary" size="large" :loading="submitting" @click="handleLogin">
+          登录
+        </n-button>
       </n-form>
     </section>
-  </div>
+  </main>
 </template>
 
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { useMessage, NButton, NForm, NFormItem, NH2, NInput, NP } from 'naive-ui'
+import { useMessage, NButton, NForm, NFormItem, NInput } from 'naive-ui'
 import type { FormInst, FormRules } from 'naive-ui'
 
 import { useAuthStore } from '../stores/auth'
@@ -78,7 +76,7 @@ async function handleLogin() {
     authStore.login(username, `mock-token-${username || 'user'}`)
     message.success('登录成功')
     submitting.value = false
-    void router.push('/')
+    void router.push('/chat')
   }, 300)
 }
 </script>
@@ -86,71 +84,69 @@ async function handleLogin() {
 <style scoped>
 .login-page {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(360px, 420px);
   min-height: 100vh;
-  background: #f8fafc;
-}
-
-.hero {
-  display: flex;
-  align-items: flex-end;
-  padding: 56px;
+  place-items: center;
+  padding: 24px;
   background:
-    linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.88)),
-    url('https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=1600&q=80')
-      center / cover;
-  color: #f8fafc;
+    radial-gradient(circle at 50% 0%, rgba(37, 99, 235, 0.1), transparent 34%),
+    #ffffff;
 }
 
-.hero-copy {
-  max-width: 520px;
-  padding-bottom: 32px;
+.login-card {
+  display: grid;
+  gap: 26px;
+  width: min(100%, 420px);
+  padding: 34px;
+  border: 1px solid #ececf1;
+  border-radius: 22px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.1);
 }
 
-.eyebrow {
-  display: inline-block;
-  margin-bottom: 16px;
-  color: #cbd5e1;
-  font-size: 13px;
+.brand-mark {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 20px;
+  font-weight: 700;
 }
 
-.hero-copy h1 {
+.heading {
+  display: grid;
+  gap: 8px;
+}
+
+.heading p,
+.heading h1,
+.heading span {
   margin: 0;
-  font-size: 42px;
-  line-height: 1.1;
 }
 
-.hero-copy p {
-  margin: 16px 0 0;
-  color: #e2e8f0;
-  font-size: 16px;
+.heading p {
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.heading h1 {
+  color: #202123;
+  font-size: 28px;
+  letter-spacing: -0.04em;
+}
+
+.heading span {
+  color: #6b6f76;
+  font-size: 14px;
   line-height: 1.7;
 }
 
-.panel {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 48px;
-  background: #fff;
-}
-
-@media (max-width: 960px) {
-  .login-page {
-    grid-template-columns: 1fr;
-  }
-
-  .hero {
-    min-height: 40vh;
-    padding: 32px 24px;
-  }
-
-  .hero-copy h1 {
-    font-size: 32px;
-  }
-
-  .panel {
-    padding: 32px 24px;
+@media (max-width: 520px) {
+  .login-card {
+    padding: 24px;
   }
 }
 </style>

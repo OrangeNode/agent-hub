@@ -114,7 +114,7 @@ public class RoleServiceImpl implements RoleService {
             return;
         }
         List<Long> distinctMenuIds = menuIds.stream().distinct().toList();
-        Set<Long> existingMenuIds = menuMapper.selectBatchIds(distinctMenuIds).stream()
+        Set<Long> existingMenuIds = menuMapper.selectByIds(distinctMenuIds).stream()
                 .map(SysMenu::getId)
                 .collect(Collectors.toSet());
         List<Long> missingMenuIds = distinctMenuIds.stream()

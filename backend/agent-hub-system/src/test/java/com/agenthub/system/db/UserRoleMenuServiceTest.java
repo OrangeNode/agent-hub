@@ -286,7 +286,7 @@ class UserRoleMenuServiceTest {
                 new Class<?>[]{MenuMapper.class},
                 (proxy, method, args) -> switch (method.getName()) {
                     case "selectList" -> new ArrayList<>(db.menus.values());
-                    case "selectBatchIds" -> db.findMenusByIds((List<Long>) args[0]);
+                    case "selectBatchIds", "selectByIds" -> db.findMenusByIds((List<Long>) args[0]);
                     case "selectById" -> db.menus.get((Long) args[0]);
                     case "insert" -> {
                         SysMenu menu = (SysMenu) args[0];
@@ -302,7 +302,7 @@ class UserRoleMenuServiceTest {
                         }
                         yield 1;
                     }
-                    case "deleteBatchIds" -> {
+                    case "deleteBatchIds", "deleteByIds" -> {
                         for (Long id : (List<Long>) args[0]) {
                             db.menus.remove(id);
                         }

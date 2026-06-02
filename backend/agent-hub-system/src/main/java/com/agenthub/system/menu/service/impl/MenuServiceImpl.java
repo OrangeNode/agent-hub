@@ -76,7 +76,7 @@ public class MenuServiceImpl implements MenuService {
         if (menuIds == null || menuIds.isEmpty()) {
             return List.of();
         }
-        return menuMapper.selectBatchIds(menuIds).stream()
+        return menuMapper.selectByIds(menuIds).stream()
                 .sorted(menuComparator())
                 .map(this::withoutChildren)
                 .toList();
@@ -129,7 +129,7 @@ public class MenuServiceImpl implements MenuService {
         requireMenu(menuId);
         List<Long> targetIds = collectDescendantIds(menuId);
         roleMapper.deleteRoleMenusByMenuIds(targetIds);
-        menuMapper.deleteBatchIds(targetIds);
+        menuMapper.deleteByIds(targetIds);
     }
 
     @Override

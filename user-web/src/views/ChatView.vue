@@ -78,7 +78,7 @@
       <div class="sidebar-footer">
         <div class="user-avatar">{{ userInitial }}</div>
         <div class="user-meta">
-          <strong>{{ authStore.username || '用户' }}</strong>
+          <strong>{{ authStore.displayName || '用户' }}</strong>
         </div>
         <n-button quaternary size="small" @click="handleLogout">退出</n-button>
       </div>
@@ -136,7 +136,7 @@
             class="composer-input"
           />
           <n-popselect v-model:value="selectedModel" :options="modelOptions" trigger="click" placement="top">
-            <button type="button" class="model-select composer-model">{{ selectedModel }}</button>
+            <button type="button" class="model-select composer-model">{{ selectedModelLabel }}</button>
           </n-popselect>
           <button type="button" class="send-orb composer-send" :disabled="streaming" @click="handleSend" aria-label="发送">
             <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -168,6 +168,10 @@
             </div>
 
             <div v-else class="assistant-message">
+              <div v-if="messageItem.reasoningContent" class="reasoning-block">
+                <strong>思考过程</strong>
+                <p>{{ messageItem.reasoningContent }}</p>
+              </div>
               <p>{{ messageItem.content || '正在生成回复...' }}</p>
               <div class="message-tools">
                 <button type="button" title="复制" @click="copyMessage(messageItem.content)">
@@ -237,7 +241,7 @@
               class="composer-input"
             />
             <n-popselect v-model:value="selectedModel" :options="modelOptions" trigger="click" placement="top">
-              <button type="button" class="model-select composer-model">{{ selectedModel }}</button>
+              <button type="button" class="model-select composer-model">{{ selectedModelLabel }}</button>
             </n-popselect>
             <button type="button" class="send-orb composer-send" :disabled="streaming" @click="handleSend" aria-label="发送">
               <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -290,25 +294,33 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage, NButton, NInput, NPopselect } from 'naive-ui'
 
-import { openChatStream } from '../api/chat'
+import {
+  fetchAvailableModels,
+  fetchConversationMessages,
+  fetchConversations,
+  openChatStream
+} from '../api/chat'
+import type { AvailableModelRecord, ChatMessageRecord, ConversationRecord } from '../api/chat'
 import { useAuthStore } from '../stores/auth'
 
 type ChatRole = 'user' | 'assistant'
 
 interface ConversationItem {
-  id: string
+  id: number
   title: string
   updatedAt: string
 }
 
 interface ChatMessageItem {
-  id: string
+  id: number
   role: ChatRole
   content: string
+  reasoningContent?: string
+  status?: string
 }
 
 interface AgentOption {
@@ -332,12 +344,13 @@ const streaming = ref(false)
 const workPanelOpen = ref(false)
 const agentMenuOpen = ref(false)
 const sidebarCollapsed = ref(false)
-const activeConversationId = ref<string | null>(null)
+const activeConversationId = ref<number | null>(null)
 const activeAgentName = ref('通用 Agent')
 const eventSourceRef = ref<EventSource | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const uploadedFiles = ref<UploadedFile[]>([])
-const selectedModel = ref('Instant')
+const selectedModel = ref<number | null>(null)
+const availableModels = ref<AvailableModelRecord[]>([])
 
 // 监听输入内容，判断是否多行
 watch(prompt, (val) => {
@@ -345,13 +358,20 @@ watch(prompt, (val) => {
   isMultiline.value = val.includes('\n') || val.length > 40
 })
 
-const modelOptions = [
-  { label: 'Instant', value: 'Instant' },
-  { label: 'GPT-4o', value: 'GPT-4o' },
-  { label: 'Claude 3.5', value: 'Claude 3.5' },
-  { label: 'DeepSeek V3', value: 'DeepSeek V3' },
-  { label: 'Qwen Max', value: 'Qwen Max' }
-]
+const modelOptions = computed(() =>
+  availableModels.value.map((item) => ({
+    label: item.displayName,
+    value: item.modelId
+  }))
+)
+
+const selectedModelLabel = computed(() => {
+  if (!selectedModel.value) {
+    return '默认模型'
+  }
+
+  return availableModels.value.find((item) => item.modelId === selectedModel.value)?.displayName ?? '默认模型'
+})
 
 const agentOptions: AgentOption[] = [
   { key: 'document-review', name: '文档审核 Agent', shortName: '审', description: '等保、密评、报告材料审查' },
@@ -360,25 +380,9 @@ const agentOptions: AgentOption[] = [
   { key: 'project-plan', name: '项目方案 Agent', shortName: '案', description: '技术方案、架构设计、实施计划' }
 ]
 
-const conversations = ref<ConversationItem[]>([
-  { id: 'conv-1', title: '技术方案与架构设计', updatedAt: '今天' }
-])
+const conversations = ref<ConversationItem[]>([])
 
-const messageMap = ref<Record<string, ChatMessageItem[]>>({
-  'conv-1': [
-    {
-      id: 'user-demo',
-      role: 'user',
-      content: '你好'
-    },
-    {
-      id: 'assistant-demo',
-      role: 'assistant',
-      content:
-        '你好！有什么我可以帮你的吗？\n\n看你最近主要在研究：\n\n- Agent 平台架构设计（AgentHub）\n- 多 Agent / Tool Loop / Skill 体系\n- Spring Boot + Vue3 + AI 集成\n- 文档审核系统（等保、密评、报告审核）\n- 智能执法监管平台\n- 大模型落地与工程架构\n\n无论是技术方案、架构设计、PPT 汇报材料、代码实现，还是项目可行性分析，我都可以帮你一起梳理。'
-    }
-  ]
-})
+const messageMap = ref<Record<number, ChatMessageItem[]>>({})
 
 const todos = [
   { id: 'todo-1', title: '理解用户目标', done: true },
@@ -390,9 +394,61 @@ const currentMessages = computed(() =>
   activeConversationId.value ? messageMap.value[activeConversationId.value] ?? [] : []
 )
 const hasMessages = computed(() => currentMessages.value.length > 0)
-const userInitial = computed(() => (authStore.username || '用户').trim().slice(0, 1).toUpperCase())
+const userInitial = computed(() => (authStore.displayName || '用户').trim().slice(0, 1).toUpperCase())
 
-function ensureConversationMessages(conversationId: string) {
+function mapConversation(item: ConversationRecord): ConversationItem {
+  return {
+    id: item.conversationId,
+    title: item.title,
+    updatedAt: '最近'
+  }
+}
+
+function mapMessage(item: ChatMessageRecord): ChatMessageItem {
+  return {
+    id: item.messageId,
+    role: item.role.toLowerCase() === 'user' ? 'user' : 'assistant',
+    content: item.content,
+    reasoningContent: item.reasoningContent ?? '',
+    status: item.status
+  }
+}
+
+async function loadConversations() {
+  try {
+    const data = await fetchConversations()
+    conversations.value = data.map(mapConversation)
+
+    if (!activeConversationId.value && conversations.value.length) {
+      activeConversationId.value = conversations.value[0].id
+      await loadMessages(conversations.value[0].id)
+    }
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '加载会话失败')
+  }
+}
+
+async function loadMessages(conversationId: number) {
+  try {
+    const data = await fetchConversationMessages(conversationId)
+    messageMap.value[conversationId] = data.map(mapMessage)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '加载消息失败')
+  }
+}
+
+async function loadModels() {
+  try {
+    availableModels.value = await fetchAvailableModels()
+    selectedModel.value = availableModels.value.find((item) => item.defaultModel)?.modelId
+      ?? availableModels.value[0]?.modelId
+      ?? null
+  } catch (error) {
+    message.warning(error instanceof Error ? error.message : '加载模型列表失败，将使用默认模型')
+  }
+}
+
+function ensureConversationMessages(conversationId: number) {
   if (!messageMap.value[conversationId]) {
     messageMap.value[conversationId] = []
   }
@@ -408,10 +464,11 @@ function createConversation() {
   uploadedFiles.value = []
 }
 
-function switchConversation(conversationId: string) {
+async function switchConversation(conversationId: number) {
   activeConversationId.value = conversationId
   prompt.value = ''
   uploadedFiles.value = []
+  await loadMessages(conversationId)
 }
 
 function selectAgent(agent: AgentOption) {
@@ -469,9 +526,10 @@ function handleSend() {
     return
   }
 
-  // 如果当前没有活跃对话，先创建新对话
+  closeStream()
+
   if (!activeConversationId.value) {
-    const nextId = `conv-${Date.now()}`
+    const nextId = -Date.now()
     conversations.value.unshift({
       id: nextId,
       title: '新聊天',
@@ -483,11 +541,11 @@ function handleSend() {
 
   const conversationId = activeConversationId.value
   const messages = ensureConversationMessages(conversationId)
-  const userMessageId = `user-${Date.now()}`
-  const assistantMessageId = `assistant-${Date.now()}`
+  const assistantMessageId = -Date.now()
+  let currentAssistantMessageId = assistantMessageId
 
   messages.push({
-    id: userMessageId,
+    id: assistantMessageId - 1,
     role: 'user',
     content: trimmedPrompt
   })
@@ -495,40 +553,112 @@ function handleSend() {
   messages.push({
     id: assistantMessageId,
     role: 'assistant',
-    content: ''
+    content: '',
+    reasoningContent: '',
+    status: 'STREAMING'
   })
-
-  conversations.value = conversations.value.map((item) =>
-    item.id === conversationId
-      ? { ...item, title: item.title === '新聊天' ? trimmedPrompt.slice(0, 18) : item.title, updatedAt: '刚刚' }
-      : item
-  )
 
   const currentPrompt = trimmedPrompt
   prompt.value = ''
   uploadedFiles.value = []
-  closeStream()
   streaming.value = true
 
-  const eventSource = openChatStream(currentPrompt, authStore.token)
+  const eventSource = openChatStream({
+    prompt: currentPrompt,
+    token: authStore.token,
+    conversationId: conversationId > 0 ? conversationId : null,
+    modelId: selectedModel.value,
+    agentKey: activeAgentName.value === '通用 Agent' ? null : activeAgentName.value
+  })
   eventSourceRef.value = eventSource
 
-  eventSource.onmessage = (event) => {
-    const assistantMessage = ensureConversationMessages(conversationId).find(
-      (item) => item.id === assistantMessageId
-    )
-
-    if (!assistantMessage) {
+  eventSource.addEventListener('conversation', (event) => {
+    const data = parseSseData<{ conversationId: number; title: string }>(event)
+    if (!data) {
       return
     }
 
-    assistantMessage.content += event.data
-  }
+    const previousId = activeConversationId.value
+    if (previousId && previousId < 0) {
+      messageMap.value[data.conversationId] = messageMap.value[previousId] ?? []
+      delete messageMap.value[previousId]
+      activeConversationId.value = data.conversationId
+    }
+
+    conversations.value = [
+      { id: data.conversationId, title: data.title, updatedAt: '刚刚' },
+      ...conversations.value.filter((item) => item.id !== data.conversationId && item.id !== previousId)
+    ]
+  })
+
+  eventSource.addEventListener('message', (event) => {
+    const data = parseSseData<{ messageId: number; role: string }>(event)
+    const assistantMessage = findAssistantMessage(currentAssistantMessageId)
+    if (data && assistantMessage) {
+      assistantMessage.id = data.messageId
+      currentAssistantMessageId = data.messageId
+    }
+  })
+
+  eventSource.addEventListener('reasoning_delta', (event) => {
+    const data = parseSseData<{ content: string }>(event)
+    const assistantMessage = findAssistantMessage(currentAssistantMessageId)
+    if (data && assistantMessage) {
+      assistantMessage.reasoningContent = `${assistantMessage.reasoningContent ?? ''}${data.content}`
+    }
+  })
+
+  eventSource.addEventListener('answer_delta', (event) => {
+    const data = parseSseData<{ content: string }>(event)
+    const assistantMessage = findAssistantMessage(currentAssistantMessageId)
+    if (data && assistantMessage) {
+      assistantMessage.content += data.content
+    }
+  })
+
+  eventSource.addEventListener('message_completed', (event) => {
+    const data = parseSseData<{ messageId: number; status: string }>(event)
+    const assistantMessage = findAssistantMessage(data?.messageId ?? currentAssistantMessageId)
+    if (assistantMessage) {
+      assistantMessage.status = data?.status ?? 'COMPLETED'
+    }
+  })
+
+  eventSource.addEventListener('error', (event) => {
+    const data = parseSseData<{ code: string; message: string }>(event)
+    message.error(data?.message ?? '流式响应失败')
+    closeStream()
+  })
+
+  eventSource.addEventListener('done', () => {
+    closeStream()
+    void loadConversations()
+  })
 
   eventSource.onerror = () => {
-    message.warning('流式连接已结束或暂不可用')
     closeStream()
   }
+}
+
+function parseSseData<T>(event: Event): T | null {
+  const messageEvent = event as MessageEvent<string>
+  if (!messageEvent.data) {
+    return null
+  }
+
+  try {
+    return JSON.parse(messageEvent.data) as T
+  } catch {
+    return null
+  }
+}
+
+function findAssistantMessage(messageId: number) {
+  if (!activeConversationId.value) {
+    return undefined
+  }
+
+  return ensureConversationMessages(activeConversationId.value).find((item) => item.id === messageId)
 }
 
 function handleLogout() {
@@ -539,6 +669,11 @@ function handleLogout() {
 
 onBeforeUnmount(() => {
   closeStream()
+})
+
+onMounted(() => {
+  void loadModels()
+  void loadConversations()
 })
 </script>
 
@@ -1103,6 +1238,26 @@ svg {
 .assistant-message p {
   margin: 0;
   white-space: pre-wrap;
+}
+
+.reasoning-block {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.reasoning-block strong {
+  color: #475569;
+  font-size: 13px;
+}
+
+.reasoning-block p {
+  color: #64748b;
+  font-size: 14px;
 }
 
 .message-tools {

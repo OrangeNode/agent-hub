@@ -36,6 +36,7 @@ import { useRouter } from 'vue-router'
 import { useMessage, NButton, NForm, NFormItem, NInput } from 'naive-ui'
 import type { FormInst, FormRules } from 'naive-ui'
 
+import { login } from '../api/auth'
 import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
@@ -71,13 +72,20 @@ async function handleLogin() {
 
   submitting.value = true
 
-  window.setTimeout(() => {
+  try {
     const username = formValue.username.trim()
-    authStore.login(username, `mock-token-${username || 'user'}`)
+    const result = await login({
+      username,
+      password: formValue.password
+    })
+    authStore.login(result.token, result.profile)
     message.success('登录成功')
-    submitting.value = false
     void router.push('/chat')
-  }, 300)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '登录失败')
+  } finally {
+    submitting.value = false
+  }
 }
 </script>
 

@@ -1,0 +1,13 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://172.16.112.183:5432/agent_hub
+    username: agent_hub
+    password: agent_hub_123456
+  data:
+    redis:
+      host: 172.16.112.183
+      port: 6379
+      password:
+
+server:
+  port: 8080

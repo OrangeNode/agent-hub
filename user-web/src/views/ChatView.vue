@@ -346,7 +346,7 @@ const agentMenuOpen = ref(false)
 const sidebarCollapsed = ref(false)
 const activeConversationId = ref<number | null>(null)
 const activeAgentName = ref('通用 Agent')
-const eventSourceRef = ref<EventSource | null>(null)
+const streamControllerRef = ref<AbortController | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const uploadedFiles = ref<UploadedFile[]>([])
 const selectedModel = ref<number | null>(null)
@@ -457,6 +457,10 @@ function ensureConversationMessages(conversationId: number) {
 }
 
 function createConversation() {
+  // 如果当前已处于空聊天状态，不重复创建
+  if (activeConversationId.value === null) {
+    return
+  }
   // 重置到空状态，让用户发送消息时才创建新对话
   activeConversationId.value = null
   workPanelOpen.value = false
@@ -514,8 +518,8 @@ function copyMessage(content: string) {
 }
 
 function closeStream() {
-  eventSourceRef.value?.close()
-  eventSourceRef.value = null
+  streamControllerRef.value?.abort()
+  streamControllerRef.value = null
   streaming.value = false
 }
 
@@ -563,94 +567,66 @@ function handleSend() {
   uploadedFiles.value = []
   streaming.value = true
 
-  const eventSource = openChatStream({
-    prompt: currentPrompt,
-    token: authStore.token,
-    conversationId: conversationId > 0 ? conversationId : null,
-    modelId: selectedModel.value,
-    agentKey: activeAgentName.value === '通用 Agent' ? null : activeAgentName.value
-  })
-  eventSourceRef.value = eventSource
+  streamControllerRef.value = openChatStream(
+    {
+      prompt: currentPrompt,
+      token: authStore.token,
+      conversationId: conversationId > 0 ? conversationId : null,
+      modelId: selectedModel.value,
+      agentKey: agentOptions.some((agent) => agent.name === activeAgentName.value) ? activeAgentName.value : null
+    },
+    {
+      onConversation: (data) => {
+        const previousId = activeConversationId.value
+        if (previousId && previousId < 0) {
+          messageMap.value[data.conversationId] = messageMap.value[previousId] ?? []
+          delete messageMap.value[previousId]
+          activeConversationId.value = data.conversationId
+        }
 
-  eventSource.addEventListener('conversation', (event) => {
-    const data = parseSseData<{ conversationId: number; title: string }>(event)
-    if (!data) {
-      return
+        conversations.value = [
+          { id: data.conversationId, title: data.title, updatedAt: '刚刚' },
+          ...conversations.value.filter((item) => item.id !== data.conversationId && item.id !== previousId)
+        ]
+      },
+      onMessage: (data) => {
+        const assistantMessage = findAssistantMessage(currentAssistantMessageId)
+        if (assistantMessage) {
+          assistantMessage.id = data.messageId
+          currentAssistantMessageId = data.messageId
+        }
+      },
+      onReasoningDelta: (data) => {
+        const assistantMessage = findAssistantMessage(currentAssistantMessageId)
+        if (assistantMessage) {
+          assistantMessage.reasoningContent = `${assistantMessage.reasoningContent ?? ''}${data.content}`
+        }
+      },
+      onAnswerDelta: (data) => {
+        const assistantMessage = findAssistantMessage(currentAssistantMessageId)
+        if (assistantMessage) {
+          assistantMessage.content += data.content
+        }
+      },
+      onMessageCompleted: (data) => {
+        const assistantMessage = findAssistantMessage(data.messageId ?? currentAssistantMessageId)
+        if (assistantMessage) {
+          assistantMessage.status = data.status ?? 'COMPLETED'
+        }
+      },
+      onError: (data) => {
+        message.error(data.message ?? '\u6d41\u5f0f\u54cd\u5e94\u5931\u8d25')
+        closeStream()
+      },
+      onDone: () => {
+        closeStream()
+        void loadConversations()
+      },
+      onTransportError: () => {
+        closeStream()
+      }
     }
-
-    const previousId = activeConversationId.value
-    if (previousId && previousId < 0) {
-      messageMap.value[data.conversationId] = messageMap.value[previousId] ?? []
-      delete messageMap.value[previousId]
-      activeConversationId.value = data.conversationId
-    }
-
-    conversations.value = [
-      { id: data.conversationId, title: data.title, updatedAt: '刚刚' },
-      ...conversations.value.filter((item) => item.id !== data.conversationId && item.id !== previousId)
-    ]
-  })
-
-  eventSource.addEventListener('message', (event) => {
-    const data = parseSseData<{ messageId: number; role: string }>(event)
-    const assistantMessage = findAssistantMessage(currentAssistantMessageId)
-    if (data && assistantMessage) {
-      assistantMessage.id = data.messageId
-      currentAssistantMessageId = data.messageId
-    }
-  })
-
-  eventSource.addEventListener('reasoning_delta', (event) => {
-    const data = parseSseData<{ content: string }>(event)
-    const assistantMessage = findAssistantMessage(currentAssistantMessageId)
-    if (data && assistantMessage) {
-      assistantMessage.reasoningContent = `${assistantMessage.reasoningContent ?? ''}${data.content}`
-    }
-  })
-
-  eventSource.addEventListener('answer_delta', (event) => {
-    const data = parseSseData<{ content: string }>(event)
-    const assistantMessage = findAssistantMessage(currentAssistantMessageId)
-    if (data && assistantMessage) {
-      assistantMessage.content += data.content
-    }
-  })
-
-  eventSource.addEventListener('message_completed', (event) => {
-    const data = parseSseData<{ messageId: number; status: string }>(event)
-    const assistantMessage = findAssistantMessage(data?.messageId ?? currentAssistantMessageId)
-    if (assistantMessage) {
-      assistantMessage.status = data?.status ?? 'COMPLETED'
-    }
-  })
-
-  eventSource.addEventListener('error', (event) => {
-    const data = parseSseData<{ code: string; message: string }>(event)
-    message.error(data?.message ?? '流式响应失败')
-    closeStream()
-  })
-
-  eventSource.addEventListener('done', () => {
-    closeStream()
-    void loadConversations()
-  })
-
-  eventSource.onerror = () => {
-    closeStream()
-  }
-}
-
-function parseSseData<T>(event: Event): T | null {
-  const messageEvent = event as MessageEvent<string>
-  if (!messageEvent.data) {
-    return null
-  }
-
-  try {
-    return JSON.parse(messageEvent.data) as T
-  } catch {
-    return null
-  }
+  )
 }
 
 function findAssistantMessage(messageId: number) {

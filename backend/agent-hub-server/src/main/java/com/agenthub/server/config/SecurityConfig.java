@@ -11,6 +11,7 @@ import com.agenthub.system.user.dto.UserAccount;
 import com.agenthub.system.user.dto.UserProfile;
 import com.agenthub.system.user.service.UserService;
 import jakarta.servlet.FilterChain;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -67,6 +68,7 @@ public class SecurityConfig {
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(authorize -> authorize
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers("/api/auth/login", "/error").permitAll()
                         .anyRequest().authenticated()
                 )
@@ -152,11 +154,6 @@ public class SecurityConfig {
             if (header != null && header.startsWith("Bearer ")) {
                 String token = header.substring(7);
                 return token.isBlank() ? null : token;
-            }
-
-            if ("/api/chat/stream".equals(request.getRequestURI())) {
-                String token = request.getParameter("token");
-                return token == null || token.isBlank() ? null : token;
             }
 
             return null;

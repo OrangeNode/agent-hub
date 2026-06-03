@@ -4,6 +4,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -30,12 +31,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
+import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.web.FilterChainProxy;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.context.WebApplicationContext;
 
@@ -84,11 +87,11 @@ class SecurityConfigIntegrationTest {
 
     @Test
     void shouldRebuildAuthoritiesFromServiceSideProfile() throws Exception {
-        UserAccount account = new UserAccount(1L, "admin", "平台管理员", "ignored", true, List.of("TOKEN_ROLE"));
+        UserAccount account = new UserAccount(1L, "admin", "admin", "ignored", true, List.of("TOKEN_ROLE"));
         UserProfile profile = new UserProfile(
                 1L,
                 "admin",
-                "平台管理员",
+                "admin",
                 true,
                 List.of("ADMIN"),
                 List.of("system:user:list")
@@ -124,7 +127,7 @@ class SecurityConfigIntegrationTest {
 
     @Test
     void shouldReturnForbiddenWhenUserIsDisabledAfterTokenIssued() throws Exception {
-        UserAccount account = new UserAccount(1L, "admin", "平台管理员", "ignored", false, List.of("ADMIN"));
+        UserAccount account = new UserAccount(1L, "admin", "admin", "ignored", false, List.of("ADMIN"));
         String token = createToken(1L, "admin", List.of("ADMIN"));
 
         when(userService.findAccountById(1L)).thenReturn(Optional.of(account));
@@ -138,12 +141,12 @@ class SecurityConfigIntegrationTest {
     }
 
     @Test
-    void shouldAuthenticateChatStreamTokenFromQueryParameter() throws Exception {
-        UserAccount account = new UserAccount(1L, "admin", "管理员", "ignored", true, List.of("TOKEN_ROLE"));
+    void shouldAuthenticateChatStreamPostWithBearerToken() throws Exception {
+        UserAccount account = new UserAccount(1L, "admin", "admin", "ignored", true, List.of("TOKEN_ROLE"));
         UserProfile profile = new UserProfile(
                 1L,
                 "admin",
-                "管理员",
+                "admin",
                 true,
                 List.of("ADMIN"),
                 List.of("chat:stream")
@@ -153,14 +156,30 @@ class SecurityConfigIntegrationTest {
         when(userService.findAccountById(1L)).thenReturn(Optional.of(account));
         when(authService.currentUser("admin")).thenReturn(profile);
 
-        mockMvc.perform(get("/api/chat/stream")
-                        .param("token", token)
-                        .param("prompt", "你好"))
+        mockMvc.perform(post("/api/chat/stream")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"prompt\":\"hello\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.username").value("admin"))
                 .andExpect(jsonPath("$.roles[0]").value("ADMIN"))
                 .andExpect(jsonPath("$.authorities[0]").value("ROLE_ADMIN"))
                 .andExpect(jsonPath("$.authorities[1]").value("chat:stream"));
+    }
+
+    @Test
+    void shouldNotAuthenticateChatStreamTokenFromQueryParameter() throws Exception {
+        String token = createToken(1L, "admin", List.of("ADMIN"));
+
+        mockMvc.perform(get("/api/chat/stream")
+                        .param("token", token)
+                        .param("prompt", "hello"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value(ErrorCode.UNAUTHORIZED.code()))
+                .andExpect(jsonPath("$.data").doesNotExist());
+
+        verify(userService, never()).findAccountById(1L);
+        verify(authService, never()).currentUser("admin");
     }
 
     @Test
@@ -190,7 +209,7 @@ class SecurityConfigIntegrationTest {
             );
         }
 
-        @GetMapping("/api/chat/stream")
+        @PostMapping("/api/chat/stream")
         AuthoritySnapshot chatStream(Authentication authentication) {
             LoginUser loginUser = (LoginUser) authentication.getPrincipal();
             return new AuthoritySnapshot(

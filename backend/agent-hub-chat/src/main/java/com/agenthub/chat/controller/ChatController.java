@@ -10,8 +10,9 @@ import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -25,16 +26,19 @@ public class ChatController {
         this.chatService = chatService;
     }
 
-    @GetMapping("/stream")
+    @PostMapping("/stream")
     public SseEmitter stream(
             Authentication authentication,
-            @RequestParam(required = false) Long conversationId,
-            @RequestParam(required = false) Long modelId,
-            @RequestParam(required = false) String agentKey,
-            @RequestParam String prompt
+            @RequestBody ChatStreamRequest request
     ) {
         LoginUser loginUser = (LoginUser) authentication.getPrincipal();
-        return chatService.stream(loginUser.userId(), conversationId, modelId, agentKey, prompt);
+        return chatService.stream(
+                loginUser.userId(),
+                request.conversationId(),
+                request.modelId(),
+                request.agentKey(),
+                request.prompt()
+        );
     }
 
     @GetMapping("/conversations")
@@ -57,5 +61,13 @@ public class ChatController {
         LoginUser loginUser = (LoginUser) authentication.getPrincipal();
         chatService.deleteConversation(loginUser.userId(), conversationId);
         return ApiResponse.success();
+    }
+
+    public record ChatStreamRequest(
+            String prompt,
+            Long conversationId,
+            Long modelId,
+            String agentKey
+    ) {
     }
 }

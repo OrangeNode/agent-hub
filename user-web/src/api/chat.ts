@@ -43,24 +43,184 @@ export interface OpenChatStreamOptions {
   agentKey?: string | null
 }
 
-export function openChatStream(options: OpenChatStreamOptions): EventSource {
-  const url = new URL('/api/chat/stream', window.location.origin)
-  url.searchParams.set('prompt', options.prompt)
-  url.searchParams.set('token', options.token)
+export interface ChatStreamHandlers {
+  onConversation?: (data: { conversationId: number; title: string }) => void
+  onMessage?: (data: { messageId: number; role: string }) => void
+  onReasoningDelta?: (data: { content: string }) => void
+  onAnswerDelta?: (data: { content: string }) => void
+  onMessageCompleted?: (data: { messageId: number; status: string }) => void
+  onError?: (data: { code: string; message: string }) => void
+  onDone?: () => void
+  onTransportError?: (error: unknown) => void
+}
 
-  if (options.conversationId) {
-    url.searchParams.set('conversationId', String(options.conversationId))
+interface ParsedSseEvent {
+  event: string
+  data: string
+}
+
+export function openChatStream(options: OpenChatStreamOptions, handlers: ChatStreamHandlers): AbortController {
+  const controller = new AbortController()
+  void readChatStream(options, handlers, controller)
+  return controller
+}
+
+async function readChatStream(
+  options: OpenChatStreamOptions,
+  handlers: ChatStreamHandlers,
+  controller: AbortController
+) {
+  try {
+    const response = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: {
+        Accept: 'text/event-stream',
+        Authorization: `Bearer ${options.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        prompt: options.prompt,
+        conversationId: options.conversationId ?? null,
+        modelId: options.modelId ?? null,
+        agentKey: options.agentKey ?? null
+      }),
+      signal: controller.signal
+    })
+
+    if (!response.ok) {
+      throw new Error(`流式请求失败：${response.status}`)
+    }
+
+    if (!response.body) {
+      throw new Error('浏览器不支持流式响应')
+    }
+
+    await readSseBody(response.body, handlers)
+  } catch (error) {
+    if (!controller.signal.aborted) {
+      handlers.onTransportError?.(error)
+    }
+  }
+}
+
+async function readSseBody(body: ReadableStream<Uint8Array>, handlers: ChatStreamHandlers) {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) {
+        break
+      }
+
+      buffer += decoder.decode(value, { stream: true })
+      buffer = drainSseBuffer(buffer, handlers)
+    }
+
+    buffer += decoder.decode()
+    drainSseBuffer(`${buffer}\n\n`, handlers)
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+function drainSseBuffer(buffer: string, handlers: ChatStreamHandlers) {
+  let remaining = buffer
+
+  while (true) {
+    const separator = findEventSeparator(remaining)
+    if (separator.index < 0) {
+      return remaining
+    }
+
+    const rawEvent = remaining.slice(0, separator.index)
+    remaining = remaining.slice(separator.index + separator.length)
+    const event = parseSseEvent(rawEvent)
+    if (event) {
+      dispatchSseEvent(event, handlers)
+    }
+  }
+}
+
+function findEventSeparator(buffer: string) {
+  const rn = buffer.indexOf('\r\n\r\n')
+  const nn = buffer.indexOf('\n\n')
+
+  if (rn < 0) {
+    return { index: nn, length: 2 }
   }
 
-  if (options.modelId) {
-    url.searchParams.set('modelId', String(options.modelId))
+  if (nn < 0 || rn < nn) {
+    return { index: rn, length: 4 }
   }
 
-  if (options.agentKey) {
-    url.searchParams.set('agentKey', options.agentKey)
+  return { index: nn, length: 2 }
+}
+
+function parseSseEvent(rawEvent: string): ParsedSseEvent | null {
+  const lines = rawEvent.split(/\r?\n/)
+  let event = 'message'
+  const data: string[] = []
+
+  for (const line of lines) {
+    if (line.startsWith('event:')) {
+      event = line.slice(6).trim()
+      continue
+    }
+
+    if (line.startsWith('data:')) {
+      data.push(line.slice(5).trimStart())
+    }
   }
 
-  return new EventSource(url)
+  if (!data.length) {
+    return null
+  }
+
+  return {
+    event,
+    data: data.join('\n')
+  }
+}
+
+function dispatchSseEvent(event: ParsedSseEvent, handlers: ChatStreamHandlers) {
+  switch (event.event) {
+    case 'conversation':
+      dispatchJson(event.data, handlers.onConversation)
+      break
+    case 'message':
+      dispatchJson(event.data, handlers.onMessage)
+      break
+    case 'reasoning_delta':
+      dispatchJson(event.data, handlers.onReasoningDelta)
+      break
+    case 'answer_delta':
+      dispatchJson(event.data, handlers.onAnswerDelta)
+      break
+    case 'message_completed':
+      dispatchJson(event.data, handlers.onMessageCompleted)
+      break
+    case 'error':
+      dispatchJson(event.data, handlers.onError)
+      break
+    case 'done':
+      handlers.onDone?.()
+      break
+  }
+}
+
+function dispatchJson<T>(data: string, handler: ((data: T) => void) | undefined) {
+  if (!handler) {
+    return
+  }
+
+  try {
+    handler(JSON.parse(data) as T)
+  } catch {
+    // 忽略格式不完整的流事件，等待后续事件继续处理。
+  }
 }
 
 export async function fetchConversations() {

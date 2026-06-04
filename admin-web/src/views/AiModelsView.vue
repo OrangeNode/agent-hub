@@ -53,6 +53,17 @@
           <n-form-item label="启用状态">
             <n-switch v-model:value="formValue.enabled" />
           </n-form-item>
+          <n-form-item label="支持图片输入" path="imageInputSupported">
+            <n-switch v-model:value="formValue.imageInputSupported" />
+          </n-form-item>
+          <n-form-item v-if="formValue.imageInputSupported" label="图片 token 估算" path="imageTokenEstimate">
+            <n-input-number
+              v-model:value="formValue.imageTokenEstimate"
+              :min="1"
+              clearable
+              placeholder="默认 1500"
+            />
+          </n-form-item>
         </div>
         <div class="switch-row">
           <n-space item-style="display: flex; align-items: center; gap: 8px;">
@@ -134,6 +145,8 @@ const formValue = reactive<AiModelFormPayload>({
   capabilityType: 'CHAT',
   streamSupported: true,
   reasoningSupported: false,
+  imageInputSupported: false,
+  imageTokenEstimate: null,
   contextWindow: null,
   maxOutputTokens: null,
   defaultModel: false,
@@ -175,7 +188,7 @@ const columns: DataTableColumns<AiModelRecord> = [
   {
     title: '特性',
     key: 'features',
-    width: 190,
+    width: 230,
     render: (row) =>
       h(NSpace, { wrap: false, size: 6 }, {
         default: () => [
@@ -184,6 +197,9 @@ const columns: DataTableColumns<AiModelRecord> = [
             : null,
           row.reasoningSupported
             ? h(NTag, { type: 'success', bordered: false }, { default: () => '思考' })
+            : null,
+          row.imageInputSupported
+            ? h(NTag, { type: 'primary', bordered: false }, { default: () => '图片' })
             : null,
           row.defaultModel
             ? h(NTag, { type: 'warning', bordered: false }, { default: () => '默认' })
@@ -242,6 +258,8 @@ function resetForm() {
   formValue.capabilityType = 'CHAT'
   formValue.streamSupported = true
   formValue.reasoningSupported = false
+  formValue.imageInputSupported = false
+  formValue.imageTokenEstimate = null
   formValue.contextWindow = null
   formValue.maxOutputTokens = null
   formValue.defaultModel = false
@@ -263,6 +281,8 @@ function openEdit(model: AiModelRecord) {
   formValue.capabilityType = model.capabilityType
   formValue.streamSupported = model.streamSupported
   formValue.reasoningSupported = model.reasoningSupported
+  formValue.imageInputSupported = model.imageInputSupported
+  formValue.imageTokenEstimate = model.imageTokenEstimate ?? null
   formValue.contextWindow = model.contextWindow ?? null
   formValue.maxOutputTokens = model.maxOutputTokens ?? null
   formValue.defaultModel = model.defaultModel
@@ -291,7 +311,21 @@ async function submitForm() {
   }
 
   try {
-    const payload = { ...formValue, providerId: formValue.providerId }
+    const payload: AiModelFormPayload = {
+      providerId: formValue.providerId,
+      modelCode: formValue.modelCode,
+      displayName: formValue.displayName,
+      capabilityType: formValue.capabilityType,
+      streamSupported: formValue.streamSupported,
+      reasoningSupported: formValue.reasoningSupported,
+      imageInputSupported: formValue.imageInputSupported,
+      imageTokenEstimate: formValue.imageInputSupported ? formValue.imageTokenEstimate : null,
+      contextWindow: formValue.contextWindow,
+      maxOutputTokens: formValue.maxOutputTokens,
+      defaultModel: formValue.defaultModel,
+      enabled: formValue.enabled,
+      sort: formValue.sort
+    }
     if (editingModel.value) {
       await updateAiModel(editingModel.value.modelId, payload)
       message.success('模型更新成功')
@@ -316,6 +350,8 @@ async function handleStatusChange(model: AiModelRecord, enabled: boolean) {
       capabilityType: model.capabilityType,
       streamSupported: model.streamSupported,
       reasoningSupported: model.reasoningSupported,
+      imageInputSupported: model.imageInputSupported,
+      imageTokenEstimate: model.imageInputSupported ? model.imageTokenEstimate ?? null : null,
       contextWindow: model.contextWindow ?? null,
       maxOutputTokens: model.maxOutputTokens ?? null,
       defaultModel: model.defaultModel,

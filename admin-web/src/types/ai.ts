@@ -37,6 +37,8 @@ export interface AiModelRecord {
   capabilityType: string
   streamSupported: boolean
   reasoningSupported: boolean
+  imageInputSupported: boolean
+  imageTokenEstimate?: number | null
   contextWindow?: number | null
   maxOutputTokens?: number | null
   defaultModel: boolean
@@ -51,6 +53,8 @@ export interface AiModelFormPayload {
   capabilityType: string
   streamSupported: boolean
   reasoningSupported: boolean
+  imageInputSupported: boolean
+  imageTokenEstimate?: number | null
   contextWindow: number | null
   maxOutputTokens: number | null
   defaultModel: boolean

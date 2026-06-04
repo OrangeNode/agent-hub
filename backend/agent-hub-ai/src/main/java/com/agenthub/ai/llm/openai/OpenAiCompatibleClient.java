@@ -1,6 +1,7 @@
 package com.agenthub.ai.llm.openai;
 
 import com.agenthub.ai.llm.LlmClient;
+import com.agenthub.ai.llm.LlmContentPart;
 import com.agenthub.ai.llm.LlmMessage;
 import com.agenthub.ai.llm.LlmStreamChunk;
 import com.agenthub.ai.llm.LlmStreamRequest;
@@ -153,15 +154,31 @@ public class OpenAiCompatibleClient implements LlmClient {
         splitter.flush(chunks::add);
     }
 
-    private List<Map<String, String>> toMessages(List<LlmMessage> messages) {
+    private List<Map<String, Object>> toMessages(List<LlmMessage> messages) {
         if (messages == null) {
             return List.of();
         }
         return messages.stream()
                 .map(message -> {
-                    Map<String, String> item = new LinkedHashMap<>();
+                    Map<String, Object> item = new LinkedHashMap<>();
                     item.put("role", message.role());
-                    item.put("content", message.content());
+                    item.put("content", message.hasParts() ? toContentParts(message.parts()) : message.content());
+                    return item;
+                })
+                .toList();
+    }
+
+    private List<Map<String, Object>> toContentParts(List<LlmContentPart> parts) {
+        return parts.stream()
+                .map(part -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("type", part.type());
+                    if ("text".equals(part.type())) {
+                        item.put("text", part.text());
+                    }
+                    if ("image_url".equals(part.type())) {
+                        item.put("image_url", Map.of("url", part.imageUrl()));
+                    }
                     return item;
                 })
                 .toList();

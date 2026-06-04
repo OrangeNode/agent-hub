@@ -134,6 +134,37 @@ class OpenAiCompatibleClientTest {
     }
 
     @Test
+    void shouldSerializeMultimodalUserMessageContentParts() throws Exception {
+        CapturingOpenAiClient capturingClient = new CapturingOpenAiClient();
+        LlmMessage message = LlmMessage.user(List.of(
+                LlmContentPart.text("分析图片"),
+                LlmContentPart.imageUrl("https://example.com/cat.png")
+        ));
+        LlmStreamRequest request = new LlmStreamRequest(
+                "http://localhost:3000/v1",
+                "test-api-key",
+                null,
+                "test-model",
+                List.of(message),
+                null,
+                false);
+
+        capturingClient.stream(request, ignored -> {
+        });
+
+        String bodyText = readBody(capturingClient.capturedRequest);
+        JsonNode content = OBJECT_MAPPER.readTree(bodyText).path("messages").get(0).path("content");
+        assertThat(content).hasSize(2);
+        assertThat(content.get(0).path("type").asText()).isEqualTo("text");
+        assertThat(content.get(0).path("text").asText()).isEqualTo("分析图片");
+        assertThat(content.get(1).path("type").asText()).isEqualTo("image_url");
+        assertThat(content.get(1).path("image_url").path("url").asText())
+                .isEqualTo("https://example.com/cat.png");
+        assertThat(bodyText).contains("\"type\":\"image_url\"");
+        assertThat(bodyText).contains("https://example.com/cat.png");
+    }
+
+    @Test
     void shouldParseSplitThinkTagFromStreamingContent() {
         CapturingOpenAiClient capturingClient = new CapturingOpenAiClient(
                 Stream.of(

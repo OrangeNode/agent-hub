@@ -40,17 +40,30 @@ public class AnthropicMessagesClient implements LlmClient {
     @Override
     public void stream(LlmStreamRequest request, Consumer<LlmStreamChunk> chunkConsumer) {
         try {
+            rejectUnsupportedContentParts(request.messages());
             HttpResponse<Stream<String>> response = send(buildRequest(request));
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 chunkConsumer.accept(LlmStreamChunk.error("Anthropic Messages 流式请求失败，HTTP 状态码: " + response.statusCode()));
                 return;
             }
             consumeSse(response.body(), chunkConsumer);
+        } catch (IllegalArgumentException e) {
+            chunkConsumer.accept(LlmStreamChunk.error(e.getMessage()));
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             chunkConsumer.accept(LlmStreamChunk.error("Anthropic Messages 流式请求被中断"));
         } catch (Exception e) {
             chunkConsumer.accept(LlmStreamChunk.error("Anthropic Messages 流式请求失败: " + e.getMessage()));
+        }
+    }
+
+    private void rejectUnsupportedContentParts(List<LlmMessage> messages) {
+        if (messages == null) {
+            return;
+        }
+        boolean hasParts = messages.stream().anyMatch(LlmMessage::hasParts);
+        if (hasParts) {
+            throw new IllegalArgumentException("Anthropic Messages 暂不支持 URL 图片输入");
         }
     }
 

@@ -135,6 +135,29 @@ class AnthropicMessagesClientTest {
         assertThat(body.path("thinking").path("budget_tokens").asInt()).isEqualTo(1024);
     }
 
+    @Test
+    void shouldReturnErrorChunkWhenMessageContainsImageUrlPart() {
+        CapturingAnthropicClient capturingClient = new CapturingAnthropicClient();
+        LlmStreamRequest request = new LlmStreamRequest(
+                "https://api.anthropic.com",
+                "test-api-key",
+                null,
+                "test-model",
+                List.of(LlmMessage.user(List.of(
+                        LlmContentPart.text("分析图片"),
+                        LlmContentPart.imageUrl("https://example.com/cat.png")
+                ))),
+                1024,
+                false);
+        List<LlmStreamChunk> chunks = new java.util.ArrayList<>();
+
+        capturingClient.stream(request, chunks::add);
+
+        assertThat(chunks).hasSize(1);
+        assertThat(chunks.get(0).type()).isEqualTo(LlmStreamChunkType.ERROR);
+        assertThat(chunks.get(0).errorMessage()).contains("Anthropic Messages 暂不支持 URL 图片输入");
+    }
+
     private LlmStreamRequest request(String baseUrl, Integer maxOutputTokens) {
         return new LlmStreamRequest(
                 baseUrl,

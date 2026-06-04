@@ -89,7 +89,7 @@ services:
           ]
         }
         EOF
-        mc ilm import "agent-hub/$$MINIO_BUCKET_CHAT_IMAGES" < /tmp/chat-image-lifecycle.json
+        mc ilm rule import "agent-hub/$$MINIO_BUCKET_CHAT_IMAGES" < /tmp/chat-image-lifecycle.json
     networks:
       - agent-hub-network
 

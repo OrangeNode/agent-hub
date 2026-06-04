@@ -168,7 +168,7 @@
             :options="uploadMenuOptions"
             @select="handleUploadMenuSelect"
           >
-            <button type="button" class="round-action composer-upload" aria-label="添加附件" @click="handleUploadButtonClick">
+            <button type="button" class="round-action composer-upload" aria-label="添加附件">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M12 5v14M5 12h14" />
               </svg>
@@ -311,7 +311,7 @@
               :options="uploadMenuOptions"
               @select="handleUploadMenuSelect"
             >
-              <button type="button" class="round-action composer-upload" aria-label="添加附件" @click="handleUploadButtonClick">
+              <button type="button" class="round-action composer-upload" aria-label="添加附件">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M12 5v14M5 12h14" />
                 </svg>
@@ -555,13 +555,15 @@ const selectedModelItem = computed(() =>
 const uploadMenuOptions = computed(() => [
   {
     key: 'upload-image',
-    label: '上传照片和文件',
+    label: selectedModelItem.value?.imageInputSupported
+      ? '上传照片和文件'
+      : '上传照片和文件（当前模型不支持图片输入）',
     disabled: !selectedModelItem.value?.imageInputSupported
   }
 ])
 const hasUploadingImage = computed(() => pendingImages.value.some((image) => image.status === 'uploading'))
 const hasFailedImage = computed(() => pendingImages.value.some((image) => image.status === 'failed'))
-const sendDisabled = computed(() => streaming.value || hasUploadingImage.value || hasFailedImage.value)
+const sendDisabled = computed(() => streaming.value)
 const firstReasoningModel = computed(() => availableModels.value.find((item) => item.reasoningSupported) ?? null)
 const activeMenuConversation = computed(() =>
   conversations.value.find((item) => item.id === openConversationMenuId.value) ?? null
@@ -785,12 +787,6 @@ function selectAgent(agent: AgentOption) {
   activeAgentName.value = agent.name
   agentMenuOpen.value = false
   createConversation()
-}
-
-function handleUploadButtonClick() {
-  if (!selectedModelItem.value?.imageInputSupported) {
-    message.warning('当前模型不支持图片输入')
-  }
 }
 
 function handleUploadMenuSelect(key: string | number) {

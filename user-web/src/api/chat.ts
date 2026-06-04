@@ -9,6 +9,17 @@ export interface ConversationRecord {
   status: string
 }
 
+export interface ChatAttachmentRecord {
+  attachmentId: number
+  filename: string
+  contentType: string
+  status: string
+  expired: boolean
+  previewUrl?: string | null
+  message?: string | null
+  messageId?: number | null
+}
+
 export interface ChatMessageRecord {
   messageId: number
   conversationId: number
@@ -16,6 +27,15 @@ export interface ChatMessageRecord {
   content: string
   reasoningContent?: string | null
   status: string
+  attachments?: ChatAttachmentRecord[]
+}
+
+export interface ImageUploadUrlRecord {
+  attachmentId: number
+  uploadUrl: string
+  method: 'PUT'
+  headers: Record<string, string>
+  expiresAt: string
 }
 
 export interface AvailableModelRecord {
@@ -30,6 +50,8 @@ export interface AvailableModelRecord {
   reasoningSupported: boolean
   contextWindow?: number | null
   maxOutputTokens?: number | null
+  imageInputSupported: boolean
+  imageTokenEstimate?: number | null
   defaultModel: boolean
   enabled: boolean
   sort: number
@@ -42,6 +64,8 @@ export interface OpenChatStreamOptions {
   modelId?: number | null
   agentKey?: string | null
   thinkingEnabled?: boolean
+  attachmentIds?: number[]
+  reuseAttachmentIds?: number[]
 }
 
 export interface ChatStreamHandlers {
@@ -84,7 +108,9 @@ async function readChatStream(
         conversationId: options.conversationId ?? null,
         modelId: options.modelId ?? null,
         agentKey: options.agentKey ?? null,
-        thinkingEnabled: options.thinkingEnabled ?? false
+        thinkingEnabled: options.thinkingEnabled ?? false,
+        attachmentIds: options.attachmentIds ?? [],
+        reuseAttachmentIds: options.reuseAttachmentIds ?? []
       }),
       signal: controller.signal
     })
@@ -246,4 +272,17 @@ export async function renameConversation(conversationId: number, title: string) 
 export async function fetchAvailableModels() {
   const response = await http.get<ApiResponse<AvailableModelRecord[]>>('/ai/models/available')
   return response.data.data
+}
+
+export async function createImageUploadUrl(filename: string, contentType: string, fileSize: number) {
+  const response = await http.post<ApiResponse<ImageUploadUrlRecord>>('/chat/attachments/image-upload-url', {
+    filename,
+    contentType,
+    fileSize
+  })
+  return response.data.data
+}
+
+export async function confirmImageUpload(attachmentId: number) {
+  await http.post(`/chat/attachments/${attachmentId}/confirm`)
 }

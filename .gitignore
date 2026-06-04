@@ -18,3 +18,4 @@ coverage/
 .env.*.local
 
 backend/logs/
+.worktrees/

@@ -15,6 +15,8 @@ public class AiModel {
     private String capabilityType;
     private Boolean streamSupported;
     private Boolean reasoningSupported;
+    private Boolean imageInputSupported;
+    private Integer imageTokenEstimate;
     private Integer contextWindow;
     private Integer maxOutputTokens;
     private Boolean defaultModel;
@@ -75,6 +77,22 @@ public class AiModel {
 
     public void setReasoningSupported(Boolean reasoningSupported) {
         this.reasoningSupported = reasoningSupported;
+    }
+
+    public Boolean getImageInputSupported() {
+        return imageInputSupported;
+    }
+
+    public void setImageInputSupported(Boolean imageInputSupported) {
+        this.imageInputSupported = imageInputSupported;
+    }
+
+    public Integer getImageTokenEstimate() {
+        return imageTokenEstimate;
+    }
+
+    public void setImageTokenEstimate(Integer imageTokenEstimate) {
+        this.imageTokenEstimate = imageTokenEstimate;
     }
 
     public Integer getContextWindow() {

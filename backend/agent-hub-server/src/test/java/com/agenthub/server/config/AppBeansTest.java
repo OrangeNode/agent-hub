@@ -14,7 +14,12 @@ import org.springframework.security.crypto.password.PasswordEncoder;
         "spring.datasource.username=sa",
         "spring.datasource.password=",
         "spring.datasource.driver-class-name=org.h2.Driver",
-        "spring.data.redis.repositories.enabled=false"
+        "spring.data.redis.repositories.enabled=false",
+        "agent-hub.storage.endpoint=http://127.0.0.1:9000",
+        "agent-hub.storage.public-endpoint=http://127.0.0.1:9000",
+        "agent-hub.storage.access-key=agenthub",
+        "agent-hub.storage.secret-key=agenthub123",
+        "agent-hub.storage.bucket=agent-hub-chat-images"
 })
 class AppBeansTest {
 

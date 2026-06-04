@@ -11,3 +11,16 @@ spring:
 
 server:
   port: 8080
+
+agent-hub:
+  storage:
+    endpoint: http://127.0.0.1:9000
+    public-endpoint: http://127.0.0.1:9000
+    access-key: agenthub
+    secret-key: agenthub123
+    bucket: agent-hub-chat-images
+    image-expire-days: 7
+    presigned-upload-ttl-minutes: 10
+    presigned-read-ttl-minutes: 10
+    pending-cleanup-minutes: 60
+    unused-ready-cleanup-hours: 24

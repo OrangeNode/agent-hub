@@ -100,6 +100,7 @@ public class ConversationContextBuilder {
                 conversationId,
                 runtimeConfig,
                 contextWindow,
+                availableInputTokens,
                 historyImageTokenEstimate,
                 history,
                 attachmentsByMessageId,
@@ -138,6 +139,9 @@ public class ConversationContextBuilder {
     }
 
     private List<ChatMessage> listHistory(Long userId, Long conversationId) {
+        if (conversationId == null) {
+            return List.of();
+        }
         LambdaQueryWrapper<ChatMessage> wrapper = new LambdaQueryWrapper<ChatMessage>()
                 .eq(ChatMessage::getConversationId, conversationId)
                 .eq(ChatMessage::getUserId, userId)
@@ -173,6 +177,9 @@ public class ConversationContextBuilder {
     }
 
     private ChatConversationSummary loadSummary(Long userId, Long conversationId) {
+        if (conversationId == null) {
+            return null;
+        }
         LambdaQueryWrapper<ChatConversationSummary> wrapper = new LambdaQueryWrapper<ChatConversationSummary>()
                 .eq(ChatConversationSummary::getConversationId, conversationId)
                 .eq(ChatConversationSummary::getUserId, userId)
@@ -185,6 +192,7 @@ public class ConversationContextBuilder {
             Long conversationId,
             AiModelRuntimeConfig runtimeConfig,
             int contextWindow,
+            int availableInputTokens,
             int historyImageTokenEstimate,
             List<ChatMessage> history,
             Map<Long, List<AttachmentItem>> attachmentsByMessageId,
@@ -192,7 +200,8 @@ public class ConversationContextBuilder {
     ) {
         int fullHistoryEstimate = estimateHistory(history, attachmentsByMessageId, historyImageTokenEstimate)
                 + estimateText(currentSummary == null ? null : currentSummary.getSummary());
-        if (fullHistoryEstimate < Math.ceil(contextWindow * SUMMARY_TRIGGER_RATIO)) {
+        int summaryTriggerTokens = (int) Math.ceil(Math.min(contextWindow * SUMMARY_TRIGGER_RATIO, availableInputTokens));
+        if (fullHistoryEstimate < summaryTriggerTokens) {
             return new SummaryUpdate(currentSummary, false);
         }
 
@@ -201,14 +210,23 @@ public class ConversationContextBuilder {
             return new SummaryUpdate(currentSummary, false);
         }
 
-        String generatedSummary = generateSummary(runtimeConfig, currentSummary, summaryMessages);
-        if (!hasText(generatedSummary)) {
+        SummaryPrompt summaryPrompt = buildSummaryPrompt(currentSummary, summaryMessages, availableInputTokens);
+        if (summaryPrompt.includedMessages().isEmpty()) {
             return new SummaryUpdate(currentSummary, false);
         }
 
-        ChatConversationSummary savedSummary = upsertSummary(userId, conversationId, currentSummary, generatedSummary,
-                summaryMessages.getLast().getId());
-        return new SummaryUpdate(savedSummary, true);
+        try {
+            String generatedSummary = generateSummary(runtimeConfig, summaryPrompt.prompt());
+            if (!hasText(generatedSummary)) {
+                return new SummaryUpdate(currentSummary, false);
+            }
+
+            ChatConversationSummary savedSummary = upsertSummary(userId, conversationId, currentSummary, generatedSummary,
+                    summaryPrompt.includedMessages().getLast().getId());
+            return new SummaryUpdate(savedSummary, true);
+        } catch (RuntimeException exception) {
+            return new SummaryUpdate(currentSummary, false);
+        }
     }
 
     private List<ChatMessage> messagesToSummarize(List<ChatMessage> history, ChatConversationSummary currentSummary) {
@@ -224,22 +242,32 @@ public class ConversationContextBuilder {
         return unsummarized.subList(0, unsummarized.size() - RECENT_TURN_MIN_MESSAGE_COUNT);
     }
 
-    private String generateSummary(
-            AiModelRuntimeConfig runtimeConfig,
+    private SummaryPrompt buildSummaryPrompt(
             ChatConversationSummary currentSummary,
-            List<ChatMessage> summaryMessages
+            List<ChatMessage> summaryMessages,
+            int availableInputTokens
     ) {
         StringBuilder prompt = new StringBuilder(SUMMARY_PROMPT).append('\n');
         if (currentSummary != null && hasText(currentSummary.getSummary())) {
             prompt.append("已有摘要：\n").append(currentSummary.getSummary()).append("\n\n");
         }
         prompt.append("待压缩历史：\n");
+        int usedTokens = estimateText(prompt.toString());
+        List<ChatMessage> includedMessages = new ArrayList<>();
         for (ChatMessage message : summaryMessages) {
-            prompt.append(toLlmRole(message.getRole())).append(": ")
-                    .append(defaultString(message.getContent()))
-                    .append('\n');
+            String line = toLlmRole(message.getRole()) + ": " + defaultString(message.getContent()) + '\n';
+            int lineTokens = estimateText(line);
+            if (usedTokens + lineTokens > availableInputTokens) {
+                break;
+            }
+            prompt.append(line);
+            usedTokens += lineTokens;
+            includedMessages.add(message);
         }
+        return new SummaryPrompt(prompt.toString(), List.copyOf(includedMessages));
+    }
 
+    private String generateSummary(AiModelRuntimeConfig runtimeConfig, String prompt) {
         StringBuilder summary = new StringBuilder();
         LlmClient client = llmClientFactory.apply(runtimeConfig.protocolType());
         client.stream(new LlmStreamRequest(
@@ -443,5 +471,8 @@ public class ConversationContextBuilder {
     }
 
     private record SummaryUpdate(ChatConversationSummary summary, boolean updated) {
+    }
+
+    private record SummaryPrompt(String prompt, List<ChatMessage> includedMessages) {
     }
 }

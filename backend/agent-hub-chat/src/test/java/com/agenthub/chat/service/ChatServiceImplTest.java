@@ -557,6 +557,49 @@ class ChatServiceImplTest {
     }
 
     @Test
+    void shouldBuildSummaryContextOutsidePreparationTransaction() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        ChatConversationSummaryMapper summaryMapper = mock(ChatConversationSummaryMapper.class);
+        List<String> events = new ArrayList<>();
+        RecordingSseEventSender sender = new RecordingSseEventSender(events);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.answer("summary"), LlmStreamChunk.done()), events);
+        ManualExecutor executor = new ManualExecutor();
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(events),
+                sender,
+                attachmentService,
+                new ConversationContextBuilder(
+                        messageMapper,
+                        summaryMapper,
+                        attachmentService,
+                        new SimpleTokenEstimator(),
+                        protocolType -> llmClient
+                ),
+                protocolType -> llmClient,
+                executor
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig(2_000, 100));
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.selectList(any())).thenReturn(history(10, "a".repeat(800)));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(), List.of(), 1500, null))
+                .thenReturn(List.of());
+
+        service.stream(7L, 100L, 10L, null, "continue", false, List.of(), List.of());
+
+        assertThat(events).contains("llm:stream", "tx:begin", "tx:commit", "sse:CONVERSATION");
+        assertThat(events.indexOf("llm:stream")).isLessThan(events.indexOf("tx:begin"));
+        assertThat(executor.captured).isNotNull();
+    }
+
+    @Test
     void shouldNotStartLlmOrSaveAssistantWhenBindingAttachmentFails() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
         ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
@@ -682,8 +725,44 @@ class ChatServiceImplTest {
         return message;
     }
 
+    private List<ChatMessage> history(int count, String content) {
+        List<ChatMessage> messages = new ArrayList<>();
+        for (int i = 1; i <= count; i++) {
+            messages.add(message((long) i, 100L, 7L, i % 2 == 0 ? "ASSISTANT" : "USER",
+                    "message-" + i + " " + content));
+        }
+        return messages;
+    }
+
     private AiModelRuntimeConfig runtimeConfig() {
         return runtimeConfig(true, null);
+    }
+
+    private AiModelRuntimeConfig runtimeConfig(Integer contextWindow, Integer maxOutputTokens) {
+        return new AiModelRuntimeConfig(
+                10L,
+                20L,
+                "openai",
+                "OpenAI",
+                "LLM",
+                "OPENAI_COMPATIBLE",
+                "https://api.example.com",
+                "sk-cipher",
+                "BEARER",
+                "v1",
+                "{}",
+                "{}",
+                "gpt-test",
+                "娴嬭瘯妯″瀷",
+                true,
+                true,
+                true,
+                null,
+                contextWindow,
+                maxOutputTokens,
+                true,
+                true
+        );
     }
 
     private AiModelRuntimeConfig runtimeConfig(boolean imageInputSupported, Integer imageTokenEstimate) {
@@ -763,15 +842,24 @@ class ChatServiceImplTest {
     private static class RecordingLlmClient implements LlmClient {
 
         private final List<LlmStreamChunk> chunks;
+        private final List<String> orderedEvents;
         private com.agenthub.ai.llm.LlmStreamRequest lastRequest;
 
         private RecordingLlmClient(List<LlmStreamChunk> chunks) {
+            this(chunks, null);
+        }
+
+        private RecordingLlmClient(List<LlmStreamChunk> chunks, List<String> orderedEvents) {
             this.chunks = chunks;
+            this.orderedEvents = orderedEvents;
         }
 
         @Override
         public void stream(com.agenthub.ai.llm.LlmStreamRequest request, java.util.function.Consumer<LlmStreamChunk> chunkConsumer) {
             this.lastRequest = request;
+            if (orderedEvents != null) {
+                orderedEvents.add("llm:stream");
+            }
             chunks.forEach(chunkConsumer);
         }
     }
@@ -833,6 +921,9 @@ class ChatServiceImplTest {
 
         @Override
         protected void doBegin(Object transaction, org.springframework.transaction.TransactionDefinition definition) {
+            if (orderedEvents != null) {
+                orderedEvents.add("tx:begin");
+            }
         }
 
         @Override

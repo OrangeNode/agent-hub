@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -67,7 +68,7 @@ class ConversationContextBuilderTest {
                 protocolType -> llmClient
         );
 
-        ConversationContext result = builder.build(7L, 100L, runtimeConfig(2_000, 100), "继续", List.of());
+        ConversationContext result = builder.build(7L, 100L, runtimeConfig(3_000, 100), "继续", List.of());
 
         assertThat(result.summaryUpdated()).isTrue();
         ArgumentCaptor<ChatConversationSummary> summaryCaptor = ArgumentCaptor.forClass(ChatConversationSummary.class);
@@ -126,6 +127,80 @@ class ConversationContextBuilderTest {
                 LlmContentPart.imageUrl("https://example.com/history.png")
         );
         assertThat(result.inputTokenEstimate()).isGreaterThan(1_500);
+    }
+
+    @Test
+    void shouldContinueChatWhenSummaryLlmThrows() {
+        ChatConversationSummaryMapper summaryMapper = mock(ChatConversationSummaryMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        when(messageMapper.selectList(any())).thenReturn(history(10, "a".repeat(800)));
+        LlmClient throwingClient = (request, chunkConsumer) -> {
+            throw new RuntimeException("summary failed");
+        };
+        ConversationContextBuilder builder = new ConversationContextBuilder(
+                messageMapper,
+                summaryMapper,
+                attachmentService,
+                new SimpleTokenEstimator(),
+                protocolType -> throwingClient
+        );
+
+        ConversationContext result = builder.build(7L, 100L, runtimeConfig(2_000, 100), "continue", List.of());
+
+        assertThat(result.summaryUpdated()).isFalse();
+        assertThat(result.messages().getLast().role()).isEqualTo("user");
+        assertThat(result.messages().getLast().content()).isEqualTo("continue");
+        verify(summaryMapper, never()).insert(any(ChatConversationSummary.class));
+        verify(summaryMapper, never()).updateById(any(ChatConversationSummary.class));
+    }
+
+    @Test
+    void shouldLimitSummaryPromptToAvailableBudgetAndOnlyAdvanceIncludedMessages() {
+        ChatConversationSummaryMapper summaryMapper = mock(ChatConversationSummaryMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        when(messageMapper.selectList(any())).thenReturn(history(30, "a".repeat(800)));
+        RecordingLlmClient llmClient = summaryClient("budgeted summary");
+        ConversationContextBuilder builder = new ConversationContextBuilder(
+                messageMapper,
+                summaryMapper,
+                attachmentService,
+                new SimpleTokenEstimator(),
+                protocolType -> llmClient
+        );
+
+        ConversationContext result = builder.build(7L, 100L, runtimeConfig(6_000, 1_000), "continue", List.of());
+
+        assertThat(result.summaryUpdated()).isTrue();
+        ArgumentCaptor<ChatConversationSummary> summaryCaptor = ArgumentCaptor.forClass(ChatConversationSummary.class);
+        verify(summaryMapper).insert(summaryCaptor.capture());
+        ChatConversationSummary inserted = summaryCaptor.getValue();
+        assertThat(inserted.getSummarizedMessageId()).isLessThan(26L);
+        assertThat(inserted.getSummarizedMessageId()).isGreaterThan(0L);
+        assertThat(llmClient.lastRequest.messages().getFirst().content())
+                .doesNotContain("message-" + (inserted.getSummarizedMessageId() + 1));
+    }
+
+    @Test
+    void shouldTriggerSummaryWhenHistoryExceedsAvailableInputBudgetEvenBelowEightyPercentWindow() {
+        ChatConversationSummaryMapper summaryMapper = mock(ChatConversationSummaryMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        when(messageMapper.selectList(any())).thenReturn(history(10, "a".repeat(400)));
+        RecordingLlmClient llmClient = summaryClient("available budget summary");
+        ConversationContextBuilder builder = new ConversationContextBuilder(
+                messageMapper,
+                summaryMapper,
+                attachmentService,
+                new SimpleTokenEstimator(),
+                protocolType -> llmClient
+        );
+
+        ConversationContext result = builder.build(7L, 100L, runtimeConfig(10_000, 8_000), "continue", List.of());
+
+        assertThat(result.summaryUpdated()).isTrue();
+        verify(summaryMapper).insert(any(ChatConversationSummary.class));
     }
 
     private ConversationContextBuilder builder(

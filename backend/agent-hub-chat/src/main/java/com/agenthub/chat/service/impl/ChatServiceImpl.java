@@ -121,7 +121,7 @@ public class ChatServiceImpl implements ChatService {
     ) {
         String normalizedPrompt = requirePrompt(prompt);
         AiModelRuntimeConfig runtimeConfig = requireRuntimeConfig(modelId);
-        PreparedChat preparedChat = transactionTemplate.execute(status -> prepareChatRecords(
+        ChatPreparation preparation = prepareChat(
                 userId,
                 conversationId,
                 agentKey,
@@ -129,7 +129,8 @@ public class ChatServiceImpl implements ChatService {
                 runtimeConfig,
                 attachmentIds,
                 reuseAttachmentIds
-        ));
+        );
+        PreparedChat preparedChat = transactionTemplate.execute(status -> persistChatRecords(preparation));
         if (preparedChat == null) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "聊天记录准备失败");
         }
@@ -150,7 +151,7 @@ public class ChatServiceImpl implements ChatService {
         return emitter;
     }
 
-    private PreparedChat prepareChatRecords(
+    private ChatPreparation prepareChat(
             Long userId,
             Long conversationId,
             String agentKey,
@@ -176,12 +177,32 @@ public class ChatServiceImpl implements ChatService {
         if (!images.isEmpty() && !runtimeConfig.imageInputSupported()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "当前模型不支持图片输入");
         }
-        ConversationContext context = contextBuilder.build(userId, conversation.getId(), runtimeConfig, normalizedPrompt, images);
-        ChatMessage userMessage = saveUserMessage(userId, conversation.getId(), normalizedPrompt, runtimeConfig);
-        attachmentService.bindToMessage(userId, conversation.getId(), userMessage.getId(), attachmentIds);
-        ChatMessage assistantMessage = saveAssistantMessage(userId, conversation.getId(), runtimeConfig);
+        ConversationContext context = contextBuilder.build(userId, resolvedConversationId, runtimeConfig, normalizedPrompt, images);
+        return new ChatPreparation(
+                userId,
+                conversationId == null,
+                conversation,
+                normalizedPrompt,
+                runtimeConfig,
+                attachmentIds,
+                images,
+                context
+        );
+    }
+
+    private PreparedChat persistChatRecords(ChatPreparation preparation) {
+        ChatConversation conversation = preparation.conversation();
+        if (preparation.newConversation()) {
+            conversationMapper.insert(conversation);
+        }
+        ChatMessage userMessage = saveUserMessage(preparation.userId(), conversation.getId(),
+                preparation.normalizedPrompt(), preparation.runtimeConfig());
+        attachmentService.bindToMessage(preparation.userId(), conversation.getId(), userMessage.getId(),
+                preparation.attachmentIds());
+        ChatMessage assistantMessage = saveAssistantMessage(preparation.userId(), conversation.getId(),
+                preparation.runtimeConfig());
         touchConversation(conversation);
-        return new PreparedChat(conversation, userMessage, assistantMessage, images, context);
+        return new PreparedChat(conversation, userMessage, assistantMessage, preparation.images(), preparation.context());
     }
 
     private static Executor defaultStreamExecutor() {
@@ -192,6 +213,18 @@ public class ChatServiceImpl implements ChatService {
             ChatConversation conversation,
             ChatMessage userMessage,
             ChatMessage assistantMessage,
+            List<AttachmentReference> images,
+            ConversationContext context
+    ) {
+    }
+
+    private record ChatPreparation(
+            Long userId,
+            boolean newConversation,
+            ChatConversation conversation,
+            String normalizedPrompt,
+            AiModelRuntimeConfig runtimeConfig,
+            List<Long> attachmentIds,
             List<AttachmentReference> images,
             ConversationContext context
     ) {
@@ -339,7 +372,6 @@ public class ChatServiceImpl implements ChatService {
         conversation.setStatus(STATUS_ACTIVE);
         conversation.setCreatedAt(now);
         conversation.setUpdatedAt(now);
-        conversationMapper.insert(conversation);
         return conversation;
     }
 

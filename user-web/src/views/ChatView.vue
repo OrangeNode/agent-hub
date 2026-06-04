@@ -202,11 +202,18 @@
                 class="reasoning-block"
                 :class="{ collapsed: !messageItem.reasoningExpanded }"
               >
-                <button type="button" class="reasoning-toggle" @click="toggleReasoning(messageItem)">
-                  <span>思考过程</span>
-                  <small>{{ messageItem.reasoningExpanded ? '收起' : '展开' }}</small>
+                <button
+                  type="button"
+                  class="reasoning-toggle"
+                  :aria-expanded="messageItem.reasoningExpanded"
+                  @click="toggleReasoning(messageItem)"
+                >
+                  <span>{{ reasoningStatusText(messageItem) }}</span>
+                  <span class="reasoning-caret" aria-hidden="true" />
                 </button>
-                <p v-if="messageItem.reasoningExpanded">{{ messageItem.reasoningContent }}</p>
+                <p v-if="messageItem.reasoningExpanded" class="reasoning-content">
+                  {{ messageItem.reasoningContent }}
+                </p>
               </div>
               <div
                 class="assistant-markdown"
@@ -390,6 +397,7 @@ import {
 import type { AvailableModelRecord, ChatMessageRecord, ConversationRecord } from '../api/chat'
 import { useAuthStore } from '../stores/auth'
 import { renderAssistantMarkdown } from './message-render.helpers'
+import { buildReasoningStatusText } from './reasoning-timer.helpers'
 import ThinkingModeSelect from './ThinkingModeSelect.vue'
 
 type ChatRole = 'user' | 'assistant'
@@ -407,6 +415,8 @@ interface ChatMessageItem {
   content: string
   reasoningContent?: string
   reasoningExpanded?: boolean
+  reasoningStartedAt?: number
+  reasoningFinishedAt?: number
   status?: string
 }
 
@@ -445,6 +455,8 @@ const fileInputRef = ref<HTMLInputElement | null>(null)
 const uploadedFiles = ref<UploadedFile[]>([])
 const selectedModel = ref<number | null>(null)
 const availableModels = ref<AvailableModelRecord[]>([])
+const reasoningNow = ref(Date.now())
+let reasoningTimer: ReturnType<typeof window.setInterval> | null = null
 
 watch(prompt, (val) => {
   isMultiline.value = val.includes('\n') || val.length > 40
@@ -733,10 +745,67 @@ function toggleReasoning(messageItem: ChatMessageItem) {
   messageItem.reasoningExpanded = !messageItem.reasoningExpanded
 }
 
+function reasoningStatusText(messageItem: ChatMessageItem) {
+  const elapsedMs = reasoningElapsedMs(messageItem)
+
+  if (elapsedMs === null) {
+    return '思考过程'
+  }
+
+  return buildReasoningStatusText(elapsedMs, Boolean(messageItem.reasoningFinishedAt))
+}
+
+function reasoningElapsedMs(messageItem: ChatMessageItem) {
+  if (!messageItem.reasoningStartedAt) {
+    return null
+  }
+
+  return Math.max(0, (messageItem.reasoningFinishedAt ?? reasoningNow.value) - messageItem.reasoningStartedAt)
+}
+
+function startReasoningTiming(messageItem: ChatMessageItem) {
+  if (!messageItem.reasoningStartedAt) {
+    const now = Date.now()
+    messageItem.reasoningStartedAt = now
+    reasoningNow.value = now
+    syncReasoningTimer()
+  }
+}
+
+function finishReasoningTiming(messageItem?: ChatMessageItem) {
+  if (!messageItem?.reasoningStartedAt || messageItem.reasoningFinishedAt) {
+    return
+  }
+
+  const now = Date.now()
+  messageItem.reasoningFinishedAt = now
+  reasoningNow.value = now
+  syncReasoningTimer()
+}
+
+function syncReasoningTimer() {
+  const hasActiveReasoning = currentMessages.value.some(
+    (item) => item.reasoningStartedAt && !item.reasoningFinishedAt
+  )
+
+  if (hasActiveReasoning && !reasoningTimer) {
+    reasoningTimer = window.setInterval(() => {
+      reasoningNow.value = Date.now()
+    }, 1000)
+    return
+  }
+
+  if (!hasActiveReasoning && reasoningTimer) {
+    window.clearInterval(reasoningTimer)
+    reasoningTimer = null
+  }
+}
+
 function closeStream() {
   streamControllerRef.value?.abort()
   streamControllerRef.value = null
   streaming.value = false
+  syncReasoningTimer()
 }
 
 function handleSend() {
@@ -780,6 +849,8 @@ function handleSend() {
     content: '',
     reasoningContent: '',
     reasoningExpanded: thinkingMode.value === 'thinking',
+    reasoningStartedAt: undefined,
+    reasoningFinishedAt: undefined,
     status: 'STREAMING'
   })
 
@@ -825,6 +896,7 @@ function handleSend() {
         }
         const assistantMessage = findAssistantMessage(currentAssistantMessageId)
         if (assistantMessage) {
+          startReasoningTiming(assistantMessage)
           assistantMessage.reasoningContent = `${assistantMessage.reasoningContent ?? ''}${data.content}`
         }
       },
@@ -837,18 +909,22 @@ function handleSend() {
       onMessageCompleted: (data) => {
         const assistantMessage = findAssistantMessage(data.messageId ?? currentAssistantMessageId)
         if (assistantMessage) {
+          finishReasoningTiming(assistantMessage)
           assistantMessage.status = data.status ?? 'COMPLETED'
         }
       },
       onError: (data) => {
+        finishReasoningTiming(findAssistantMessage(currentAssistantMessageId))
         message.error(data.message ?? '\u6d41\u5f0f\u54cd\u5e94\u5931\u8d25')
         closeStream()
       },
       onDone: () => {
+        finishReasoningTiming(findAssistantMessage(currentAssistantMessageId))
         closeStream()
         void loadConversations()
       },
       onTransportError: () => {
+        finishReasoningTiming(findAssistantMessage(currentAssistantMessageId))
         closeStream()
       }
     }
@@ -871,6 +947,10 @@ function handleLogout() {
 
 onBeforeUnmount(() => {
   closeStream()
+  if (reasoningTimer) {
+    window.clearInterval(reasoningTimer)
+    reasoningTimer = null
+  }
 })
 
 onMounted(() => {
@@ -1564,45 +1644,59 @@ svg {
 
 .reasoning-block {
   display: grid;
-  gap: 6px;
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: #f8fafc;
+  gap: 14px;
+  margin-bottom: 18px;
+  padding: 0 0 0 2px;
+  border-bottom: 1px solid #edf0f3;
 }
 
 .reasoning-block.collapsed {
-  padding-bottom: 10px;
+  gap: 0;
 }
 
 .reasoning-toggle {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
+  gap: 6px;
+  width: max-content;
+  max-width: 100%;
+  padding: 0 0 12px;
   border: 0;
   background: transparent;
-  color: #475569;
+  color: #6b7280;
   cursor: pointer;
   font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
   text-align: left;
 }
 
 .reasoning-toggle span {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
-.reasoning-toggle small {
-  color: #64748b;
-  font-size: 12px;
+.reasoning-caret {
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-1px) rotate(45deg);
+  transition: transform 0.16s ease;
 }
 
-.reasoning-block p {
-  color: #64748b;
+.reasoning-toggle[aria-expanded='false'] .reasoning-caret {
+  transform: translateY(1px) rotate(-45deg);
+}
+
+.reasoning-content {
+  margin: 0 0 16px 0;
+  padding-left: 14px;
+  border-left: 2px solid #e5e7eb;
+  color: #4b5563;
   font-size: 14px;
+  line-height: 1.85;
+  white-space: pre-wrap;
 }
 
 .message-tools {

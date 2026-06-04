@@ -5,7 +5,7 @@
       <div class="heading">
         <p>Agent Hub 用户端</p>
         <h1>登录后开始对话</h1>
-        <span>当前为初始化骨架，输入任意用户名和密码即可进入。</span>
+        <span>用户名 admin，密码 admin123。</span>
       </div>
 
       <n-form ref="formRef" :model="formValue" :rules="rules" size="large">

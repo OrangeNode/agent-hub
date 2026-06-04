@@ -192,7 +192,7 @@ class AttachmentServiceImplTest {
                 .map(id -> readyAttachment(id, 7L, 200L, null, OffsetDateTime.now().plusDays(1)))
                 .toList());
 
-        assertThatThrownBy(() -> service.resolveImagesForChat(7L, 200L, attachmentIds, List.of(), 1500, null))
+        assertThatThrownBy(() -> service.resolveImagesForChat(7L, 200L, attachmentIds, List.of(), 1500))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("单条消息最多上传 8 张图片")
                 .extracting("errorCode")
@@ -211,10 +211,31 @@ class AttachmentServiceImplTest {
                 .thenReturn("https://example.com/cat.png");
 
         List<com.agenthub.storage.attachment.dto.AttachmentReference> references =
-                service.resolveImagesForChat(7L, 200L, List.of(1L), List.of(1L), 1500, null);
+                service.resolveImagesForChat(7L, 200L, List.of(1L), List.of(1L), 1500);
 
         assertThat(references).hasSize(1);
         assertThat(references.getFirst().attachmentId()).isEqualTo(1L);
+    }
+
+    @Test
+    void shouldAutoReuseRecentReadyImagesInConversation() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        ChatAttachment olderImage = readyAttachment(1L, 7L, 200L, 300L, OffsetDateTime.now().plusDays(1));
+        ChatAttachment latestImage = readyAttachment(2L, 7L, 200L, 302L, OffsetDateTime.now().plusDays(1));
+        when(mapper.selectList(any())).thenReturn(List.of(latestImage, olderImage));
+        when(objectStorageClient.presignGet("users/7/chat-images/20260604/cat.png", Duration.ofMinutes(15)))
+                .thenReturn("https://example.com/cat.png");
+
+        List<com.agenthub.storage.attachment.dto.AttachmentReference> references =
+                service.resolveImagesForChat(7L, 200L, List.of(), List.of(), 1500);
+
+        assertThat(references).hasSize(2);
+        assertThat(references).extracting(com.agenthub.storage.attachment.dto.AttachmentReference::attachmentId)
+                .containsExactly(1L, 2L);
+        verify(objectStorageClient, org.mockito.Mockito.times(2))
+                .presignGet("users/7/chat-images/20260604/cat.png", Duration.ofMinutes(15));
     }
 
     @Test
@@ -358,8 +379,7 @@ class AttachmentServiceImplTest {
                 200L,
                 List.of(attachment.getId()),
                 List.of(),
-                1500,
-                null
+                1500
         ))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage(message)

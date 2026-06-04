@@ -359,7 +359,9 @@ public class ConversationContextBuilder {
             return new LlmMessage(role, defaultString(message.getContent()));
         }
         List<LlmContentPart> parts = new ArrayList<>();
-        parts.add(LlmContentPart.text(defaultString(message.getContent())));
+        if (hasText(message.getContent())) {
+            parts.add(LlmContentPart.text(message.getContent()));
+        }
         attachments.stream()
                 .map(AttachmentItem::previewUrl)
                 .map(LlmContentPart::imageUrl)
@@ -383,7 +385,9 @@ public class ConversationContextBuilder {
             return new LlmMessage("user", prompt);
         }
         List<LlmContentPart> parts = new ArrayList<>();
-        parts.add(LlmContentPart.text(prompt));
+        if (hasText(prompt)) {
+            parts.add(LlmContentPart.text(prompt));
+        }
         images.stream()
                 .map(AttachmentReference::readUrl)
                 .map(LlmContentPart::imageUrl)

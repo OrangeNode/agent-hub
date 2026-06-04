@@ -650,6 +650,7 @@ const selectedModel = ref<number | null>(null)
 const availableModels = ref<AvailableModelRecord[]>([])
 const reasoningNow = ref(Date.now())
 let reasoningTimer: ReturnType<typeof window.setInterval> | null = null
+let sentLocalPreviewUrls = new Set<string>()
 
 watch(prompt, (val) => {
   isMultiline.value = val.includes('\n') || val.length > 40
@@ -691,7 +692,6 @@ const uploadMenuOptions = computed(() => [
 ])
 const hasUploadingImage = computed(() => pendingImages.value.some((image) => image.status === 'uploading'))
 const hasFailedImage = computed(() => pendingImages.value.some((image) => image.status === 'failed'))
-const sendDisabled = computed(() => streaming.value)
 const firstReasoningModel = computed(() => availableModels.value.find((item) => item.reasoningSupported) ?? null)
 const activeMenuConversation = computed(() =>
   conversations.value.find((item) => item.id === openConversationMenuId.value) ?? null
@@ -738,6 +738,14 @@ const selectedReuseAttachments = computed(() => {
   return reusableHistoryAttachments.value.filter((item) => selectedIds.has(item.attachmentId))
 })
 const composerImageCount = computed(() => pendingImages.value.length + selectedReuseAttachments.value.length)
+const canSubmitContent = computed(() => Boolean(prompt.value.trim()) || composerImageCount.value > 0)
+const sendDisabled = computed(() =>
+  streaming.value
+  || hasUploadingImage.value
+  || hasFailedImage.value
+  || !canSubmitContent.value
+  || (composerImageCount.value > 0 && !selectedModelItem.value?.imageInputSupported)
+)
 const historyImageReuseDisabledReason = computed(() => {
   if (!selectedModelItem.value?.imageInputSupported) {
     return '当前模型不支持图片输入'
@@ -1133,6 +1141,23 @@ function clearPendingImages() {
   imagePreviewUrl.value = null
 }
 
+function revokeSentPreviewUrls() {
+  for (const previewUrl of sentLocalPreviewUrls) {
+    if (imagePreviewUrl.value === previewUrl) {
+      imagePreviewUrl.value = null
+    }
+    URL.revokeObjectURL(previewUrl)
+  }
+  sentLocalPreviewUrls = new Set<string>()
+}
+
+async function refreshActiveConversationMessages() {
+  const conversationId = activeConversationId.value
+  if (conversationId && conversationId > 0) {
+    await loadMessages(conversationId)
+  }
+}
+
 function revokePendingImageUrl(image: PendingImage) {
   if (imagePreviewUrl.value === image.previewUrl) {
     imagePreviewUrl.value = null
@@ -1254,7 +1279,7 @@ function handleSend() {
     return
   }
 
-  if (!trimmedPrompt) {
+  if (!trimmedPrompt && composerImageCount.value === 0) {
     return
   }
 
@@ -1279,13 +1304,27 @@ function handleSend() {
   const messages = ensureConversationMessages(conversationId)
   const assistantMessageId = -Date.now()
   let currentAssistantMessageId = assistantMessageId
+  const currentReadyPendingImages = pendingImages.value.filter(
+    (image) => image.status === 'ready' && typeof image.attachmentId === 'number'
+  )
+  const currentPendingAttachments: ChatAttachmentItem[] = currentReadyPendingImages.map((image) => ({
+    attachmentId: image.attachmentId as number,
+    filename: image.file.name,
+    contentType: image.file.type,
+    status: 'READY',
+    expired: false,
+    previewUrl: image.previewUrl,
+    message: null,
+    messageId: null
+  }))
   const currentReuseAttachments = selectedReuseAttachments.value.map((attachment) => ({ ...attachment }))
+  const currentMessageAttachments = [...currentPendingAttachments, ...currentReuseAttachments]
 
   messages.push({
     id: assistantMessageId - 1,
     role: 'user',
     content: trimmedPrompt,
-    attachments: currentReuseAttachments
+    attachments: currentMessageAttachments
   })
 
   messages.push({
@@ -1301,12 +1340,13 @@ function handleSend() {
 
   const currentPrompt = trimmedPrompt
   const currentThinkingEnabled = thinkingMode.value === 'thinking'
-  const currentAttachmentIds = pendingImages.value
-    .filter((image) => image.status === 'ready' && typeof image.attachmentId === 'number')
+  const currentAttachmentIds = currentReadyPendingImages
     .map((image) => image.attachmentId as number)
   const currentReuseAttachmentIds = currentReuseAttachments.map((attachment) => attachment.attachmentId)
+  const currentSentPreviewUrls = currentReadyPendingImages.map((image) => image.previewUrl)
+  currentSentPreviewUrls.forEach((previewUrl) => sentLocalPreviewUrls.add(previewUrl))
   prompt.value = ''
-  clearPendingImages()
+  pendingImages.value = []
   clearSelectedReuseAttachments()
   streaming.value = true
 
@@ -1369,15 +1409,18 @@ function handleSend() {
         finishReasoningTiming(findAssistantMessage(currentAssistantMessageId))
         message.error(data.message ?? '\u6d41\u5f0f\u54cd\u5e94\u5931\u8d25')
         closeStream()
+        void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
       },
       onDone: () => {
         finishReasoningTiming(findAssistantMessage(currentAssistantMessageId))
         closeStream()
+        void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
         void loadConversations()
       },
       onTransportError: () => {
         finishReasoningTiming(findAssistantMessage(currentAssistantMessageId))
         closeStream()
+        void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
       }
     }
   )
@@ -1400,6 +1443,7 @@ function handleLogout() {
 onBeforeUnmount(() => {
   closeStream()
   clearPendingImages()
+  revokeSentPreviewUrls()
   if (reasoningTimer) {
     window.clearInterval(reasoningTimer)
     reasoningTimer = null

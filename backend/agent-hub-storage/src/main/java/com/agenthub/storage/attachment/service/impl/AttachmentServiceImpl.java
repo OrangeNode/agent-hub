@@ -19,6 +19,7 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -146,13 +147,12 @@ public class AttachmentServiceImpl implements AttachmentService {
             Long conversationId,
             List<Long> attachmentIds,
             List<Long> reuseAttachmentIds,
-            int imageTokenEstimate,
-            Long autoReuseMessageId
+            int imageTokenEstimate
     ) {
         List<Long> newAttachmentIds = normalizeIds(attachmentIds);
         List<Long> reusedAttachmentIds = removeAlreadyResolvedIds(normalizeIds(reuseAttachmentIds), newAttachmentIds);
         if (newAttachmentIds.isEmpty() && reusedAttachmentIds.isEmpty() && conversationId != null) {
-            return autoReuseMessageImages(userId, conversationId, autoReuseMessageId, imageTokenEstimate);
+            return autoReuseRecentImages(userId, conversationId, imageTokenEstimate);
         }
 
         Map<Long, ChatAttachment> resolvedAttachmentsById = new LinkedHashMap<>();
@@ -313,27 +313,23 @@ public class AttachmentServiceImpl implements AttachmentService {
         }
     }
 
-    private List<AttachmentReference> autoReuseMessageImages(
+    private List<AttachmentReference> autoReuseRecentImages(
             Long userId,
             Long conversationId,
-            Long messageId,
             int imageTokenEstimate
     ) {
-        if (messageId == null) {
-            return List.of();
-        }
         LambdaQueryWrapper<ChatAttachment> wrapper = new LambdaQueryWrapper<ChatAttachment>()
                 .eq(ChatAttachment::getUserId, userId)
                 .eq(ChatAttachment::getConversationId, conversationId)
-                .eq(ChatAttachment::getMessageId, messageId)
+                .isNotNull(ChatAttachment::getMessageId)
                 .eq(ChatAttachment::getAttachmentType, IMAGE_TYPE)
                 .eq(ChatAttachment::getStatus, STATUS_READY)
                 .gt(ChatAttachment::getExpiresAt, OffsetDateTime.now())
-                .orderByAsc(ChatAttachment::getId);
-        List<ChatAttachment> attachments = chatAttachmentMapper.selectList(wrapper).stream()
-                .limit(MAX_CHAT_IMAGES + 1L)
-                .toList();
-        validateImageLimit(attachments.size());
+                .orderByDesc(ChatAttachment::getMessageId)
+                .orderByDesc(ChatAttachment::getId)
+                .last("LIMIT " + MAX_CHAT_IMAGES);
+        List<ChatAttachment> attachments = new ArrayList<>(chatAttachmentMapper.selectList(wrapper));
+        Collections.reverse(attachments);
         return attachments.stream()
                 .map(attachment -> toAttachmentReference(attachment, imageTokenEstimate))
                 .toList();

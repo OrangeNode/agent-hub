@@ -9,6 +9,7 @@ import io.minio.MinioClient;
 import io.minio.RemoveObjectArgs;
 import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
+import io.minio.errors.ErrorResponseException;
 import io.minio.http.Method;
 import java.io.InputStream;
 import java.time.Duration;
@@ -17,6 +18,7 @@ import java.util.Map;
 public class MinioObjectStorageClient implements ObjectStorageClient {
 
     private static final String STORAGE_ERROR_MESSAGE = "对象存储操作失败";
+    private static final String OBJECT_NOT_FOUND_MESSAGE = "对象不存在";
 
     private final MinioClient internalClient;
     private final MinioClient presignClient;
@@ -66,7 +68,7 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
                     .build());
             return new ObjectMetadata(response.size(), response.contentType());
         } catch (Exception exception) {
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, STORAGE_ERROR_MESSAGE);
+            throw storageException(exception);
         }
     }
 
@@ -78,7 +80,7 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
                 .build())) {
             return inputStream.readNBytes(length);
         } catch (Exception exception) {
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, STORAGE_ERROR_MESSAGE);
+            throw storageException(exception);
         }
     }
 
@@ -92,5 +94,24 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
         } catch (Exception exception) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, STORAGE_ERROR_MESSAGE);
         }
+    }
+
+    private BusinessException storageException(Exception exception) {
+        if (isObjectNotFound(exception)) {
+            return new BusinessException(ErrorCode.BAD_REQUEST, OBJECT_NOT_FOUND_MESSAGE);
+        }
+        return new BusinessException(ErrorCode.INTERNAL_ERROR, STORAGE_ERROR_MESSAGE);
+    }
+
+    private boolean isObjectNotFound(Exception exception) {
+        if (!(exception instanceof ErrorResponseException errorResponseException)
+                || errorResponseException.errorResponse() == null) {
+            return false;
+        }
+        String code = errorResponseException.errorResponse().code();
+        return "NoSuchKey".equals(code)
+                || "NoSuchObject".equals(code)
+                || "NoSuchBucket".equals(code)
+                || "NotFound".equals(code);
     }
 }

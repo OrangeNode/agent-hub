@@ -97,7 +97,6 @@ public class ChatController {
     }
 
     public record ChatStreamRequest(
-            @NotBlank(message = "消息内容不能为空")
             @Size(max = 8000, message = "消息内容不能超过 8000 个字符")
             String prompt,
             Long conversationId,

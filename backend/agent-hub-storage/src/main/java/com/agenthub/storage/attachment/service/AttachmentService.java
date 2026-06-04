@@ -16,8 +16,7 @@ public interface AttachmentService {
             Long conversationId,
             List<Long> attachmentIds,
             List<Long> reuseAttachmentIds,
-            int imageTokenEstimate,
-            Long autoReuseMessageId
+            int imageTokenEstimate
     );
 
     void bindToMessage(Long userId, Long conversationId, Long messageId, List<Long> attachmentIds);

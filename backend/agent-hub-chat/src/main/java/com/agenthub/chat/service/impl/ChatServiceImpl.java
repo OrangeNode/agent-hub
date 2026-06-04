@@ -4,6 +4,7 @@ import com.agenthub.ai.llm.LlmClient;
 import com.agenthub.ai.llm.LlmClientFactory;
 import com.agenthub.ai.llm.LlmMessage;
 import com.agenthub.ai.llm.LlmStreamChunk;
+import com.agenthub.ai.llm.LlmStreamChunkType;
 import com.agenthub.ai.llm.LlmStreamRequest;
 import com.agenthub.ai.model.dto.AiModelRuntimeConfig;
 import com.agenthub.ai.model.service.AiModelService;
@@ -29,6 +30,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import java.io.IOException;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -55,6 +57,8 @@ public class ChatServiceImpl implements ChatService {
     private static final String SSE_CONNECTION_CLOSED = "SSE 连接已断开";
     private static final int TITLE_MAX_OUTPUT_TOKENS = 64;
     private static final int DEFAULT_IMAGE_TOKEN_ESTIMATE = 1500;
+    private static final String CONTEXT_LENGTH_RETRY_FAILED_MESSAGE =
+            "模型上下文长度仍然超限，请缩短输入或切换更大上下文模型";
 
     private final ChatConversationMapper conversationMapper;
     private final ChatMessageMapper messageMapper;
@@ -119,7 +123,8 @@ public class ChatServiceImpl implements ChatService {
             List<Long> attachmentIds,
             List<Long> reuseAttachmentIds
     ) {
-        String normalizedPrompt = requirePrompt(prompt);
+        String normalizedPrompt = normalizePrompt(prompt);
+        requireChatInput(normalizedPrompt, attachmentIds, reuseAttachmentIds);
         AiModelRuntimeConfig runtimeConfig = requireRuntimeConfig(modelId);
         ChatPreparation preparation = prepareChat(
                 userId,
@@ -165,14 +170,12 @@ public class ChatServiceImpl implements ChatService {
                 ? DEFAULT_IMAGE_TOKEN_ESTIMATE
                 : runtimeConfig.imageTokenEstimate();
         Long resolvedConversationId = conversationId == null ? null : conversation.getId();
-        Long autoReuseMessageId = resolveAutoReuseMessageId(userId, resolvedConversationId, attachmentIds, reuseAttachmentIds);
         List<AttachmentReference> images = attachmentService.resolveImagesForChat(
                 userId,
                 resolvedConversationId,
                 attachmentIds,
                 reuseAttachmentIds,
-                imageTokenEstimate,
-                autoReuseMessageId
+                imageTokenEstimate
         );
         if (!images.isEmpty() && !runtimeConfig.imageInputSupported()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "当前模型不支持图片输入");
@@ -228,26 +231,6 @@ public class ChatServiceImpl implements ChatService {
             List<AttachmentReference> images,
             ConversationContext context
     ) {
-    }
-
-    private Long resolveAutoReuseMessageId(
-            Long userId,
-            Long conversationId,
-            List<Long> attachmentIds,
-            List<Long> reuseAttachmentIds
-    ) {
-        if (conversationId == null || hasIds(attachmentIds) || hasIds(reuseAttachmentIds)) {
-            return null;
-        }
-        LambdaQueryWrapper<ChatMessage> wrapper = new LambdaQueryWrapper<ChatMessage>()
-                .eq(ChatMessage::getConversationId, conversationId)
-                .eq(ChatMessage::getUserId, userId)
-                .eq(ChatMessage::getRole, ROLE_USER)
-                .orderByDesc(ChatMessage::getCreatedAt)
-                .orderByDesc(ChatMessage::getId)
-                .last("LIMIT 1");
-        ChatMessage latestUserMessage = messageMapper.selectOne(wrapper);
-        return latestUserMessage == null ? null : latestUserMessage.getId();
     }
 
     private boolean hasIds(List<Long> ids) {
@@ -319,11 +302,14 @@ public class ChatServiceImpl implements ChatService {
         conversationMapper.updateById(conversation);
     }
 
-    private String requirePrompt(String prompt) {
-        if (prompt == null || prompt.isBlank()) {
+    private String normalizePrompt(String prompt) {
+        return prompt == null ? "" : prompt.strip();
+    }
+
+    private void requireChatInput(String prompt, List<Long> attachmentIds, List<Long> reuseAttachmentIds) {
+        if ((prompt == null || prompt.isBlank()) && !hasIds(attachmentIds) && !hasIds(reuseAttachmentIds)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "消息内容不能为空");
         }
-        return prompt;
     }
 
     private String requireTitle(String title) {
@@ -467,10 +453,21 @@ public class ChatServiceImpl implements ChatService {
         boolean reasoningRequested = thinkingEnabled && runtimeConfig.reasoningSupported();
         try {
             LlmClient client = llmClientFactory.apply(runtimeConfig.protocolType());
-            client.stream(buildRequest(runtimeConfig, messages, reasoningRequested), chunk ->
-                    handleChunk(emitter, assistantMessage, content, reasoningContent, finished, reasoningRequested, chunk));
+            StreamAttemptOutcome outcome = streamOnce(client, runtimeConfig, messages, reasoningRequested,
+                    emitter, assistantMessage, content, reasoningContent, finished);
+            if (outcome.retryRequested() && !finished.get()) {
+                StreamAttemptOutcome retryOutcome = streamOnce(client, runtimeConfig, compactMessagesForRetry(messages),
+                        reasoningRequested, emitter, assistantMessage, content, reasoningContent, finished);
+                if (retryOutcome.retryRequested() && finished.compareAndSet(false, true)) {
+                    failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent,
+                            CONTEXT_LENGTH_RETRY_FAILED_MESSAGE);
+                }
+            }
         } catch (Exception exception) {
-            if (finished.compareAndSet(false, true)) {
+            if (isRetryableBeforeDelta(content, reasoningContent) && isContextLengthError(exception.getMessage())) {
+                retryAfterContextLengthException(emitter, runtimeConfig, messages, assistantMessage, reasoningRequested,
+                        content, reasoningContent, finished, exception);
+            } else if (finished.compareAndSet(false, true)) {
                 failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent, exception.getMessage());
             }
         } finally {
@@ -493,6 +490,107 @@ public class ChatServiceImpl implements ChatService {
                 runtimeConfig.maxOutputTokens(),
                 reasoningRequested
         );
+    }
+
+    private StreamAttemptOutcome streamOnce(
+            LlmClient client,
+            AiModelRuntimeConfig runtimeConfig,
+            List<LlmMessage> messages,
+            boolean reasoningRequested,
+            SseEmitter emitter,
+            ChatMessage assistantMessage,
+            StringBuilder content,
+            StringBuilder reasoningContent,
+            AtomicBoolean finished
+    ) {
+        AtomicBoolean retryRequested = new AtomicBoolean(false);
+        AtomicBoolean sawDelta = new AtomicBoolean(false);
+        client.stream(buildRequest(runtimeConfig, messages, reasoningRequested), chunk -> {
+            if (retryRequested.get()) {
+                return;
+            }
+            if (isDeltaChunk(chunk)) {
+                sawDelta.set(true);
+            }
+            if (chunk.type() == LlmStreamChunkType.ERROR
+                    && !sawDelta.get()
+                    && isContextLengthError(chunk.errorMessage())) {
+                retryRequested.set(true);
+                return;
+            }
+            handleChunk(emitter, assistantMessage, content, reasoningContent, finished, reasoningRequested, chunk);
+        });
+        return new StreamAttemptOutcome(retryRequested.get());
+    }
+
+    private void retryAfterContextLengthException(
+            SseEmitter emitter,
+            AiModelRuntimeConfig runtimeConfig,
+            List<LlmMessage> messages,
+            ChatMessage assistantMessage,
+            boolean reasoningRequested,
+            StringBuilder content,
+            StringBuilder reasoningContent,
+            AtomicBoolean finished,
+            Exception originalException
+    ) {
+        try {
+            LlmClient client = llmClientFactory.apply(runtimeConfig.protocolType());
+            StreamAttemptOutcome retryOutcome = streamOnce(client, runtimeConfig, compactMessagesForRetry(messages),
+                    reasoningRequested, emitter, assistantMessage, content, reasoningContent, finished);
+            if (retryOutcome.retryRequested() && finished.compareAndSet(false, true)) {
+                failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent,
+                        CONTEXT_LENGTH_RETRY_FAILED_MESSAGE);
+            }
+        } catch (Exception retryException) {
+            if (finished.compareAndSet(false, true)) {
+                String message = isContextLengthError(retryException.getMessage())
+                        ? CONTEXT_LENGTH_RETRY_FAILED_MESSAGE
+                        : defaultString(retryException.getMessage());
+                if (message.isBlank()) {
+                    message = originalException.getMessage();
+                }
+                failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent, message);
+            }
+        }
+    }
+
+    private List<LlmMessage> compactMessagesForRetry(List<LlmMessage> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return List.of();
+        }
+        for (int index = messages.size() - 1; index >= 0; index--) {
+            LlmMessage message = messages.get(index);
+            if ("user".equals(message.role())) {
+                return List.of(message);
+            }
+        }
+        return List.of(messages.getLast());
+    }
+
+    private boolean isRetryableBeforeDelta(StringBuilder content, StringBuilder reasoningContent) {
+        return content.isEmpty() && reasoningContent.isEmpty();
+    }
+
+    private boolean isDeltaChunk(LlmStreamChunk chunk) {
+        return chunk.type() == LlmStreamChunkType.ANSWER_DELTA
+                || chunk.type() == LlmStreamChunkType.REASONING_DELTA;
+    }
+
+    private boolean isContextLengthError(String errorMessage) {
+        if (errorMessage == null || errorMessage.isBlank()) {
+            return false;
+        }
+        String normalized = errorMessage.toLowerCase(Locale.ROOT);
+        return normalized.contains("context length")
+                || normalized.contains("context_length_exceeded")
+                || normalized.contains("maximum context")
+                || normalized.contains("max context")
+                || normalized.contains("too many tokens")
+                || normalized.contains("token limit")
+                || normalized.contains("超过上下文")
+                || normalized.contains("上下文长度")
+                || (normalized.contains("token") && normalized.contains("exceed"));
     }
 
     private LlmStreamRequest buildTitleRequest(AiModelRuntimeConfig runtimeConfig, String prompt) {
@@ -625,6 +723,9 @@ public class ChatServiceImpl implements ChatService {
 
     private String defaultString(String value) {
         return value == null ? "" : value;
+    }
+
+    private record StreamAttemptOutcome(boolean retryRequested) {
     }
 
     private ConversationItem toConversationItem(ChatConversation conversation) {

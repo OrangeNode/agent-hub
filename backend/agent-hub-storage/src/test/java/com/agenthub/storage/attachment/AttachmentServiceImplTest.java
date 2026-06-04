@@ -192,7 +192,7 @@ class AttachmentServiceImplTest {
                 .map(id -> readyAttachment(id, 7L, 200L, null, OffsetDateTime.now().plusDays(1)))
                 .toList());
 
-        assertThatThrownBy(() -> service.resolveImagesForChat(7L, 200L, attachmentIds, List.of(), 1500))
+        assertThatThrownBy(() -> service.resolveImagesForChat(7L, 200L, attachmentIds, List.of(), 1500, null))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("单条消息最多上传 8 张图片")
                 .extracting("errorCode")
@@ -201,27 +201,80 @@ class AttachmentServiceImplTest {
     }
 
     @Test
-    void shouldBindToMessageOnlyReadyUnboundUserAttachments() {
+    void shouldResolveDuplicateImageOnlyOnce() {
         ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
         ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
         AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
-        List<Long> attachmentIds = List.of(1L, 2L, 3L, 4L);
+        ChatAttachment attachment = readyAttachment(1L, 7L, 200L, null, OffsetDateTime.now().plusDays(1));
+        when(mapper.selectByIds(List.of(1L))).thenReturn(List.of(attachment));
+        when(objectStorageClient.presignGet("users/7/chat-images/20260604/cat.png", Duration.ofMinutes(15)))
+                .thenReturn("https://example.com/cat.png");
+
+        List<com.agenthub.storage.attachment.dto.AttachmentReference> references =
+                service.resolveImagesForChat(7L, 200L, List.of(1L), List.of(1L), 1500, null);
+
+        assertThat(references).hasSize(1);
+        assertThat(references.getFirst().attachmentId()).isEqualTo(1L);
+    }
+
+    @Test
+    void shouldBindToMessageForReadyUnboundUserAttachments() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        List<Long> attachmentIds = List.of(1L, 2L);
         when(mapper.selectByIds(attachmentIds)).thenReturn(List.of(
                 readyAttachment(1L, 7L, null, null, OffsetDateTime.now().plusDays(1)),
-                readyAttachment(2L, 8L, null, null, OffsetDateTime.now().plusDays(1)),
-                attachment(3L, 7L, null, null, "PENDING", OffsetDateTime.now().plusDays(1)),
-                readyAttachment(4L, 7L, null, 99L, OffsetDateTime.now().plusDays(1))
+                readyAttachment(2L, 7L, null, null, OffsetDateTime.now().plusDays(1))
         ));
         ArgumentCaptor<ChatAttachment> attachmentCaptor = ArgumentCaptor.forClass(ChatAttachment.class);
 
         service.bindToMessage(7L, 200L, 300L, attachmentIds);
 
-        verify(mapper).updateById(attachmentCaptor.capture());
-        ChatAttachment updatedAttachment = attachmentCaptor.getValue();
-        assertThat(updatedAttachment.getId()).isEqualTo(1L);
-        assertThat(updatedAttachment.getConversationId()).isEqualTo(200L);
-        assertThat(updatedAttachment.getMessageId()).isEqualTo(300L);
-        assertThat(updatedAttachment.getUpdatedAt()).isNotNull();
+        verify(mapper, org.mockito.Mockito.times(2)).updateById(attachmentCaptor.capture());
+        assertThat(attachmentCaptor.getAllValues())
+                .extracting(ChatAttachment::getId)
+                .containsExactly(1L, 2L);
+        assertThat(attachmentCaptor.getAllValues())
+                .allSatisfy(updatedAttachment -> {
+                    assertThat(updatedAttachment.getConversationId()).isEqualTo(200L);
+                    assertThat(updatedAttachment.getMessageId()).isEqualTo(300L);
+                    assertThat(updatedAttachment.getUpdatedAt()).isNotNull();
+                });
+    }
+
+    @Test
+    void shouldRejectExpiredAttachmentWhenBindToMessage() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        when(mapper.selectByIds(List.of(1L))).thenReturn(List.of(
+                readyAttachment(1L, 7L, null, null, OffsetDateTime.now().minusSeconds(1))
+        ));
+
+        assertThatThrownBy(() -> service.bindToMessage(7L, 200L, 300L, List.of(1L)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("图片已过期")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(mapper, never()).updateById(any(ChatAttachment.class));
+    }
+
+    @Test
+    void shouldRejectInvalidAttachmentWhenBindToMessage() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        when(mapper.selectByIds(List.of(1L, 2L))).thenReturn(List.of(
+                readyAttachment(1L, 7L, null, null, OffsetDateTime.now().plusDays(1))
+        ));
+
+        assertThatThrownBy(() -> service.bindToMessage(7L, 200L, 300L, List.of(1L, 2L)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("图片上传失败，请重试")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(mapper, never()).updateById(any(ChatAttachment.class));
     }
 
     @Test
@@ -285,7 +338,8 @@ class AttachmentServiceImplTest {
                 200L,
                 List.of(attachment.getId()),
                 List.of(),
-                1500
+                1500,
+                null
         ))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage(message)

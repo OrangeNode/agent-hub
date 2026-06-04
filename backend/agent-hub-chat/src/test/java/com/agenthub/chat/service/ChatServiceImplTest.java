@@ -445,7 +445,7 @@ class ChatServiceImplTest {
                 attachmentService, new RecordingLlmClient(List.of(LlmStreamChunk.done())));
         when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig(false, null));
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
-        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(1L), List.of(), 1500))
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(1L), List.of(), 1500, null))
                 .thenReturn(List.of(new AttachmentReference(
                         1L,
                         "cat.png",
@@ -473,7 +473,7 @@ class ChatServiceImplTest {
         when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
-        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(1L, 2L), List.of(), 1500))
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(1L, 2L), List.of(), 1500, null))
                 .thenReturn(List.of());
 
         service.stream(7L, 100L, 10L, null, "继续", false, List.of(1L, 2L), List.of());
@@ -493,7 +493,7 @@ class ChatServiceImplTest {
         when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
-        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(1L), List.of(), 1500))
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(1L), List.of(), 1500, null))
                 .thenReturn(List.of(new AttachmentReference(
                         1L,
                         "cat.png",
@@ -510,6 +510,26 @@ class ChatServiceImplTest {
                 LlmContentPart.text("分析图片"),
                 LlmContentPart.imageUrl("https://example.com/cat.png")
         );
+    }
+
+    @Test
+    void shouldAutoReuseOnlyLatestUserMessageAttachments() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
+                attachmentService, new RecordingLlmClient(List.of(LlmStreamChunk.done())));
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.selectOne(any())).thenReturn(message(2L, 100L, 7L, "USER", "最近用户消息"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(), List.of(), 1500, 2L))
+                .thenReturn(List.of());
+
+        service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
+
+        verify(attachmentService).resolveImagesForChat(7L, 100L, List.of(), List.of(), 1500, 2L);
     }
 
     private ChatServiceImpl service(

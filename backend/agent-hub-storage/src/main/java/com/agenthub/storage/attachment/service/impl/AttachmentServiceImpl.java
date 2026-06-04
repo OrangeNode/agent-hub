@@ -145,18 +145,21 @@ public class AttachmentServiceImpl implements AttachmentService {
             Long conversationId,
             List<Long> attachmentIds,
             List<Long> reuseAttachmentIds,
-            int imageTokenEstimate
+            int imageTokenEstimate,
+            Long autoReuseMessageId
     ) {
         List<Long> newAttachmentIds = normalizeIds(attachmentIds);
-        List<Long> reusedAttachmentIds = normalizeIds(reuseAttachmentIds);
+        List<Long> reusedAttachmentIds = removeAlreadyResolvedIds(normalizeIds(reuseAttachmentIds), newAttachmentIds);
         if (newAttachmentIds.isEmpty() && reusedAttachmentIds.isEmpty() && conversationId != null) {
-            return autoReuseLatestConversationImages(userId, conversationId, imageTokenEstimate);
+            return autoReuseMessageImages(userId, conversationId, autoReuseMessageId, imageTokenEstimate);
         }
 
-        List<ChatAttachment> resolvedAttachments = new ArrayList<>();
-        resolvedAttachments.addAll(resolveAttachments(newAttachmentIds, attachment -> validateNewImage(userId, attachment)));
-        resolvedAttachments.addAll(resolveAttachments(reusedAttachmentIds,
-                attachment -> validateReusableImage(userId, conversationId, attachment)));
+        Map<Long, ChatAttachment> resolvedAttachmentsById = new LinkedHashMap<>();
+        resolveAttachments(newAttachmentIds, attachment -> validateNewImage(userId, attachment))
+                .forEach(attachment -> resolvedAttachmentsById.put(attachment.getId(), attachment));
+        resolveAttachments(reusedAttachmentIds, attachment -> validateReusableImage(userId, conversationId, attachment))
+                .forEach(attachment -> resolvedAttachmentsById.putIfAbsent(attachment.getId(), attachment));
+        List<ChatAttachment> resolvedAttachments = List.copyOf(resolvedAttachmentsById.values());
         validateImageLimit(resolvedAttachments.size());
         return resolvedAttachments.stream()
                 .map(attachment -> toAttachmentReference(attachment, imageTokenEstimate))
@@ -170,18 +173,22 @@ public class AttachmentServiceImpl implements AttachmentService {
             return;
         }
         OffsetDateTime now = OffsetDateTime.now();
-        selectByIds(normalizedIds).stream()
-                .filter(attachment -> userId.equals(attachment.getUserId()))
-                .filter(attachment -> STATUS_READY.equals(attachment.getStatus()))
-                .filter(attachment -> attachment.getMessageId() == null)
-                .forEach(attachment -> {
-                    ChatAttachment updatedAttachment = new ChatAttachment();
-                    updatedAttachment.setId(attachment.getId());
-                    updatedAttachment.setConversationId(conversationId);
-                    updatedAttachment.setMessageId(messageId);
-                    updatedAttachment.setUpdatedAt(now);
-                    chatAttachmentMapper.updateById(updatedAttachment);
-                });
+        Map<Long, ChatAttachment> attachmentsById = new LinkedHashMap<>();
+        selectByIds(normalizedIds).forEach(attachment -> attachmentsById.put(attachment.getId(), attachment));
+        List<ChatAttachment> attachments = new ArrayList<>();
+        for (Long attachmentId : normalizedIds) {
+            ChatAttachment attachment = attachmentsById.get(attachmentId);
+            validateBindableImage(userId, attachment);
+            attachments.add(attachment);
+        }
+        attachments.forEach(attachment -> {
+            ChatAttachment updatedAttachment = new ChatAttachment();
+            updatedAttachment.setId(attachment.getId());
+            updatedAttachment.setConversationId(conversationId);
+            updatedAttachment.setMessageId(messageId);
+            updatedAttachment.setUpdatedAt(now);
+            chatAttachmentMapper.updateById(updatedAttachment);
+        });
     }
 
     @Override
@@ -217,6 +224,16 @@ public class AttachmentServiceImpl implements AttachmentService {
         return ids.stream()
                 .filter(id -> id != null)
                 .distinct()
+                .toList();
+    }
+
+    private List<Long> removeAlreadyResolvedIds(List<Long> ids, List<Long> alreadyResolvedIds) {
+        if (ids.isEmpty() || alreadyResolvedIds.isEmpty()) {
+            return ids;
+        }
+        Set<Long> resolvedIdSet = Set.copyOf(alreadyResolvedIds);
+        return ids.stream()
+                .filter(id -> !resolvedIdSet.contains(id))
                 .toList();
     }
 
@@ -273,27 +290,37 @@ public class AttachmentServiceImpl implements AttachmentService {
         }
     }
 
-    private List<AttachmentReference> autoReuseLatestConversationImages(
+    private void validateBindableImage(Long userId, ChatAttachment attachment) {
+        if (attachment == null
+                || !userId.equals(attachment.getUserId())
+                || !STATUS_READY.equals(attachment.getStatus())
+                || !IMAGE_TYPE.equals(attachment.getAttachmentType())
+                || attachment.getMessageId() != null) {
+            throw uploadFailedException();
+        }
+        if (isExpired(attachment)) {
+            throw expiredImageException();
+        }
+    }
+
+    private List<AttachmentReference> autoReuseMessageImages(
             Long userId,
             Long conversationId,
+            Long messageId,
             int imageTokenEstimate
     ) {
+        if (messageId == null) {
+            return List.of();
+        }
         LambdaQueryWrapper<ChatAttachment> wrapper = new LambdaQueryWrapper<ChatAttachment>()
                 .eq(ChatAttachment::getUserId, userId)
                 .eq(ChatAttachment::getConversationId, conversationId)
+                .eq(ChatAttachment::getMessageId, messageId)
                 .eq(ChatAttachment::getAttachmentType, IMAGE_TYPE)
                 .eq(ChatAttachment::getStatus, STATUS_READY)
-                .isNotNull(ChatAttachment::getMessageId)
                 .gt(ChatAttachment::getExpiresAt, OffsetDateTime.now())
-                .orderByDesc(ChatAttachment::getMessageId)
                 .orderByAsc(ChatAttachment::getId);
-        List<ChatAttachment> candidates = chatAttachmentMapper.selectList(wrapper);
-        if (candidates.isEmpty()) {
-            return List.of();
-        }
-        Long latestMessageId = candidates.getFirst().getMessageId();
-        List<ChatAttachment> attachments = candidates.stream()
-                .filter(attachment -> latestMessageId.equals(attachment.getMessageId()))
+        List<ChatAttachment> attachments = chatAttachmentMapper.selectList(wrapper).stream()
                 .limit(MAX_CHAT_IMAGES + 1L)
                 .toList();
         validateImageLimit(attachments.size());

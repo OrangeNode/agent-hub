@@ -117,12 +117,14 @@ public class ChatServiceImpl implements ChatService {
                 ? DEFAULT_IMAGE_TOKEN_ESTIMATE
                 : runtimeConfig.imageTokenEstimate();
         Long resolvedConversationId = conversationId == null ? null : conversation.getId();
+        Long autoReuseMessageId = resolveAutoReuseMessageId(userId, resolvedConversationId, attachmentIds, reuseAttachmentIds);
         List<AttachmentReference> images = attachmentService.resolveImagesForChat(
                 userId,
                 resolvedConversationId,
                 attachmentIds,
                 reuseAttachmentIds,
-                imageTokenEstimate
+                imageTokenEstimate,
+                autoReuseMessageId
         );
         if (!images.isEmpty() && !runtimeConfig.imageInputSupported()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "当前模型不支持图片输入");
@@ -149,6 +151,30 @@ public class ChatServiceImpl implements ChatService {
 
     private static Executor defaultStreamExecutor() {
         return command -> Thread.ofVirtual().name("chat-stream-").start(command);
+    }
+
+    private Long resolveAutoReuseMessageId(
+            Long userId,
+            Long conversationId,
+            List<Long> attachmentIds,
+            List<Long> reuseAttachmentIds
+    ) {
+        if (conversationId == null || hasIds(attachmentIds) || hasIds(reuseAttachmentIds)) {
+            return null;
+        }
+        LambdaQueryWrapper<ChatMessage> wrapper = new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getConversationId, conversationId)
+                .eq(ChatMessage::getUserId, userId)
+                .eq(ChatMessage::getRole, ROLE_USER)
+                .orderByDesc(ChatMessage::getCreatedAt)
+                .orderByDesc(ChatMessage::getId)
+                .last("LIMIT 1");
+        ChatMessage latestUserMessage = messageMapper.selectOne(wrapper);
+        return latestUserMessage == null ? null : latestUserMessage.getId();
+    }
+
+    private boolean hasIds(List<Long> ids) {
+        return ids != null && ids.stream().anyMatch(id -> id != null);
     }
 
     /**

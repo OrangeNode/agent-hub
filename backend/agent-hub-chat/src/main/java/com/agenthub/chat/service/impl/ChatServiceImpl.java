@@ -45,6 +45,7 @@ public class ChatServiceImpl implements ChatService {
     private static final String ROLE_ASSISTANT = "ASSISTANT";
     private static final String LLM_STREAM_FAILED = "LLM_STREAM_FAILED";
     private static final String SSE_CONNECTION_CLOSED = "SSE 连接已断开";
+    private static final int TITLE_MAX_OUTPUT_TOKENS = 64;
 
     private final ChatConversationMapper conversationMapper;
     private final ChatMessageMapper messageMapper;
@@ -84,7 +85,7 @@ public class ChatServiceImpl implements ChatService {
     }
 
     @Override
-    public SseEmitter stream(Long userId, Long conversationId, Long modelId, String agentKey, String prompt) {
+    public SseEmitter stream(Long userId, Long conversationId, Long modelId, String agentKey, String prompt, boolean thinkingEnabled) {
         String normalizedPrompt = requirePrompt(prompt);
         AiModelRuntimeConfig runtimeConfig = requireRuntimeConfig(modelId);
         ChatConversation conversation = resolveConversation(userId, conversationId, agentKey, runtimeConfig, normalizedPrompt);
@@ -97,7 +98,7 @@ public class ChatServiceImpl implements ChatService {
                 new SseEventData.Conversation(conversation.getId(), conversation.getTitle()))
                 && send(emitter, SseEventType.MESSAGE, new SseEventData.Message(assistantMessage.getId(), ROLE_ASSISTANT));
         if (connected) {
-            streamExecutor.execute(() -> streamLlm(emitter, runtimeConfig, normalizedPrompt, assistantMessage));
+            streamExecutor.execute(() -> streamLlm(emitter, runtimeConfig, normalizedPrompt, assistantMessage, thinkingEnabled));
         } else {
             failAssistantMessage(assistantMessage, new StringBuilder(), new StringBuilder(), SSE_CONNECTION_CLOSED);
             sseEventSender.complete(emitter);
@@ -143,11 +144,28 @@ public class ChatServiceImpl implements ChatService {
         conversationMapper.updateById(conversation);
     }
 
+    @Override
+    @Transactional
+    public void renameConversation(Long userId, Long conversationId, String title) {
+        String normalizedTitle = requireTitle(title);
+        ChatConversation conversation = requireActiveConversation(userId, conversationId);
+        conversation.setTitle(normalizedTitle);
+        conversation.setUpdatedAt(OffsetDateTime.now());
+        conversationMapper.updateById(conversation);
+    }
+
     private String requirePrompt(String prompt) {
         if (prompt == null || prompt.isBlank()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "消息内容不能为空");
         }
         return prompt;
+    }
+
+    private String requireTitle(String title) {
+        if (title == null || title.isBlank()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "会话标题不能为空");
+        }
+        return title.strip();
     }
 
     private AiModelRuntimeConfig requireRuntimeConfig(Long modelId) {
@@ -179,7 +197,7 @@ public class ChatServiceImpl implements ChatService {
         OffsetDateTime now = OffsetDateTime.now();
         ChatConversation conversation = new ChatConversation();
         conversation.setUserId(userId);
-        conversation.setTitle(titleService.generateFallbackTitle(prompt));
+        conversation.setTitle(generateConversationTitle(runtimeConfig, prompt));
         conversation.setAgentKey(agentKey);
         conversation.setModelId(runtimeConfig.modelId());
         conversation.setProviderId(runtimeConfig.providerId());
@@ -198,6 +216,26 @@ public class ChatServiceImpl implements ChatService {
             throw new BusinessException(ErrorCode.NOT_FOUND, "会话不存在");
         }
         return conversation;
+    }
+
+    private String generateConversationTitle(AiModelRuntimeConfig runtimeConfig, String prompt) {
+        String fallbackTitle = titleService.generateFallbackTitle(prompt);
+        try {
+            LlmClient client = llmClientFactory.apply(runtimeConfig.protocolType());
+            StringBuilder title = new StringBuilder();
+            client.stream(buildTitleRequest(runtimeConfig, prompt), chunk -> {
+                switch (chunk.type()) {
+                    case ANSWER_DELTA -> title.append(defaultString(chunk.content()));
+                    case ERROR -> title.setLength(0);
+                    case REASONING_DELTA, DONE, USAGE -> {
+                    }
+                }
+            });
+            String cleanedTitle = titleService.cleanGeneratedTitle(title.toString());
+            return "新会话".equals(cleanedTitle) ? fallbackTitle : cleanedTitle;
+        } catch (Exception exception) {
+            return fallbackTitle;
+        }
     }
 
     private ChatMessage saveUserMessage(
@@ -246,15 +284,17 @@ public class ChatServiceImpl implements ChatService {
             SseEmitter emitter,
             AiModelRuntimeConfig runtimeConfig,
             String prompt,
-            ChatMessage assistantMessage
+            ChatMessage assistantMessage,
+            boolean thinkingEnabled
     ) {
         StringBuilder content = new StringBuilder();
         StringBuilder reasoningContent = new StringBuilder();
         AtomicBoolean finished = new AtomicBoolean(false);
+        boolean reasoningRequested = thinkingEnabled && runtimeConfig.reasoningSupported();
         try {
             LlmClient client = llmClientFactory.apply(runtimeConfig.protocolType());
-            client.stream(buildRequest(runtimeConfig, prompt), chunk ->
-                    handleChunk(emitter, assistantMessage, content, reasoningContent, finished, chunk));
+            client.stream(buildRequest(runtimeConfig, prompt, reasoningRequested), chunk ->
+                    handleChunk(emitter, assistantMessage, content, reasoningContent, finished, reasoningRequested, chunk));
         } catch (Exception exception) {
             if (finished.compareAndSet(false, true)) {
                 failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent, exception.getMessage());
@@ -265,7 +305,7 @@ public class ChatServiceImpl implements ChatService {
         }
     }
 
-    private LlmStreamRequest buildRequest(AiModelRuntimeConfig runtimeConfig, String prompt) {
+    private LlmStreamRequest buildRequest(AiModelRuntimeConfig runtimeConfig, String prompt, boolean reasoningRequested) {
         return new LlmStreamRequest(
                 runtimeConfig.baseUrl(),
                 runtimeConfig.apiKeyCipher(),
@@ -273,7 +313,19 @@ public class ChatServiceImpl implements ChatService {
                 runtimeConfig.modelCode(),
                 List.of(new LlmMessage("user", prompt)),
                 runtimeConfig.maxOutputTokens(),
-                runtimeConfig.reasoningSupported()
+                reasoningRequested
+        );
+    }
+
+    private LlmStreamRequest buildTitleRequest(AiModelRuntimeConfig runtimeConfig, String prompt) {
+        return new LlmStreamRequest(
+                runtimeConfig.baseUrl(),
+                runtimeConfig.apiKeyCipher(),
+                runtimeConfig.apiVersion(),
+                runtimeConfig.modelCode(),
+                List.of(new LlmMessage("user", titleService.buildTitlePrompt(prompt))),
+                TITLE_MAX_OUTPUT_TOKENS,
+                false
         );
     }
 
@@ -283,6 +335,7 @@ public class ChatServiceImpl implements ChatService {
             StringBuilder content,
             StringBuilder reasoningContent,
             AtomicBoolean finished,
+            boolean reasoningRequested,
             LlmStreamChunk chunk
     ) {
         if (finished.get()) {
@@ -290,6 +343,9 @@ public class ChatServiceImpl implements ChatService {
         }
         switch (chunk.type()) {
             case REASONING_DELTA -> {
+                if (!reasoningRequested) {
+                    return;
+                }
                 reasoningContent.append(defaultString(chunk.content()));
                 assistantMessage.setReasoningContent(reasoningContent.toString());
                 if (!send(emitter, SseEventType.REASONING_DELTA, new SseEventData.Delta(defaultString(chunk.content())))

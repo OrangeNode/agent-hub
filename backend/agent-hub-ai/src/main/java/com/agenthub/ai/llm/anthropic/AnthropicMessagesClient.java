@@ -127,16 +127,27 @@ public class AnthropicMessagesClient implements LlmClient {
 
     private Map<String, Object> buildRequestBody(LlmStreamRequest request) {
         Map<String, Object> body = new LinkedHashMap<>();
+        int maxTokens = request.maxOutputTokens() == null ? DEFAULT_MAX_TOKENS : request.maxOutputTokens();
         body.put("model", request.model());
         body.put("messages", toMessages(request.messages()));
         body.put("stream", true);
-        body.put("max_tokens", request.maxOutputTokens() == null ? DEFAULT_MAX_TOKENS : request.maxOutputTokens());
+        body.put("max_tokens", maxTokens);
+        if (request.reasoningRequested()) {
+            body.put("thinking", thinkingConfig(maxTokens));
+        }
 
         String system = systemPrompt(request.messages());
         if (system != null) {
             body.put("system", system);
         }
         return body;
+    }
+
+    private Map<String, Object> thinkingConfig(int maxTokens) {
+        Map<String, Object> thinking = new LinkedHashMap<>();
+        thinking.put("type", "enabled");
+        thinking.put("budget_tokens", Math.min(1024, Math.max(1, maxTokens - 1)));
+        return thinking;
     }
 
     private List<Map<String, String>> toMessages(List<LlmMessage> messages) {

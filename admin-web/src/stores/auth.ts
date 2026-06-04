@@ -2,9 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { fetchCurrentUser, login } from '../api/auth'
 import type { LoginPayload, UserProfile } from '../types/rbac'
-
-const tokenKey = 'agent-hub-admin-token'
-const profileKey = 'agent-hub-admin-profile'
+import { ADMIN_PROFILE_KEY, ADMIN_TOKEN_KEY, clearAdminAuthState } from './auth-session'
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref('')
@@ -15,22 +13,22 @@ export const useAuthStore = defineStore('auth', () => {
 
   function persist() {
     if (token.value) {
-      window.localStorage.setItem(tokenKey, token.value)
+      window.localStorage.setItem(ADMIN_TOKEN_KEY, token.value)
     } else {
-      window.localStorage.removeItem(tokenKey)
+      window.localStorage.removeItem(ADMIN_TOKEN_KEY)
     }
 
     if (profile.value) {
-      window.localStorage.setItem(profileKey, JSON.stringify(profile.value))
+      window.localStorage.setItem(ADMIN_PROFILE_KEY, JSON.stringify(profile.value))
     } else {
-      window.localStorage.removeItem(profileKey)
+      window.localStorage.removeItem(ADMIN_PROFILE_KEY)
     }
   }
 
   function restore() {
-    token.value = window.localStorage.getItem(tokenKey) ?? ''
+    token.value = window.localStorage.getItem(ADMIN_TOKEN_KEY) ?? ''
 
-    const rawProfile = window.localStorage.getItem(profileKey)
+    const rawProfile = window.localStorage.getItem(ADMIN_PROFILE_KEY)
     profile.value = rawProfile ? (JSON.parse(rawProfile) as UserProfile) : null
   }
 
@@ -60,7 +58,7 @@ export const useAuthStore = defineStore('auth', () => {
   function logout() {
     token.value = ''
     profile.value = null
-    persist()
+    clearAdminAuthState()
   }
 
   return {

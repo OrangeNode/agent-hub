@@ -1,5 +1,6 @@
 import axios from 'axios'
 import type { ApiResponse } from '../types/rbac'
+import { ADMIN_TOKEN_KEY, clearAdminAuthState, redirectToAdminLogin } from '../stores/auth-session'
 
 const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? '/api',
@@ -7,7 +8,7 @@ const http = axios.create({
 })
 
 http.interceptors.request.use((config) => {
-  const token = window.localStorage.getItem('agent-hub-admin-token')
+  const token = window.localStorage.getItem(ADMIN_TOKEN_KEY)
 
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
@@ -28,8 +29,8 @@ http.interceptors.response.use(
   },
   (error) => {
     if (error.response?.status === 401) {
-      window.localStorage.removeItem('agent-hub-admin-token')
-      window.localStorage.removeItem('agent-hub-admin-profile')
+      clearAdminAuthState()
+      redirectToAdminLogin()
     }
 
     const message = error.response?.data?.message ?? error.message ?? '请求失败'

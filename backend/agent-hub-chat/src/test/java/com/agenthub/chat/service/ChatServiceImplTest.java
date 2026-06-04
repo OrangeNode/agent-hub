@@ -65,13 +65,13 @@ class ChatServiceImplTest {
                 insertedMessageSnapshots
         ));
 
-        service.stream(7L, null, null, "agent-a", "你好，介绍一下自己");
+        service.stream(7L, null, null, "agent-a", "你好，介绍一下自己", true);
 
         ArgumentCaptor<ChatConversation> conversationCaptor = ArgumentCaptor.forClass(ChatConversation.class);
         verify(conversationMapper).insert(conversationCaptor.capture());
         ChatConversation conversation = conversationCaptor.getValue();
         assertThat(conversation.getUserId()).isEqualTo(7L);
-        assertThat(conversation.getTitle()).isEqualTo("你好，介绍一下自己");
+        assertThat(conversation.getTitle()).isEqualTo("你好呀");
         assertThat(conversation.getAgentKey()).isEqualTo("agent-a");
         assertThat(conversation.getModelId()).isEqualTo(10L);
         assertThat(conversation.getProviderId()).isEqualTo(20L);
@@ -110,6 +110,7 @@ class ChatServiceImplTest {
         assertThat(sender.completed).isTrue();
         assertThat(llmClient.lastRequest.messages()).hasSize(1);
         assertThat(llmClient.lastRequest.messages().getFirst().content()).isEqualTo("你好，介绍一下自己");
+        assertThat(llmClient.lastRequest.reasoningRequested()).isTrue();
     }
 
     @Test
@@ -122,7 +123,7 @@ class ChatServiceImplTest {
         when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 9L, "ACTIVE"));
 
-        assertThatThrownBy(() -> service.stream(7L, 100L, 10L, null, "继续"))
+        assertThatThrownBy(() -> service.stream(7L, 100L, 10L, null, "继续", false))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("会话不存在")
                 .extracting("errorCode")
@@ -138,7 +139,7 @@ class ChatServiceImplTest {
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
                 new RecordingLlmClient(List.of(LlmStreamChunk.done())));
 
-        assertThatThrownBy(() -> service.stream(7L, null, 10L, null, "   "))
+        assertThatThrownBy(() -> service.stream(7L, null, 10L, null, "   ", false))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("消息内容不能为空")
                 .extracting("errorCode")
@@ -186,7 +187,7 @@ class ChatServiceImplTest {
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
 
-        service.stream(7L, 100L, 10L, null, "继续");
+        service.stream(7L, 100L, 10L, null, "继续", true);
 
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
         verify(messageMapper).updateById(updatedMessageCaptor.capture());
@@ -210,7 +211,7 @@ class ChatServiceImplTest {
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
 
-        service.stream(7L, 100L, 10L, null, "继续");
+        service.stream(7L, 100L, 10L, null, "继续", false);
 
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
         verify(messageMapper).updateById(updatedMessageCaptor.capture());
@@ -248,7 +249,7 @@ class ChatServiceImplTest {
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
 
-        service.stream(7L, 100L, 10L, null, "继续");
+        service.stream(7L, 100L, 10L, null, "继续", false);
 
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
         verify(messageMapper).updateById(updatedMessageCaptor.capture());
@@ -274,7 +275,7 @@ class ChatServiceImplTest {
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
 
-        service.stream(7L, 100L, 10L, null, "继续");
+        service.stream(7L, 100L, 10L, null, "继续", true);
 
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
         verify(messageMapper).updateById(updatedMessageCaptor.capture());
@@ -307,7 +308,7 @@ class ChatServiceImplTest {
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
 
-        SseEmitter emitter = service.stream(7L, 100L, 10L, null, "继续");
+        SseEmitter emitter = service.stream(7L, 100L, 10L, null, "继续", false);
 
         assertThat(emitter).isNotNull();
         assertThat(executor.captured).isNotNull();
@@ -324,6 +325,74 @@ class ChatServiceImplTest {
                 SseEventType.DONE
         );
         verify(messageMapper).updateById(any(ChatMessage.class));
+    }
+
+    @Test
+    void shouldNotRequestReasoningWhenThinkingDisabled() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.done()));
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
+                llmClient);
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+
+        service.stream(7L, 100L, 10L, null, "继续", false);
+
+        assertThat(llmClient.lastRequest.reasoningRequested()).isFalse();
+    }
+
+    @Test
+    void shouldDiscardReasoningChunksWhenThinkingDisabled() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.reasoning("thinking"),
+                LlmStreamChunk.answer("answer"),
+                LlmStreamChunk.done()
+        ));
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, sender, llmClient);
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+
+        service.stream(7L, 100L, 10L, null, "continue", false);
+
+        ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        ChatMessage completedAssistantMessage = updatedMessageCaptor.getValue();
+        assertThat(completedAssistantMessage.getContent()).isEqualTo("answer");
+        assertThat(completedAssistantMessage.getReasoningContent()).isEmpty();
+        assertThat(sender.eventTypes()).containsExactly(
+                SseEventType.CONVERSATION,
+                SseEventType.MESSAGE,
+                SseEventType.ANSWER_DELTA,
+                SseEventType.MESSAGE_COMPLETED,
+                SseEventType.DONE
+        );
+    }
+
+    @Test
+    void shouldRenameOwnedConversation() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
+                new RecordingLlmClient(List.of(LlmStreamChunk.done())));
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+
+        service.renameConversation(7L, 100L, "  新标题  ");
+
+        ArgumentCaptor<ChatConversation> conversationCaptor = ArgumentCaptor.forClass(ChatConversation.class);
+        verify(conversationMapper).updateById(conversationCaptor.capture());
+        ChatConversation updatedConversation = conversationCaptor.getValue();
+        assertThat(updatedConversation.getId()).isEqualTo(100L);
+        assertThat(updatedConversation.getTitle()).isEqualTo("新标题");
+        assertThat(updatedConversation.getUpdatedAt()).isNotNull();
     }
 
     private ChatServiceImpl service(

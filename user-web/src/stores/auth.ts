@@ -1,13 +1,10 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { UserProfile } from '../api/auth'
-
-const TOKEN_KEY = 'agent-hub-user-token'
-const USERNAME_KEY = 'agent-hub-user-username'
-const PROFILE_KEY = 'agent-hub-user-profile'
+import { USER_PROFILE_KEY, USER_TOKEN_KEY, USERNAME_KEY, clearUserAuthState } from './auth-session'
 
 export const useAuthStore = defineStore('auth', () => {
-  const token = ref(localStorage.getItem(TOKEN_KEY) ?? '')
+  const token = ref(localStorage.getItem(USER_TOKEN_KEY) ?? '')
   const username = ref(localStorage.getItem(USERNAME_KEY) ?? '')
   const profile = ref<UserProfile | null>(restoreProfile())
 
@@ -17,9 +14,9 @@ export const useAuthStore = defineStore('auth', () => {
   function login(nextToken: string, nextProfile: UserProfile) {
     username.value = nextProfile.username
     token.value = nextToken
-    localStorage.setItem(TOKEN_KEY, nextToken)
+    localStorage.setItem(USER_TOKEN_KEY, nextToken)
     localStorage.setItem(USERNAME_KEY, nextProfile.username)
-    localStorage.setItem(PROFILE_KEY, JSON.stringify(nextProfile))
+    localStorage.setItem(USER_PROFILE_KEY, JSON.stringify(nextProfile))
     profile.value = nextProfile
   }
 
@@ -27,13 +24,11 @@ export const useAuthStore = defineStore('auth', () => {
     username.value = ''
     token.value = ''
     profile.value = null
-    localStorage.removeItem(TOKEN_KEY)
-    localStorage.removeItem(USERNAME_KEY)
-    localStorage.removeItem(PROFILE_KEY)
+    clearUserAuthState()
   }
 
   function restoreProfile() {
-    const rawProfile = localStorage.getItem(PROFILE_KEY)
+    const rawProfile = localStorage.getItem(USER_PROFILE_KEY)
     if (!rawProfile) {
       return null
     }
@@ -41,7 +36,7 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       return JSON.parse(rawProfile) as UserProfile
     } catch {
-      localStorage.removeItem(PROFILE_KEY)
+      localStorage.removeItem(USER_PROFILE_KEY)
       return null
     }
   }

@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-shell" :class="{ 'panel-open': workPanelOpen, 'sidebar-collapsed': sidebarCollapsed }">
+  <div class="chat-shell" :class="{ 'panel-open': workPanelOpen, 'sidebar-collapsed': sidebarCollapsed }" @click="openConversationMenuId = null">
     <aside class="sidebar">
       <div class="sidebar-header">
         <strong>Agent Hub</strong>
@@ -63,16 +63,28 @@
 
       <section class="recent-section">
         <h2>最近</h2>
-        <button
+        <div
           v-for="conversation in conversations"
           :key="conversation.id"
-          type="button"
           class="recent-item"
           :class="{ active: conversation.id === activeConversationId }"
-          @click="switchConversation(conversation.id)"
         >
-          {{ conversation.title }}
-        </button>
+          <button type="button" class="recent-title" @click="switchConversation(conversation.id)">
+            {{ conversation.title }}
+          </button>
+          <div class="recent-actions">
+            <button
+              type="button"
+              class="recent-more"
+              aria-label="更多操作"
+              @click.stop="toggleConversationMenu(conversation.id, $event)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 12h.01M19 12h.01M5 12h.01" />
+              </svg>
+            </button>
+          </div>
+        </div>
       </section>
 
       <div class="sidebar-footer">
@@ -83,6 +95,19 @@
         <n-button quaternary size="small" @click="handleLogout">退出</n-button>
       </div>
     </aside>
+
+    <div
+      v-if="activeMenuConversation"
+      class="conversation-action-menu"
+      role="menu"
+      :style="{ top: `${conversationMenuPosition.top}px`, left: `${conversationMenuPosition.left}px` }"
+      @click.stop
+    >
+      <button type="button" role="menuitem" @click.stop="startRenameConversation(activeMenuConversation)">重命名</button>
+      <button type="button" role="menuitem" class="danger" @click.stop="handleDeleteConversation(activeMenuConversation.id)">
+        删除
+      </button>
+    </div>
 
     <main class="chat-main">
       <header class="top-actions">
@@ -135,9 +160,13 @@
             @keydown.enter.exact.prevent="handleSend"
             class="composer-input"
           />
-          <n-popselect v-model:value="selectedModel" :options="modelOptions" trigger="click" placement="top">
-            <button type="button" class="model-select composer-model">{{ selectedModelLabel }}</button>
-          </n-popselect>
+          <ThinkingModeSelect
+            class="composer-model"
+            :mode="thinkingMode"
+            :model-label="selectedModelLabel"
+            @select="selectThinkingMode"
+            @configure="thinkingConfigOpen = true"
+          />
           <button type="button" class="send-orb composer-send" :disabled="streaming" @click="handleSend" aria-label="发送">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M5 12h14M13 6l6 6-6 6" />
@@ -168,11 +197,21 @@
             </div>
 
             <div v-else class="assistant-message">
-              <div v-if="messageItem.reasoningContent" class="reasoning-block">
-                <strong>思考过程</strong>
-                <p>{{ messageItem.reasoningContent }}</p>
+              <div
+                v-if="messageItem.reasoningContent"
+                class="reasoning-block"
+                :class="{ collapsed: !messageItem.reasoningExpanded }"
+              >
+                <button type="button" class="reasoning-toggle" @click="toggleReasoning(messageItem)">
+                  <span>思考过程</span>
+                  <small>{{ messageItem.reasoningExpanded ? '收起' : '展开' }}</small>
+                </button>
+                <p v-if="messageItem.reasoningExpanded">{{ messageItem.reasoningContent }}</p>
               </div>
-              <p>{{ messageItem.content || '正在生成回复...' }}</p>
+              <div
+                class="assistant-markdown"
+                v-html="renderAssistantMarkdown(messageItem.content || '正在生成回复...')"
+              />
               <div class="message-tools">
                 <button type="button" title="复制" @click="copyMessage(messageItem.content)">
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -240,9 +279,13 @@
               @keydown.enter.exact.prevent="handleSend"
               class="composer-input"
             />
-            <n-popselect v-model:value="selectedModel" :options="modelOptions" trigger="click" placement="top">
-              <button type="button" class="model-select composer-model">{{ selectedModelLabel }}</button>
-            </n-popselect>
+            <ThinkingModeSelect
+              class="composer-model"
+              :mode="thinkingMode"
+              :model-label="selectedModelLabel"
+              @select="selectThinkingMode"
+              @configure="thinkingConfigOpen = true"
+            />
             <button type="button" class="send-orb composer-send" :disabled="streaming" @click="handleSend" aria-label="发送">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M5 12h14M13 6l6 6-6 6" />
@@ -290,24 +333,67 @@
         </div>
       </section>
     </aside>
+
+    <n-modal
+      v-model:show="deleteConfirmOpen"
+      to="body"
+      transform-origin="center"
+      :mask-closable="!deletingConversation"
+      :close-on-esc="!deletingConversation"
+    >
+      <section class="delete-conversation-modal" role="dialog" aria-modal="true" aria-labelledby="delete-conversation-title">
+        <header class="delete-modal-header">
+          <h3 id="delete-conversation-title">删除会话</h3>
+        </header>
+        <div class="delete-modal-body">
+          <p>删除后无法恢复，确认删除这个会话吗？</p>
+        </div>
+        <div class="delete-modal-footer">
+          <n-button :disabled="deletingConversation" @click="cancelDeleteConversation">取消</n-button>
+          <n-button type="error" :loading="deletingConversation" @click="confirmDeleteConversation">删除</n-button>
+        </div>
+      </section>
+    </n-modal>
+
+    <n-modal v-model:show="thinkingConfigOpen" preset="card" class="thinking-config-modal" title="思考时长">
+      <div class="config-row">
+        <span>模型</span>
+        <n-select v-model:value="selectedModel" :options="modelOptions" size="small" class="config-select" />
+      </div>
+      <div class="config-divider" />
+      <button type="button" class="mode-option" :class="{ active: thinkingMode === 'instant' }" @click="selectThinkingMode('instant')">
+        <strong>Instant</strong>
+        <span>适用于日常聊天</span>
+      </button>
+      <button type="button" class="mode-option" :class="{ active: thinkingMode === 'thinking' }" @click="selectThinkingMode('thinking')">
+        <strong>Thinking</strong>
+        <span>适用于解答复杂问题</span>
+      </button>
+      <p>思考越深入，回答越详尽，但生成时间也会相应增加。</p>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useMessage, NButton, NInput, NPopselect } from 'naive-ui'
+import { useMessage, NButton, NInput, NModal, NSelect } from 'naive-ui'
 
 import {
+  deleteConversation,
   fetchAvailableModels,
   fetchConversationMessages,
   fetchConversations,
-  openChatStream
+  openChatStream,
+  renameConversation
 } from '../api/chat'
 import type { AvailableModelRecord, ChatMessageRecord, ConversationRecord } from '../api/chat'
 import { useAuthStore } from '../stores/auth'
+import { renderAssistantMarkdown } from './message-render.helpers'
+import ThinkingModeSelect from './ThinkingModeSelect.vue'
 
 type ChatRole = 'user' | 'assistant'
+type ThinkingMode = 'instant' | 'thinking'
 
 interface ConversationItem {
   id: number
@@ -320,6 +406,7 @@ interface ChatMessageItem {
   role: ChatRole
   content: string
   reasoningContent?: string
+  reasoningExpanded?: boolean
   status?: string
 }
 
@@ -343,18 +430,23 @@ const isMultiline = ref(false)
 const streaming = ref(false)
 const workPanelOpen = ref(false)
 const agentMenuOpen = ref(false)
+const thinkingConfigOpen = ref(false)
+const deleteConfirmOpen = ref(false)
+const deletingConversation = ref(false)
 const sidebarCollapsed = ref(false)
 const activeConversationId = ref<number | null>(null)
 const activeAgentName = ref('通用 Agent')
+const thinkingMode = ref<ThinkingMode>('instant')
+const openConversationMenuId = ref<number | null>(null)
+const conversationMenuPosition = ref({ top: 0, left: 0 })
+const pendingDeleteConversationId = ref<number | null>(null)
 const streamControllerRef = ref<AbortController | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const uploadedFiles = ref<UploadedFile[]>([])
 const selectedModel = ref<number | null>(null)
 const availableModels = ref<AvailableModelRecord[]>([])
 
-// 监听输入内容，判断是否多行
 watch(prompt, (val) => {
-  // 有换行符或长度超过40字符视为多行
   isMultiline.value = val.includes('\n') || val.length > 40
 })
 
@@ -372,6 +464,14 @@ const selectedModelLabel = computed(() => {
 
   return availableModels.value.find((item) => item.modelId === selectedModel.value)?.displayName ?? '默认模型'
 })
+
+const selectedModelItem = computed(() =>
+  availableModels.value.find((item) => item.modelId === selectedModel.value) ?? null
+)
+const firstReasoningModel = computed(() => availableModels.value.find((item) => item.reasoningSupported) ?? null)
+const activeMenuConversation = computed(() =>
+  conversations.value.find((item) => item.id === openConversationMenuId.value) ?? null
+)
 
 const agentOptions: AgentOption[] = [
   { key: 'document-review', name: '文档审核 Agent', shortName: '审', description: '等保、密评、报告材料审查' },
@@ -410,6 +510,7 @@ function mapMessage(item: ChatMessageRecord): ChatMessageItem {
     role: item.role.toLowerCase() === 'user' ? 'user' : 'assistant',
     content: item.content,
     reasoningContent: item.reasoningContent ?? '',
+    reasoningExpanded: false,
     status: item.status
   }
 }
@@ -470,9 +571,120 @@ function createConversation() {
 
 async function switchConversation(conversationId: number) {
   activeConversationId.value = conversationId
+  openConversationMenuId.value = null
   prompt.value = ''
   uploadedFiles.value = []
   await loadMessages(conversationId)
+}
+
+function selectThinkingMode(mode: ThinkingMode) {
+  if (mode === 'thinking' && !ensureThinkingModelSelected()) {
+    return
+  }
+  thinkingMode.value = mode
+}
+
+function ensureThinkingModelSelected() {
+  if (selectedModelItem.value?.reasoningSupported) {
+    return true
+  }
+
+  if (firstReasoningModel.value) {
+    selectedModel.value = firstReasoningModel.value.modelId
+    message.info(`已切换到支持思考内容的模型：${firstReasoningModel.value.displayName}`)
+    return true
+  }
+
+  if (!availableModels.value.length) {
+    return true
+  }
+
+  thinkingMode.value = 'instant'
+  message.warning('当前没有可用的思考模型，请先在管理端为模型开启“支持思考内容”')
+  return false
+}
+
+function toggleConversationMenu(conversationId: number, event: MouseEvent) {
+  if (openConversationMenuId.value === conversationId) {
+    openConversationMenuId.value = null
+    return
+  }
+
+  const trigger = event.currentTarget as HTMLElement
+  const rect = trigger.getBoundingClientRect()
+  const menuWidth = 118
+  const gap = 6
+  const viewportPadding = 8
+  const rightSideLeft = rect.right + gap
+  const left = rightSideLeft + menuWidth > window.innerWidth - viewportPadding
+    ? Math.max(viewportPadding, rect.left - menuWidth - gap)
+    : rightSideLeft
+
+  conversationMenuPosition.value = {
+    top: Math.min(rect.top, window.innerHeight - 88),
+    left
+  }
+  openConversationMenuId.value = conversationId
+}
+
+async function startRenameConversation(conversation: ConversationItem) {
+  openConversationMenuId.value = null
+  const nextTitle = window.prompt('重命名会话', conversation.title)?.trim()
+  if (!nextTitle || nextTitle === conversation.title) {
+    return
+  }
+
+  try {
+    await renameConversation(conversation.id, nextTitle)
+    conversations.value = conversations.value.map((item) =>
+      item.id === conversation.id ? { ...item, title: nextTitle } : item
+    )
+    message.success('已重命名')
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '重命名失败')
+  }
+}
+
+function handleDeleteConversation(conversationId: number) {
+  openConversationMenuId.value = null
+  pendingDeleteConversationId.value = conversationId
+  deleteConfirmOpen.value = true
+}
+
+function cancelDeleteConversation() {
+  if (deletingConversation.value) {
+    return
+  }
+  deleteConfirmOpen.value = false
+  pendingDeleteConversationId.value = null
+}
+
+async function confirmDeleteConversation() {
+  const conversationId = pendingDeleteConversationId.value
+  if (!conversationId) {
+    deleteConfirmOpen.value = false
+    return
+  }
+
+  try {
+    deletingConversation.value = true
+    await deleteConversation(conversationId)
+    conversations.value = conversations.value.filter((item) => item.id !== conversationId)
+    delete messageMap.value[conversationId]
+    if (activeConversationId.value === conversationId) {
+      activeConversationId.value = conversations.value[0]?.id ?? null
+      if (activeConversationId.value) {
+        await loadMessages(activeConversationId.value)
+      }
+    }
+    message.success('已删除')
+    deleteConfirmOpen.value = false
+    pendingDeleteConversationId.value = null
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '删除失败')
+  } finally {
+    deletingConversation.value = false
+  }
 }
 
 function selectAgent(agent: AgentOption) {
@@ -517,6 +729,10 @@ function copyMessage(content: string) {
   )
 }
 
+function toggleReasoning(messageItem: ChatMessageItem) {
+  messageItem.reasoningExpanded = !messageItem.reasoningExpanded
+}
+
 function closeStream() {
   streamControllerRef.value?.abort()
   streamControllerRef.value = null
@@ -527,6 +743,10 @@ function handleSend() {
   const trimmedPrompt = prompt.value.trim()
 
   if (!trimmedPrompt || streaming.value) {
+    return
+  }
+
+  if (thinkingMode.value === 'thinking' && !ensureThinkingModelSelected()) {
     return
   }
 
@@ -559,10 +779,12 @@ function handleSend() {
     role: 'assistant',
     content: '',
     reasoningContent: '',
+    reasoningExpanded: thinkingMode.value === 'thinking',
     status: 'STREAMING'
   })
 
   const currentPrompt = trimmedPrompt
+  const currentThinkingEnabled = thinkingMode.value === 'thinking'
   prompt.value = ''
   uploadedFiles.value = []
   streaming.value = true
@@ -573,7 +795,8 @@ function handleSend() {
       token: authStore.token,
       conversationId: conversationId > 0 ? conversationId : null,
       modelId: selectedModel.value,
-      agentKey: agentOptions.some((agent) => agent.name === activeAgentName.value) ? activeAgentName.value : null
+      agentKey: agentOptions.some((agent) => agent.name === activeAgentName.value) ? activeAgentName.value : null,
+      thinkingEnabled: currentThinkingEnabled
     },
     {
       onConversation: (data) => {
@@ -597,6 +820,9 @@ function handleSend() {
         }
       },
       onReasoningDelta: (data) => {
+        if (!currentThinkingEnabled) {
+          return
+        }
         const assistantMessage = findAssistantMessage(currentAssistantMessageId)
         if (assistantMessage) {
           assistantMessage.reasoningContent = `${assistantMessage.reasoningContent ?? ''}${data.content}`
@@ -707,12 +933,14 @@ onMounted(() => {
 
 .icon-button,
 .nav-item,
-.recent-item,
+.recent-title,
+.recent-more,
+.conversation-action-menu button,
 .round-action,
 .send-orb,
-.model-select,
 .message-tools button,
-.agent-option {
+.agent-option,
+.mode-option {
   border: 0;
   background: transparent;
   color: inherit;
@@ -864,7 +1092,8 @@ svg {
 
 .recent-section {
   flex: 1;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: visible;
   margin-top: 24px;
   padding: 0 4px;
 }
@@ -879,16 +1108,80 @@ svg {
 }
 
 .recent-item {
-  display: block;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   width: 100%;
-  overflow: hidden;
-  padding: 9px 8px;
+  overflow: visible;
+  padding: 2px 4px 2px 8px;
   border-radius: 10px;
   color: #555;
   font-size: 14px;
+}
+
+.recent-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  padding: 7px 0;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.recent-actions {
+  position: relative;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.recent-item:hover .recent-actions,
+.recent-item.active .recent-actions,
+.recent-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.recent-more {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 8px;
+  color: #6b7280;
+}
+
+.recent-more:hover {
+  background: #dfe3e8;
+}
+
+.conversation-action-menu {
+  position: fixed;
+  z-index: 1000;
+  display: grid;
+  width: 118px;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.14);
+}
+
+.conversation-action-menu button {
+  padding: 7px 8px;
+  border-radius: 6px;
+  text-align: left;
+  font-size: 13px;
+}
+
+.conversation-action-menu button:hover {
+  background: #f3f4f6;
+}
+
+.conversation-action-menu .danger {
+  color: #dc2626;
 }
 
 .sidebar-footer {
@@ -1069,17 +1362,8 @@ svg {
 }
 
 .round-action:hover,
-.model-select:hover,
 .message-tools button:hover {
   background: #f0f0f0;
-}
-
-.model-select {
-  padding: 6px 12px;
-  border-radius: 999px;
-  color: #6b7280;
-  font-size: 14px;
-  white-space: nowrap;
 }
 
 .send-orb {
@@ -1216,6 +1500,68 @@ svg {
   white-space: pre-wrap;
 }
 
+.assistant-markdown {
+  display: grid;
+  gap: 10px;
+}
+
+.assistant-markdown :deep(p),
+.assistant-markdown :deep(ul),
+.assistant-markdown :deep(ol),
+.assistant-markdown :deep(pre),
+.assistant-markdown :deep(blockquote),
+.assistant-markdown :deep(table) {
+  margin: 0;
+}
+
+.assistant-markdown :deep(ul),
+.assistant-markdown :deep(ol) {
+  display: grid;
+  gap: 4px;
+  padding-left: 22px;
+}
+
+.assistant-markdown :deep(code) {
+  border-radius: 5px;
+  background: #f1f5f9;
+  padding: 2px 5px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.9em;
+}
+
+.assistant-markdown :deep(pre) {
+  overflow: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e5e7eb;
+}
+
+.assistant-markdown :deep(pre code) {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.assistant-markdown :deep(blockquote) {
+  padding-left: 12px;
+  border-left: 3px solid #cbd5e1;
+  color: #64748b;
+}
+
+.assistant-markdown :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.assistant-markdown :deep(th),
+.assistant-markdown :deep(td) {
+  padding: 7px 8px;
+  border: 1px solid #e5e7eb;
+  text-align: left;
+}
+
 .reasoning-block {
   display: grid;
   gap: 6px;
@@ -1226,9 +1572,32 @@ svg {
   background: #f8fafc;
 }
 
-.reasoning-block strong {
+.reasoning-block.collapsed {
+  padding-bottom: 10px;
+}
+
+.reasoning-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  border: 0;
+  background: transparent;
   color: #475569;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.reasoning-toggle span {
   font-size: 13px;
+  font-weight: 600;
+}
+
+.reasoning-toggle small {
+  color: #64748b;
+  font-size: 12px;
 }
 
 .reasoning-block p {
@@ -1283,6 +1652,114 @@ svg {
   padding: 14px;
   border-left: 1px solid #ececf1;
   background: #fbfbfb;
+}
+
+.thinking-config-modal {
+  width: min(360px, calc(100vw - 32px));
+}
+
+.delete-conversation-modal {
+  display: grid;
+  width: min(320px, calc(100vw - 32px));
+  padding: 0;
+  border-radius: 8px;
+  background: #ffffff;
+  margin: auto;
+  overflow: hidden;
+  box-shadow: 0 18px 46px rgba(15, 23, 42, 0.16);
+}
+
+.thinking-config-modal :deep(.n-card-header) {
+  padding: 18px 18px 8px;
+}
+
+.delete-modal-header {
+  padding: 18px 20px 8px;
+}
+
+.delete-conversation-modal h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.thinking-config-modal :deep(.n-card__content) {
+  display: grid;
+  gap: 10px;
+  padding: 12px 18px 18px;
+}
+
+.delete-modal-body {
+  padding: 8px 20px 18px;
+}
+
+.delete-conversation-modal p {
+  margin: 0;
+  color: #4b5563;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.delete-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 20px;
+  border-top: 1px solid #eef0f3;
+  background: #fafafa;
+}
+
+.config-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 38px;
+  color: #111827;
+  font-size: 14px;
+}
+
+.config-select {
+  width: 150px;
+}
+
+.config-divider {
+  height: 1px;
+  background: #e5e7eb;
+}
+
+.mode-option {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  padding: 8px 34px 8px 0;
+  text-align: left;
+}
+
+.mode-option strong {
+  color: #111827;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.mode-option span,
+.thinking-config-modal p {
+  margin: 0;
+  color: #8a8f98;
+  font-size: 13px;
+}
+
+.mode-option.active::after {
+  position: absolute;
+  top: 18px;
+  right: 4px;
+  content: "";
+  width: 7px;
+  height: 12px;
+  border: solid #111827;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
 }
 
 .work-panel-header {
@@ -1418,10 +1895,6 @@ svg {
 
   .landing-composer {
     padding: 8px 12px;
-  }
-
-  .model-select {
-    display: none;
   }
 
   .agent-menu {

@@ -115,6 +115,26 @@ class AnthropicMessagesClientTest {
         assertThat(body.path("messages").get(1).path("role").asText()).isEqualTo("assistant");
     }
 
+    @Test
+    void shouldEnableThinkingWhenReasoningRequested() throws Exception {
+        CapturingAnthropicClient capturingClient = new CapturingAnthropicClient();
+        LlmStreamRequest request = new LlmStreamRequest(
+                "https://api.anthropic.com",
+                "test-api-key",
+                null,
+                "test-model",
+                List.of(new LlmMessage("user", "你好")),
+                4096,
+                true);
+
+        capturingClient.stream(request, ignored -> {
+        });
+
+        JsonNode body = OBJECT_MAPPER.readTree(readBody(capturingClient.capturedRequest));
+        assertThat(body.path("thinking").path("type").asText()).isEqualTo("enabled");
+        assertThat(body.path("thinking").path("budget_tokens").asInt()).isEqualTo(1024);
+    }
+
     private LlmStreamRequest request(String baseUrl, Integer maxOutputTokens) {
         return new LlmStreamRequest(
                 baseUrl,

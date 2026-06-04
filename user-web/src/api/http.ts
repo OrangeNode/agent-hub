@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { USER_TOKEN_KEY, clearUserAuthState, redirectToUserLogin } from '../stores/auth-session'
 
 export interface ApiResponse<T> {
   code: number
@@ -12,7 +13,7 @@ export const http = axios.create({
 })
 
 http.interceptors.request.use((config) => {
-  const token = localStorage.getItem('agent-hub-user-token')
+  const token = localStorage.getItem(USER_TOKEN_KEY)
 
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
@@ -20,3 +21,24 @@ http.interceptors.request.use((config) => {
 
   return config
 })
+
+http.interceptors.response.use(
+  (response) => {
+    const payload = response.data as ApiResponse<unknown> | undefined
+
+    if (payload && typeof payload.code === 'number' && payload.code !== 200) {
+      return Promise.reject(new Error(payload.message || '请求失败'))
+    }
+
+    return response
+  },
+  (error) => {
+    if (error.response?.status === 401) {
+      clearUserAuthState()
+      redirectToUserLogin()
+    }
+
+    const message = error.response?.data?.message ?? error.message ?? '请求失败'
+    return Promise.reject(new Error(message))
+  }
+)

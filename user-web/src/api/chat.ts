@@ -41,6 +41,7 @@ export interface OpenChatStreamOptions {
   conversationId?: number | null
   modelId?: number | null
   agentKey?: string | null
+  thinkingEnabled?: boolean
 }
 
 export interface ChatStreamHandlers {
@@ -82,7 +83,8 @@ async function readChatStream(
         prompt: options.prompt,
         conversationId: options.conversationId ?? null,
         modelId: options.modelId ?? null,
-        agentKey: options.agentKey ?? null
+        agentKey: options.agentKey ?? null,
+        thinkingEnabled: options.thinkingEnabled ?? false
       }),
       signal: controller.signal
     })
@@ -235,6 +237,10 @@ export async function fetchConversationMessages(conversationId: number) {
 
 export async function deleteConversation(conversationId: number) {
   await http.delete(`/chat/conversations/${conversationId}`)
+}
+
+export async function renameConversation(conversationId: number, title: string) {
+  await http.patch(`/chat/conversations/${conversationId}`, { title })
 }
 
 export async function fetchAvailableModels() {

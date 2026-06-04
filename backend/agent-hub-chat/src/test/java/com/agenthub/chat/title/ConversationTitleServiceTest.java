@@ -25,4 +25,19 @@ class ConversationTitleServiceTest {
     void shouldRemoveWhitespaceBeforeGeneratingFallbackTitle() {
         assertThat(conversationTitleService.generateFallbackTitle("  模型 管理\n设计  ")).isEqualTo("模型管理设计");
     }
+    @Test
+    void shouldBuildTitlePromptWithFirstTwoHundredCharactersOnly() {
+        String prompt = "a".repeat(240);
+
+        String titlePrompt = conversationTitleService.buildTitlePrompt(prompt);
+
+        assertThat(titlePrompt).contains("a".repeat(200));
+        assertThat(titlePrompt).doesNotContain("a".repeat(201));
+    }
+
+    @Test
+    void shouldCleanModelGeneratedTitle() {
+        assertThat(conversationTitleService.cleanGeneratedTitle("  \"Agent 平台设计方案。\"  "))
+                .isEqualTo("Agent 平台设计方案");
+    }
 }

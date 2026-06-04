@@ -442,6 +442,8 @@ class ChatServiceImplTest {
                 "测试模型",
                 true,
                 true,
+                false,
+                null,
                 128000,
                 4096,
                 true,

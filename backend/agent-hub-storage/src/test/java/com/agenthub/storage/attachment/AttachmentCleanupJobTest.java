@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -16,8 +17,12 @@ import com.agenthub.storage.object.ObjectStorageClient;
 import java.time.OffsetDateTime;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
+@ExtendWith(OutputCaptureExtension.class)
 class AttachmentCleanupJobTest {
 
     @Test
@@ -106,6 +111,31 @@ class AttachmentCleanupJobTest {
         assertThat(updatedAttachment.getId()).isEqualTo(5L);
         assertThat(updatedAttachment.getStatus()).isEqualTo("DELETED");
         assertThat(updatedAttachment.getDeletedAt()).isNotNull();
+    }
+
+    @Test
+    void shouldContinueCleanupWhenOneStatusUpdateFails(CapturedOutput output) {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        StorageProperties properties = storageProperties();
+        AttachmentCleanupJob job = new AttachmentCleanupJob(mapper, objectStorageClient, properties);
+        ChatAttachment failedAttachment = attachment(6L, "PENDING", "update-failed-object");
+        ChatAttachment successfulAttachment = attachment(7L, "PENDING", "update-successful-object");
+        when(mapper.selectList(any())).thenReturn(List.of(failedAttachment, successfulAttachment));
+        when(mapper.updateById(any(ChatAttachment.class)))
+                .thenThrow(new RuntimeException("update failed"))
+                .thenReturn(1);
+        ArgumentCaptor<ChatAttachment> attachmentCaptor = ArgumentCaptor.forClass(ChatAttachment.class);
+
+        job.cleanupTemporaryAttachments();
+
+        verify(objectStorageClient).delete("update-failed-object");
+        verify(objectStorageClient).delete("update-successful-object");
+        verify(mapper, times(2)).updateById(attachmentCaptor.capture());
+        assertThat(attachmentCaptor.getAllValues()).extracting(ChatAttachment::getId)
+                .containsExactly(6L, 7L);
+        assertThat(output).contains("更新附件清理状态失败");
+        assertThat(output).doesNotContain("清理附件对象失败，attachmentId=6");
     }
 
     private StorageProperties storageProperties() {

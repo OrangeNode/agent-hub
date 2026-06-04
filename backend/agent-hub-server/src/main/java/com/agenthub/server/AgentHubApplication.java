@@ -3,8 +3,10 @@ package com.agenthub.server;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication(scanBasePackages = "com.agenthub")
+@EnableScheduling
 @MapperScan({
         "com.agenthub.system.user.mapper",
         "com.agenthub.system.role.mapper",

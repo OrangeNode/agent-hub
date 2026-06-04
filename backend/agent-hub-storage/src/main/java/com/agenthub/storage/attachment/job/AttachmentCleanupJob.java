@@ -9,12 +9,10 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Component
-@EnableScheduling
 public class AttachmentCleanupJob {
 
     private static final Logger log = LoggerFactory.getLogger(AttachmentCleanupJob.class);
@@ -91,6 +89,13 @@ public class AttachmentCleanupJob {
     private void deleteAndMarkDeleted(ChatAttachment attachment) {
         try {
             objectStorageClient.delete(attachment.getObjectKey());
+        } catch (RuntimeException ex) {
+            log.warn("清理附件对象失败，attachmentId={}, objectKey={}",
+                    attachment.getId(), attachment.getObjectKey(), ex);
+            return;
+        }
+
+        try {
             OffsetDateTime now = OffsetDateTime.now();
             ChatAttachment updatedAttachment = new ChatAttachment();
             updatedAttachment.setId(attachment.getId());
@@ -99,7 +104,7 @@ public class AttachmentCleanupJob {
             updatedAttachment.setUpdatedAt(now);
             chatAttachmentMapper.updateById(updatedAttachment);
         } catch (RuntimeException ex) {
-            log.warn("清理附件对象失败，attachmentId={}, objectKey={}",
+            log.warn("更新附件清理状态失败，attachmentId={}, objectKey={}",
                     attachment.getId(), attachment.getObjectKey(), ex);
         }
     }

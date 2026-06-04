@@ -2,6 +2,8 @@ package com.agenthub.storage.attachment.service.impl;
 
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
+import com.agenthub.storage.attachment.dto.AttachmentItem;
+import com.agenthub.storage.attachment.dto.AttachmentReference;
 import com.agenthub.storage.attachment.dto.AttachmentUploadUrl;
 import com.agenthub.storage.attachment.entity.ChatAttachment;
 import com.agenthub.storage.attachment.mapper.ChatAttachmentMapper;
@@ -9,10 +11,15 @@ import com.agenthub.storage.attachment.service.AttachmentService;
 import com.agenthub.storage.config.StorageProperties;
 import com.agenthub.storage.object.ObjectMetadata;
 import com.agenthub.storage.object.ObjectStorageClient;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -36,6 +43,11 @@ public class AttachmentServiceImpl implements AttachmentService {
     private static final String UNSUPPORTED_IMAGE_MESSAGE = "仅支持 jpg、jpeg、png、webp、gif 图片";
     private static final String IMAGE_TOO_LARGE_MESSAGE = "图片不能超过 20MB";
     private static final String UPLOAD_FAILED_MESSAGE = "图片上传失败，请重试";
+    private static final String STATUS_EXPIRED = "EXPIRED";
+    private static final String IMAGE_UNAVAILABLE_MESSAGE = "图片不可用";
+    private static final String IMAGE_EXPIRED_MESSAGE = "图片已过期";
+    private static final String IMAGE_LIMIT_MESSAGE = "单条消息最多上传 8 张图片";
+    private static final int MAX_CHAT_IMAGES = 8;
     private static final int IMAGE_MAGIC_READ_LENGTH = 16;
 
     private final ChatAttachmentMapper chatAttachmentMapper;
@@ -127,6 +139,67 @@ public class AttachmentServiceImpl implements AttachmentService {
         chatAttachmentMapper.updateById(updatedAttachment);
     }
 
+    @Override
+    public List<AttachmentReference> resolveImagesForChat(
+            Long userId,
+            Long conversationId,
+            List<Long> attachmentIds,
+            List<Long> reuseAttachmentIds,
+            int imageTokenEstimate
+    ) {
+        List<Long> newAttachmentIds = normalizeIds(attachmentIds);
+        List<Long> reusedAttachmentIds = normalizeIds(reuseAttachmentIds);
+        if (newAttachmentIds.isEmpty() && reusedAttachmentIds.isEmpty() && conversationId != null) {
+            return autoReuseLatestConversationImages(userId, conversationId, imageTokenEstimate);
+        }
+
+        List<ChatAttachment> resolvedAttachments = new ArrayList<>();
+        resolvedAttachments.addAll(resolveAttachments(newAttachmentIds, attachment -> validateNewImage(userId, attachment)));
+        resolvedAttachments.addAll(resolveAttachments(reusedAttachmentIds,
+                attachment -> validateReusableImage(userId, conversationId, attachment)));
+        validateImageLimit(resolvedAttachments.size());
+        return resolvedAttachments.stream()
+                .map(attachment -> toAttachmentReference(attachment, imageTokenEstimate))
+                .toList();
+    }
+
+    @Override
+    public void bindToMessage(Long userId, Long conversationId, Long messageId, List<Long> attachmentIds) {
+        List<Long> normalizedIds = normalizeIds(attachmentIds);
+        if (normalizedIds.isEmpty()) {
+            return;
+        }
+        OffsetDateTime now = OffsetDateTime.now();
+        selectByIds(normalizedIds).stream()
+                .filter(attachment -> userId.equals(attachment.getUserId()))
+                .filter(attachment -> STATUS_READY.equals(attachment.getStatus()))
+                .filter(attachment -> attachment.getMessageId() == null)
+                .forEach(attachment -> {
+                    ChatAttachment updatedAttachment = new ChatAttachment();
+                    updatedAttachment.setId(attachment.getId());
+                    updatedAttachment.setConversationId(conversationId);
+                    updatedAttachment.setMessageId(messageId);
+                    updatedAttachment.setUpdatedAt(now);
+                    chatAttachmentMapper.updateById(updatedAttachment);
+                });
+    }
+
+    @Override
+    public List<AttachmentItem> listMessageAttachments(Long userId, List<Long> messageIds) {
+        List<Long> normalizedMessageIds = normalizeIds(messageIds);
+        if (normalizedMessageIds.isEmpty()) {
+            return List.of();
+        }
+        LambdaQueryWrapper<ChatAttachment> wrapper = new LambdaQueryWrapper<ChatAttachment>()
+                .eq(ChatAttachment::getUserId, userId)
+                .in(ChatAttachment::getMessageId, normalizedMessageIds)
+                .orderByAsc(ChatAttachment::getMessageId)
+                .orderByAsc(ChatAttachment::getId);
+        return chatAttachmentMapper.selectList(wrapper).stream()
+                .map(this::toAttachmentItem)
+                .toList();
+    }
+
     private void validateImage(String contentType, String fileExt, long fileSize) {
         if (!SUPPORTED_CONTENT_TYPES.contains(contentType) || !SUPPORTED_EXTENSIONS.contains(fileExt)
                 || !contentTypeMatchesExtension(contentType, fileExt)) {
@@ -135,6 +208,154 @@ public class AttachmentServiceImpl implements AttachmentService {
         if (fileSize > MAX_IMAGE_SIZE) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, IMAGE_TOO_LARGE_MESSAGE);
         }
+    }
+
+    private List<Long> normalizeIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return ids.stream()
+                .filter(id -> id != null)
+                .distinct()
+                .toList();
+    }
+
+    private List<ChatAttachment> resolveAttachments(List<Long> ids, AttachmentValidator validator) {
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        Map<Long, ChatAttachment> attachmentsById = new LinkedHashMap<>();
+        selectByIds(ids).forEach(attachment -> attachmentsById.put(attachment.getId(), attachment));
+        List<ChatAttachment> attachments = new ArrayList<>();
+        for (Long id : ids) {
+            ChatAttachment attachment = attachmentsById.get(id);
+            if (attachment == null) {
+                throw unavailableImageException();
+            }
+            validator.validate(attachment);
+            attachments.add(attachment);
+        }
+        return attachments;
+    }
+
+    private List<ChatAttachment> selectByIds(Collection<Long> ids) {
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        return chatAttachmentMapper.selectByIds(ids);
+    }
+
+    private void validateNewImage(Long userId, ChatAttachment attachment) {
+        validateReadyImage(userId, attachment);
+        if (attachment.getMessageId() != null) {
+            throw unavailableImageException();
+        }
+    }
+
+    private void validateReusableImage(Long userId, Long conversationId, ChatAttachment attachment) {
+        if (conversationId == null) {
+            throw unavailableImageException();
+        }
+        validateReadyImage(userId, attachment);
+        if (!conversationId.equals(attachment.getConversationId())) {
+            throw unavailableImageException();
+        }
+    }
+
+    private void validateReadyImage(Long userId, ChatAttachment attachment) {
+        if (!userId.equals(attachment.getUserId())
+                || !STATUS_READY.equals(attachment.getStatus())
+                || !IMAGE_TYPE.equals(attachment.getAttachmentType())) {
+            throw unavailableImageException();
+        }
+        if (isExpired(attachment)) {
+            throw expiredImageException();
+        }
+    }
+
+    private List<AttachmentReference> autoReuseLatestConversationImages(
+            Long userId,
+            Long conversationId,
+            int imageTokenEstimate
+    ) {
+        LambdaQueryWrapper<ChatAttachment> wrapper = new LambdaQueryWrapper<ChatAttachment>()
+                .eq(ChatAttachment::getUserId, userId)
+                .eq(ChatAttachment::getConversationId, conversationId)
+                .eq(ChatAttachment::getAttachmentType, IMAGE_TYPE)
+                .eq(ChatAttachment::getStatus, STATUS_READY)
+                .isNotNull(ChatAttachment::getMessageId)
+                .gt(ChatAttachment::getExpiresAt, OffsetDateTime.now())
+                .orderByDesc(ChatAttachment::getMessageId)
+                .orderByAsc(ChatAttachment::getId);
+        List<ChatAttachment> candidates = chatAttachmentMapper.selectList(wrapper);
+        if (candidates.isEmpty()) {
+            return List.of();
+        }
+        Long latestMessageId = candidates.getFirst().getMessageId();
+        List<ChatAttachment> attachments = candidates.stream()
+                .filter(attachment -> latestMessageId.equals(attachment.getMessageId()))
+                .limit(MAX_CHAT_IMAGES + 1L)
+                .toList();
+        validateImageLimit(attachments.size());
+        return attachments.stream()
+                .map(attachment -> toAttachmentReference(attachment, imageTokenEstimate))
+                .toList();
+    }
+
+    private void validateImageLimit(int imageCount) {
+        if (imageCount > MAX_CHAT_IMAGES) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, IMAGE_LIMIT_MESSAGE);
+        }
+    }
+
+    private AttachmentReference toAttachmentReference(ChatAttachment attachment, int imageTokenEstimate) {
+        String readUrl = objectStorageClient.presignGet(
+                attachment.getObjectKey(),
+                Duration.ofMinutes(storageProperties.getPresignedReadTtlMinutes())
+        );
+        return new AttachmentReference(
+                attachment.getId(),
+                attachment.getOriginalFilename(),
+                attachment.getContentType(),
+                readUrl,
+                imageTokenEstimate
+        );
+    }
+
+    private AttachmentItem toAttachmentItem(ChatAttachment attachment) {
+        boolean expired = STATUS_EXPIRED.equals(attachment.getStatus()) || isExpired(attachment);
+        String previewUrl = null;
+        String message = null;
+        if (expired) {
+            message = IMAGE_EXPIRED_MESSAGE;
+        } else if (STATUS_READY.equals(attachment.getStatus())) {
+            previewUrl = objectStorageClient.presignGet(
+                    attachment.getObjectKey(),
+                    Duration.ofMinutes(storageProperties.getPresignedReadTtlMinutes())
+            );
+        }
+        return new AttachmentItem(
+                attachment.getId(),
+                attachment.getOriginalFilename(),
+                attachment.getContentType(),
+                attachment.getStatus(),
+                expired,
+                previewUrl,
+                message,
+                attachment.getMessageId()
+        );
+    }
+
+    private boolean isExpired(ChatAttachment attachment) {
+        return attachment.getExpiresAt() != null && !attachment.getExpiresAt().isAfter(OffsetDateTime.now());
+    }
+
+    private BusinessException unavailableImageException() {
+        return new BusinessException(ErrorCode.BAD_REQUEST, IMAGE_UNAVAILABLE_MESSAGE);
+    }
+
+    private BusinessException expiredImageException() {
+        return new BusinessException(ErrorCode.BAD_REQUEST, IMAGE_EXPIRED_MESSAGE);
     }
 
     private String extractFileExt(String filename) {
@@ -205,5 +426,11 @@ public class AttachmentServiceImpl implements AttachmentService {
 
     private BusinessException uploadFailedException() {
         return new BusinessException(ErrorCode.BAD_REQUEST, UPLOAD_FAILED_MESSAGE);
+    }
+
+    @FunctionalInterface
+    private interface AttachmentValidator {
+
+        void validate(ChatAttachment attachment);
     }
 }

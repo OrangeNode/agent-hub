@@ -10,7 +10,16 @@ public interface ChatService {
     /**
      * 发起或继续会话，并通过 SSE 流式返回模型响应。
      */
-    SseEmitter stream(Long userId, Long conversationId, Long modelId, String agentKey, String prompt, boolean thinkingEnabled);
+    SseEmitter stream(
+            Long userId,
+            Long conversationId,
+            Long modelId,
+            String agentKey,
+            String prompt,
+            boolean thinkingEnabled,
+            List<Long> attachmentIds,
+            List<Long> reuseAttachmentIds
+    );
 
     /**
      * 查询用户的有效会话列表。

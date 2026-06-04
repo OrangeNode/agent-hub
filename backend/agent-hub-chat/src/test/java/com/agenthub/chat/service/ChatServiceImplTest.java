@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.agenthub.ai.llm.LlmContentPart;
 import com.agenthub.ai.llm.LlmClient;
 import com.agenthub.ai.llm.LlmStreamChunk;
 import com.agenthub.ai.model.dto.AiModelRuntimeConfig;
@@ -23,6 +24,9 @@ import com.agenthub.common.exception.BusinessException;
 import com.agenthub.sse.SseEventData;
 import com.agenthub.sse.SseEventSender;
 import com.agenthub.sse.SseEventType;
+import com.agenthub.storage.attachment.dto.AttachmentItem;
+import com.agenthub.storage.attachment.dto.AttachmentReference;
+import com.agenthub.storage.attachment.service.AttachmentService;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -51,6 +55,7 @@ class ChatServiceImplTest {
                 modelService,
                 new ConversationTitleService(),
                 sender,
+                mock(AttachmentService.class),
                 protocolType -> llmClient,
                 Runnable::run
         );
@@ -65,7 +70,7 @@ class ChatServiceImplTest {
                 insertedMessageSnapshots
         ));
 
-        service.stream(7L, null, null, "agent-a", "你好，介绍一下自己", true);
+        service.stream(7L, null, null, "agent-a", "你好，介绍一下自己", true, List.of(), List.of());
 
         ArgumentCaptor<ChatConversation> conversationCaptor = ArgumentCaptor.forClass(ChatConversation.class);
         verify(conversationMapper).insert(conversationCaptor.capture());
@@ -123,7 +128,7 @@ class ChatServiceImplTest {
         when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 9L, "ACTIVE"));
 
-        assertThatThrownBy(() -> service.stream(7L, 100L, 10L, null, "继续", false))
+        assertThatThrownBy(() -> service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("会话不存在")
                 .extracting("errorCode")
@@ -139,7 +144,7 @@ class ChatServiceImplTest {
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
                 new RecordingLlmClient(List.of(LlmStreamChunk.done())));
 
-        assertThatThrownBy(() -> service.stream(7L, null, 10L, null, "   ", false))
+        assertThatThrownBy(() -> service.stream(7L, null, 10L, null, "   ", false, List.of(), List.of()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("消息内容不能为空")
                 .extracting("errorCode")
@@ -166,6 +171,38 @@ class ChatServiceImplTest {
     }
 
     @Test
+    void shouldListMessagesWithAttachments() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
+                attachmentService, new RecordingLlmClient(List.of(LlmStreamChunk.done())));
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.selectList(any())).thenReturn(List.of(
+                message(1L, 100L, 7L, "USER", "看图"),
+                message(2L, 100L, 7L, "ASSISTANT", "这是一只猫")
+        ));
+        AttachmentItem attachment = new AttachmentItem(
+                10L,
+                "cat.png",
+                "image/png",
+                "READY",
+                false,
+                "https://example.com/preview.png",
+                null,
+                1L
+        );
+        when(attachmentService.listMessageAttachments(7L, List.of(1L, 2L))).thenReturn(List.of(attachment));
+
+        List<com.agenthub.chat.message.dto.MessageItem> messages = service.listMessages(7L, 100L);
+
+        assertThat(messages).hasSize(2);
+        assertThat(messages.get(0).attachments()).containsExactly(attachment);
+        assertThat(messages.get(1).attachments()).isEmpty();
+    }
+
+    @Test
     void shouldMarkAssistantMessageFailedAndSendErrorAndDoneWhenLlmThrows() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
         ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
@@ -180,6 +217,7 @@ class ChatServiceImplTest {
                 modelService,
                 new ConversationTitleService(),
                 sender,
+                mock(AttachmentService.class),
                 protocolType -> throwingClient,
                 Runnable::run
         );
@@ -187,7 +225,7 @@ class ChatServiceImplTest {
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
 
-        service.stream(7L, 100L, 10L, null, "继续", true);
+        service.stream(7L, 100L, 10L, null, "继续", true, List.of(), List.of());
 
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
         verify(messageMapper).updateById(updatedMessageCaptor.capture());
@@ -211,7 +249,7 @@ class ChatServiceImplTest {
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
 
-        service.stream(7L, 100L, 10L, null, "继续", false);
+        service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
 
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
         verify(messageMapper).updateById(updatedMessageCaptor.capture());
@@ -242,6 +280,7 @@ class ChatServiceImplTest {
                 modelService,
                 new ConversationTitleService(),
                 sender,
+                mock(AttachmentService.class),
                 protocolType -> throwingClient,
                 Runnable::run
         );
@@ -249,7 +288,7 @@ class ChatServiceImplTest {
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
 
-        service.stream(7L, 100L, 10L, null, "继续", false);
+        service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
 
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
         verify(messageMapper).updateById(updatedMessageCaptor.capture());
@@ -275,7 +314,7 @@ class ChatServiceImplTest {
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
 
-        service.stream(7L, 100L, 10L, null, "继续", true);
+        service.stream(7L, 100L, 10L, null, "继续", true, List.of(), List.of());
 
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
         verify(messageMapper).updateById(updatedMessageCaptor.capture());
@@ -301,6 +340,7 @@ class ChatServiceImplTest {
                 modelService,
                 new ConversationTitleService(),
                 sender,
+                mock(AttachmentService.class),
                 protocolType -> llmClient,
                 executor
         );
@@ -308,7 +348,7 @@ class ChatServiceImplTest {
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
 
-        SseEmitter emitter = service.stream(7L, 100L, 10L, null, "继续", false);
+        SseEmitter emitter = service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
 
         assertThat(emitter).isNotNull();
         assertThat(executor.captured).isNotNull();
@@ -339,7 +379,7 @@ class ChatServiceImplTest {
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
 
-        service.stream(7L, 100L, 10L, null, "继续", false);
+        service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
 
         assertThat(llmClient.lastRequest.reasoningRequested()).isFalse();
     }
@@ -360,7 +400,7 @@ class ChatServiceImplTest {
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
 
-        service.stream(7L, 100L, 10L, null, "continue", false);
+        service.stream(7L, 100L, 10L, null, "continue", false, List.of(), List.of());
 
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
         verify(messageMapper).updateById(updatedMessageCaptor.capture());
@@ -395,11 +435,99 @@ class ChatServiceImplTest {
         assertThat(updatedConversation.getUpdatedAt()).isNotNull();
     }
 
+    @Test
+    void shouldRejectImagesWhenModelDoesNotSupportImageInput() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
+                attachmentService, new RecordingLlmClient(List.of(LlmStreamChunk.done())));
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig(false, null));
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(1L), List.of(), 1500))
+                .thenReturn(List.of(new AttachmentReference(
+                        1L,
+                        "cat.png",
+                        "image/png",
+                        "https://example.com/cat.png",
+                        1500
+                )));
+
+        assertThatThrownBy(() -> service.stream(7L, 100L, 10L, null, "看图", false, List.of(1L), List.of()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("当前模型不支持图片输入")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(messageMapper, never()).insert(any(ChatMessage.class));
+    }
+
+    @Test
+    void shouldBindReadyAttachmentsToUserMessage() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
+                attachmentService, new RecordingLlmClient(List.of(LlmStreamChunk.done())));
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(1L, 2L), List.of(), 1500))
+                .thenReturn(List.of());
+
+        service.stream(7L, 100L, 10L, null, "继续", false, List.of(1L, 2L), List.of());
+
+        verify(attachmentService).bindToMessage(7L, 100L, 1L, List.of(1L, 2L));
+    }
+
+    @Test
+    void shouldSendImagePartsToLlmClient() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.done()));
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
+                attachmentService, llmClient);
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(1L), List.of(), 1500))
+                .thenReturn(List.of(new AttachmentReference(
+                        1L,
+                        "cat.png",
+                        "image/png",
+                        "https://example.com/cat.png",
+                        1500
+                )));
+
+        service.stream(7L, 100L, 10L, null, "分析图片", false, List.of(1L), List.of());
+
+        assertThat(llmClient.lastRequest.messages()).hasSize(1);
+        assertThat(llmClient.lastRequest.messages().getFirst().content()).isNull();
+        assertThat(llmClient.lastRequest.messages().getFirst().parts()).containsExactly(
+                LlmContentPart.text("分析图片"),
+                LlmContentPart.imageUrl("https://example.com/cat.png")
+        );
+    }
+
     private ChatServiceImpl service(
             ChatConversationMapper conversationMapper,
             ChatMessageMapper messageMapper,
             AiModelService modelService,
             RecordingSseEventSender sender,
+            LlmClient llmClient
+    ) {
+        return service(conversationMapper, messageMapper, modelService, sender, mock(AttachmentService.class), llmClient);
+    }
+
+    private ChatServiceImpl service(
+            ChatConversationMapper conversationMapper,
+            ChatMessageMapper messageMapper,
+            AiModelService modelService,
+            RecordingSseEventSender sender,
+            AttachmentService attachmentService,
             LlmClient llmClient
     ) {
         return new ChatServiceImpl(
@@ -408,6 +536,7 @@ class ChatServiceImplTest {
                 modelService,
                 new ConversationTitleService(),
                 sender,
+                attachmentService,
                 protocolType -> llmClient,
                 Runnable::run
         );
@@ -424,7 +553,23 @@ class ChatServiceImplTest {
         return conversation;
     }
 
+    private ChatMessage message(Long id, Long conversationId, Long userId, String role, String content) {
+        ChatMessage message = new ChatMessage();
+        message.setId(id);
+        message.setConversationId(conversationId);
+        message.setUserId(userId);
+        message.setRole(role);
+        message.setContent(content);
+        message.setReasoningContent("");
+        message.setStatus("COMPLETED");
+        return message;
+    }
+
     private AiModelRuntimeConfig runtimeConfig() {
+        return runtimeConfig(true, null);
+    }
+
+    private AiModelRuntimeConfig runtimeConfig(boolean imageInputSupported, Integer imageTokenEstimate) {
         return new AiModelRuntimeConfig(
                 10L,
                 20L,
@@ -442,8 +587,8 @@ class ChatServiceImplTest {
                 "测试模型",
                 true,
                 true,
-                false,
-                null,
+                imageInputSupported,
+                imageTokenEstimate,
                 128000,
                 4096,
                 true,

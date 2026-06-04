@@ -20,6 +20,7 @@ import com.agenthub.storage.object.ObjectMetadata;
 import com.agenthub.storage.object.ObjectStorageClient;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -172,11 +173,88 @@ class AttachmentServiceImplTest {
         verify(mapper, never()).updateById(any(ChatAttachment.class));
     }
 
+    @Test
+    void shouldRejectInvalidNewImagesForChat() {
+        assertResolveNewImageRejected(readyAttachment(100L, 8L, 200L, null, OffsetDateTime.now().plusDays(1)));
+        assertResolveNewImageRejected(attachment(100L, 7L, 200L, null, "PENDING", OffsetDateTime.now().plusDays(1)));
+        assertResolveNewImageRejected(readyAttachment(100L, 7L, 200L, 300L, OffsetDateTime.now().plusDays(1)));
+        assertResolveNewImageRejected(readyAttachment(100L, 7L, 200L, null, OffsetDateTime.now().minusSeconds(1)),
+                "图片已过期");
+    }
+
+    @Test
+    void shouldRejectMoreThanEightImagesForChat() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        List<Long> attachmentIds = List.of(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L);
+        when(mapper.selectByIds(attachmentIds)).thenReturn(attachmentIds.stream()
+                .map(id -> readyAttachment(id, 7L, 200L, null, OffsetDateTime.now().plusDays(1)))
+                .toList());
+
+        assertThatThrownBy(() -> service.resolveImagesForChat(7L, 200L, attachmentIds, List.of(), 1500))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("单条消息最多上传 8 张图片")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(objectStorageClient, never()).presignGet(any(), any());
+    }
+
+    @Test
+    void shouldBindToMessageOnlyReadyUnboundUserAttachments() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        List<Long> attachmentIds = List.of(1L, 2L, 3L, 4L);
+        when(mapper.selectByIds(attachmentIds)).thenReturn(List.of(
+                readyAttachment(1L, 7L, null, null, OffsetDateTime.now().plusDays(1)),
+                readyAttachment(2L, 8L, null, null, OffsetDateTime.now().plusDays(1)),
+                attachment(3L, 7L, null, null, "PENDING", OffsetDateTime.now().plusDays(1)),
+                readyAttachment(4L, 7L, null, 99L, OffsetDateTime.now().plusDays(1))
+        ));
+        ArgumentCaptor<ChatAttachment> attachmentCaptor = ArgumentCaptor.forClass(ChatAttachment.class);
+
+        service.bindToMessage(7L, 200L, 300L, attachmentIds);
+
+        verify(mapper).updateById(attachmentCaptor.capture());
+        ChatAttachment updatedAttachment = attachmentCaptor.getValue();
+        assertThat(updatedAttachment.getId()).isEqualTo(1L);
+        assertThat(updatedAttachment.getConversationId()).isEqualTo(200L);
+        assertThat(updatedAttachment.getMessageId()).isEqualTo(300L);
+        assertThat(updatedAttachment.getUpdatedAt()).isNotNull();
+    }
+
+    @Test
+    void shouldListMessageAttachmentsWithPreviewUrlAndExpiredMessage() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        StorageProperties properties = storageProperties();
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, properties);
+        ChatAttachment activeAttachment = readyAttachment(1L, 7L, 200L, 300L, OffsetDateTime.now().plusDays(1));
+        ChatAttachment expiredAttachment = readyAttachment(2L, 7L, 200L, 301L, OffsetDateTime.now().minusSeconds(1));
+        when(mapper.selectList(any())).thenReturn(List.of(activeAttachment, expiredAttachment));
+        when(objectStorageClient.presignGet("users/7/chat-images/20260604/cat.png", Duration.ofMinutes(15)))
+                .thenReturn("https://example.com/preview.png");
+
+        List<com.agenthub.storage.attachment.dto.AttachmentItem> items =
+                service.listMessageAttachments(7L, List.of(300L, 301L));
+
+        assertThat(items).hasSize(2);
+        assertThat(items.get(0).messageId()).isEqualTo(300L);
+        assertThat(items.get(0).expired()).isFalse();
+        assertThat(items.get(0).previewUrl()).isEqualTo("https://example.com/preview.png");
+        assertThat(items.get(1).messageId()).isEqualTo(301L);
+        assertThat(items.get(1).expired()).isTrue();
+        assertThat(items.get(1).previewUrl()).isNull();
+        assertThat(items.get(1).message()).isEqualTo("图片已过期");
+    }
+
     private StorageProperties storageProperties() {
         StorageProperties properties = new StorageProperties();
         properties.setBucket("agent-hub-chat-images");
         properties.setImageExpireDays(7);
         properties.setPresignedUploadTtlMinutes(10);
+        properties.setPresignedReadTtlMinutes(15);
         return properties;
     }
 
@@ -189,6 +267,62 @@ class AttachmentServiceImplTest {
         attachment.setContentType("image/png");
         attachment.setFileSize(1024L);
         attachment.setFileExt("png");
+        return attachment;
+    }
+
+    private void assertResolveNewImageRejected(ChatAttachment attachment) {
+        assertResolveNewImageRejected(attachment, "图片不可用");
+    }
+
+    private void assertResolveNewImageRejected(ChatAttachment attachment, String message) {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        when(mapper.selectByIds(List.of(attachment.getId()))).thenReturn(List.of(attachment));
+
+        assertThatThrownBy(() -> service.resolveImagesForChat(
+                7L,
+                200L,
+                List.of(attachment.getId()),
+                List.of(),
+                1500
+        ))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage(message)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(objectStorageClient, never()).presignGet(any(), any());
+    }
+
+    private ChatAttachment readyAttachment(
+            Long id,
+            Long userId,
+            Long conversationId,
+            Long messageId,
+            OffsetDateTime expiresAt
+    ) {
+        return attachment(id, userId, conversationId, messageId, "READY", expiresAt);
+    }
+
+    private ChatAttachment attachment(
+            Long id,
+            Long userId,
+            Long conversationId,
+            Long messageId,
+            String status,
+            OffsetDateTime expiresAt
+    ) {
+        ChatAttachment attachment = new ChatAttachment();
+        attachment.setId(id);
+        attachment.setUserId(userId);
+        attachment.setConversationId(conversationId);
+        attachment.setMessageId(messageId);
+        attachment.setStatus(status);
+        attachment.setObjectKey("users/7/chat-images/20260604/cat.png");
+        attachment.setOriginalFilename("cat.png");
+        attachment.setContentType("image/png");
+        attachment.setAttachmentType("IMAGE");
+        attachment.setExpiresAt(expiresAt);
         return attachment;
     }
 }

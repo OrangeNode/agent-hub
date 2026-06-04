@@ -2,6 +2,7 @@ package com.agenthub.chat.service.impl;
 
 import com.agenthub.ai.llm.LlmClient;
 import com.agenthub.ai.llm.LlmClientFactory;
+import com.agenthub.ai.llm.LlmContentPart;
 import com.agenthub.ai.llm.LlmMessage;
 import com.agenthub.ai.llm.LlmStreamChunk;
 import com.agenthub.ai.llm.LlmStreamRequest;
@@ -20,13 +21,19 @@ import com.agenthub.common.exception.BusinessException;
 import com.agenthub.sse.SseEventData;
 import com.agenthub.sse.SseEventSender;
 import com.agenthub.sse.SseEventType;
+import com.agenthub.storage.attachment.dto.AttachmentItem;
+import com.agenthub.storage.attachment.dto.AttachmentReference;
+import com.agenthub.storage.attachment.service.AttachmentService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import java.io.IOException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -46,11 +53,13 @@ public class ChatServiceImpl implements ChatService {
     private static final String LLM_STREAM_FAILED = "LLM_STREAM_FAILED";
     private static final String SSE_CONNECTION_CLOSED = "SSE 连接已断开";
     private static final int TITLE_MAX_OUTPUT_TOKENS = 64;
+    private static final int DEFAULT_IMAGE_TOKEN_ESTIMATE = 1500;
 
     private final ChatConversationMapper conversationMapper;
     private final ChatMessageMapper messageMapper;
     private final AiModelService modelService;
     private final ConversationTitleService titleService;
+    private final AttachmentService attachmentService;
     private final SseEventSender sseEventSender;
     private final Function<String, LlmClient> llmClientFactory;
     private final Executor streamExecutor;
@@ -60,10 +69,11 @@ public class ChatServiceImpl implements ChatService {
             ChatConversationMapper conversationMapper,
             ChatMessageMapper messageMapper,
             AiModelService modelService,
-            ConversationTitleService titleService
+            ConversationTitleService titleService,
+            AttachmentService attachmentService
     ) {
         this(conversationMapper, messageMapper, modelService, titleService, new SseEventSender(),
-                LlmClientFactory::create, defaultStreamExecutor());
+                attachmentService, LlmClientFactory::create, defaultStreamExecutor());
     }
 
     public ChatServiceImpl(
@@ -72,6 +82,7 @@ public class ChatServiceImpl implements ChatService {
             AiModelService modelService,
             ConversationTitleService titleService,
             SseEventSender sseEventSender,
+            AttachmentService attachmentService,
             Function<String, LlmClient> llmClientFactory,
             Executor streamExecutor
     ) {
@@ -79,6 +90,7 @@ public class ChatServiceImpl implements ChatService {
         this.messageMapper = messageMapper;
         this.modelService = modelService;
         this.titleService = titleService;
+        this.attachmentService = attachmentService;
         this.sseEventSender = sseEventSender;
         this.llmClientFactory = llmClientFactory;
         this.streamExecutor = streamExecutor;
@@ -88,11 +100,35 @@ public class ChatServiceImpl implements ChatService {
      * 创建 SSE 通道并异步执行模型流式调用，调用方可立即拿到响应连接。
      */
     @Override
-    public SseEmitter stream(Long userId, Long conversationId, Long modelId, String agentKey, String prompt, boolean thinkingEnabled) {
+    public SseEmitter stream(
+            Long userId,
+            Long conversationId,
+            Long modelId,
+            String agentKey,
+            String prompt,
+            boolean thinkingEnabled,
+            List<Long> attachmentIds,
+            List<Long> reuseAttachmentIds
+    ) {
         String normalizedPrompt = requirePrompt(prompt);
         AiModelRuntimeConfig runtimeConfig = requireRuntimeConfig(modelId);
         ChatConversation conversation = resolveConversation(userId, conversationId, agentKey, runtimeConfig, normalizedPrompt);
-        saveUserMessage(userId, conversation.getId(), normalizedPrompt, runtimeConfig);
+        int imageTokenEstimate = runtimeConfig.imageTokenEstimate() == null
+                ? DEFAULT_IMAGE_TOKEN_ESTIMATE
+                : runtimeConfig.imageTokenEstimate();
+        Long resolvedConversationId = conversationId == null ? null : conversation.getId();
+        List<AttachmentReference> images = attachmentService.resolveImagesForChat(
+                userId,
+                resolvedConversationId,
+                attachmentIds,
+                reuseAttachmentIds,
+                imageTokenEstimate
+        );
+        if (!images.isEmpty() && !runtimeConfig.imageInputSupported()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "当前模型不支持图片输入");
+        }
+        ChatMessage userMessage = saveUserMessage(userId, conversation.getId(), normalizedPrompt, runtimeConfig);
+        attachmentService.bindToMessage(userId, conversation.getId(), userMessage.getId(), attachmentIds);
         ChatMessage assistantMessage = saveAssistantMessage(userId, conversation.getId(), runtimeConfig);
         touchConversation(conversation);
 
@@ -101,7 +137,8 @@ public class ChatServiceImpl implements ChatService {
                 new SseEventData.Conversation(conversation.getId(), conversation.getTitle()))
                 && send(emitter, SseEventType.MESSAGE, new SseEventData.Message(assistantMessage.getId(), ROLE_ASSISTANT));
         if (connected) {
-            streamExecutor.execute(() -> streamLlm(emitter, runtimeConfig, normalizedPrompt, assistantMessage, thinkingEnabled));
+            streamExecutor.execute(() -> streamLlm(emitter, runtimeConfig, normalizedPrompt, images,
+                    assistantMessage, thinkingEnabled));
         } else {
             // 初始事件发送失败说明客户端已断开，直接标记助手消息失败。
             failAssistantMessage(assistantMessage, new StringBuilder(), new StringBuilder(), SSE_CONNECTION_CLOSED);
@@ -140,8 +177,17 @@ public class ChatServiceImpl implements ChatService {
                 .eq(ChatMessage::getUserId, userId)
                 .orderByAsc(ChatMessage::getCreatedAt)
                 .orderByAsc(ChatMessage::getId);
-        return messageMapper.selectList(wrapper).stream()
-                .map(this::toMessageItem)
+        List<ChatMessage> messages = messageMapper.selectList(wrapper);
+        List<Long> messageIds = messages.stream()
+                .map(ChatMessage::getId)
+                .toList();
+        Map<Long, List<AttachmentItem>> attachmentsByMessageId = attachmentService
+                .listMessageAttachments(userId, messageIds)
+                .stream()
+                .collect(Collectors.groupingBy(AttachmentItem::messageId));
+        return messages.stream()
+                .map(message -> toMessageItem(message,
+                        attachmentsByMessageId.getOrDefault(message.getId(), List.of())))
                 .toList();
     }
 
@@ -309,6 +355,7 @@ public class ChatServiceImpl implements ChatService {
             SseEmitter emitter,
             AiModelRuntimeConfig runtimeConfig,
             String prompt,
+            List<AttachmentReference> images,
             ChatMessage assistantMessage,
             boolean thinkingEnabled
     ) {
@@ -319,7 +366,7 @@ public class ChatServiceImpl implements ChatService {
         boolean reasoningRequested = thinkingEnabled && runtimeConfig.reasoningSupported();
         try {
             LlmClient client = llmClientFactory.apply(runtimeConfig.protocolType());
-            client.stream(buildRequest(runtimeConfig, prompt, reasoningRequested), chunk ->
+            client.stream(buildRequest(runtimeConfig, prompt, images, reasoningRequested), chunk ->
                     handleChunk(emitter, assistantMessage, content, reasoningContent, finished, reasoningRequested, chunk));
         } catch (Exception exception) {
             if (finished.compareAndSet(false, true)) {
@@ -331,16 +378,34 @@ public class ChatServiceImpl implements ChatService {
         }
     }
 
-    private LlmStreamRequest buildRequest(AiModelRuntimeConfig runtimeConfig, String prompt, boolean reasoningRequested) {
+    private LlmStreamRequest buildRequest(
+            AiModelRuntimeConfig runtimeConfig,
+            String prompt,
+            List<AttachmentReference> images,
+            boolean reasoningRequested
+    ) {
         return new LlmStreamRequest(
                 runtimeConfig.baseUrl(),
                 runtimeConfig.apiKeyCipher(),
                 runtimeConfig.apiVersion(),
                 runtimeConfig.modelCode(),
-                List.of(new LlmMessage("user", prompt)),
+                List.of(buildUserLlmMessage(prompt, images)),
                 runtimeConfig.maxOutputTokens(),
                 reasoningRequested
         );
+    }
+
+    private LlmMessage buildUserLlmMessage(String prompt, List<AttachmentReference> images) {
+        if (images == null || images.isEmpty()) {
+            return new LlmMessage("user", prompt);
+        }
+        List<LlmContentPart> parts = new ArrayList<>();
+        parts.add(LlmContentPart.text(prompt));
+        images.stream()
+                .map(AttachmentReference::readUrl)
+                .map(LlmContentPart::imageUrl)
+                .forEach(parts::add);
+        return LlmMessage.user(parts);
     }
 
     private LlmStreamRequest buildTitleRequest(AiModelRuntimeConfig runtimeConfig, String prompt) {
@@ -485,14 +550,15 @@ public class ChatServiceImpl implements ChatService {
         );
     }
 
-    private MessageItem toMessageItem(ChatMessage message) {
+    private MessageItem toMessageItem(ChatMessage message, List<AttachmentItem> attachments) {
         return new MessageItem(
                 message.getId(),
                 message.getConversationId(),
                 message.getRole(),
                 message.getContent(),
                 message.getReasoningContent(),
-                message.getStatus()
+                message.getStatus(),
+                attachments
         );
     }
 }

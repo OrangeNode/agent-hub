@@ -45,7 +45,9 @@ public class ChatController {
                 request.modelId(),
                 request.agentKey(),
                 request.prompt(),
-                Boolean.TRUE.equals(request.thinkingEnabled())
+                Boolean.TRUE.equals(request.thinkingEnabled()),
+                request.attachmentIds(),
+                request.reuseAttachmentIds()
         );
     }
 
@@ -101,7 +103,9 @@ public class ChatController {
             Long conversationId,
             Long modelId,
             String agentKey,
-            Boolean thinkingEnabled
+            Boolean thinkingEnabled,
+            List<Long> attachmentIds,
+            List<Long> reuseAttachmentIds
     ) {
     }
 

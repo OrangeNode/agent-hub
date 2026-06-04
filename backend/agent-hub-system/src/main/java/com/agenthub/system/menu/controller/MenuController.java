@@ -37,16 +37,25 @@ public class MenuController {
         this.menuService = menuService;
     }
 
+    /**
+     * 查询菜单管理平铺列表。
+     */
     @GetMapping
     public ApiResponse<List<MenuItem>> listMenus() {
         return ApiResponse.success(menuService.listFlat());
     }
 
+    /**
+     * 查询菜单管理树形列表。
+     */
     @GetMapping("/tree")
     public ApiResponse<List<MenuItem>> listMenuTree() {
         return ApiResponse.success(menuService.listTree());
     }
 
+    /**
+     * 查询当前登录用户可访问的菜单树。
+     */
     @GetMapping("/current-user")
     public ApiResponse<List<MenuItem>> currentUserMenus(Authentication authentication) {
         String username = resolveUsername(authentication);
@@ -54,6 +63,9 @@ public class MenuController {
         return ApiResponse.success(menuService.listCurrentUserMenus(currentUser.roles()));
     }
 
+    /**
+     * 创建系统菜单。
+     */
     @PostMapping
     public ApiResponse<MenuItem> createMenu(@Valid @RequestBody CreateMenuRequest request) {
         return ApiResponse.success(menuService.create(new CreateMenuCommand(
@@ -70,6 +82,9 @@ public class MenuController {
         )));
     }
 
+    /**
+     * 更新系统菜单展示和权限配置。
+     */
     @PutMapping("/{menuId}")
     public ApiResponse<MenuItem> updateMenu(@PathVariable Long menuId, @Valid @RequestBody UpdateMenuRequest request) {
         return ApiResponse.success(menuService.update(menuId, new UpdateMenuCommand(
@@ -84,18 +99,27 @@ public class MenuController {
         )));
     }
 
+    /**
+     * 批量更新菜单排序。
+     */
     @PutMapping("/order")
     public ApiResponse<Void> updateMenuOrders(@RequestBody List<MenuOrderRequest> requests) {
         menuService.updateOrders(requests.stream().map(request -> new MenuOrderCommand(request.menuId(), request.sort())).toList());
         return ApiResponse.success();
     }
 
+    /**
+     * 删除系统菜单及其子菜单。
+     */
     @DeleteMapping("/{menuId}")
     public ApiResponse<Void> deleteMenu(@PathVariable Long menuId) {
         menuService.delete(menuId);
         return ApiResponse.success();
     }
 
+    /**
+     * 从入参或安全上下文中解析当前登录用户名。
+     */
     private String resolveUsername(Authentication authentication) {
         if (authentication == null) {
             authentication = SecurityContextHolder.getContext().getAuthentication();

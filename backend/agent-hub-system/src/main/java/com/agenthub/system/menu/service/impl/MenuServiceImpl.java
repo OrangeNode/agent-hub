@@ -33,6 +33,9 @@ public class MenuServiceImpl implements MenuService {
         this.roleMapper = roleMapper;
     }
 
+    /**
+     * 查询平铺菜单列表，返回结果不携带 children。
+     */
     @Override
     public List<MenuItem> listFlat() {
         return loadAllMenus().stream()
@@ -40,11 +43,17 @@ public class MenuServiceImpl implements MenuService {
                 .toList();
     }
 
+    /**
+     * 查询完整菜单树，用于菜单管理界面展示层级。
+     */
     @Override
     public List<MenuItem> listTree() {
         return buildTree(listFlat());
     }
 
+    /**
+     * 根据角色授权菜单计算当前用户可见菜单树。
+     */
     @Override
     public List<MenuItem> listCurrentUserMenus(List<String> roleCodes) {
         if (roleCodes == null || roleCodes.isEmpty()) {
@@ -61,6 +70,7 @@ public class MenuServiceImpl implements MenuService {
 
         LinkedHashSet<Long> resolvedIds = new LinkedHashSet<>();
         for (Long menuId : menuIds) {
+            // 前端路由需要完整父级链路，因此授权到子菜单时同步补齐祖先菜单。
             collectWithParents(menuId, allMenus, resolvedIds);
         }
 
@@ -71,6 +81,9 @@ public class MenuServiceImpl implements MenuService {
         return buildTree(grantedMenus);
     }
 
+    /**
+     * 按 ID 查询菜单，并按菜单排序规则返回。
+     */
     @Override
     public List<MenuItem> listByIds(List<Long> menuIds) {
         if (menuIds == null || menuIds.isEmpty()) {
@@ -82,6 +95,9 @@ public class MenuServiceImpl implements MenuService {
                 .toList();
     }
 
+    /**
+     * 创建菜单并校验父级菜单存在性。
+     */
     @Override
     @Transactional
     public MenuItem create(CreateMenuCommand command) {
@@ -102,6 +118,9 @@ public class MenuServiceImpl implements MenuService {
         return withoutChildren(requireMenu(menu.getId()));
     }
 
+    /**
+     * 更新菜单展示字段，保持父级和路由名称不被该入口修改。
+     */
     @Override
     @Transactional
     public MenuItem update(Long menuId, UpdateMenuCommand command) {
@@ -123,6 +142,9 @@ public class MenuServiceImpl implements MenuService {
         return withoutChildren(requireMenu(menuId));
     }
 
+    /**
+     * 删除菜单及其后代节点，并同步删除角色授权关系。
+     */
     @Override
     @Transactional
     public void delete(Long menuId) {
@@ -132,6 +154,9 @@ public class MenuServiceImpl implements MenuService {
         menuMapper.deleteByIds(targetIds);
     }
 
+    /**
+     * 批量更新菜单排序值，忽略空请求。
+     */
     @Override
     @Transactional
     public void updateOrders(List<MenuOrderCommand> commands) {
@@ -151,6 +176,9 @@ public class MenuServiceImpl implements MenuService {
         return menuMapper.selectList(new LambdaQueryWrapper<SysMenu>().orderByAsc(SysMenu::getSort, SysMenu::getId));
     }
 
+    /**
+     * 规范化父菜单 ID，空值和 0 都视为根菜单。
+     */
     private Long validateParentId(Long parentId) {
         if (parentId == null || parentId == 0L) {
             return 0L;
@@ -169,6 +197,9 @@ public class MenuServiceImpl implements MenuService {
         return menu;
     }
 
+    /**
+     * 从根菜单开始收集所有后代菜单 ID，删除菜单时用于级联清理。
+     */
     private List<Long> collectDescendantIds(Long rootMenuId) {
         List<SysMenu> allMenus = loadAllMenus();
         LinkedHashSet<Long> ids = new LinkedHashSet<>();
@@ -185,6 +216,9 @@ public class MenuServiceImpl implements MenuService {
         return List.copyOf(ids);
     }
 
+    /**
+     * 递归补齐菜单的父级链路，保证授权菜单树不会出现孤儿节点。
+     */
     private void collectWithParents(Long menuId, Map<Long, MenuItem> allMenus, Set<Long> resolvedIds) {
         MenuItem menu = allMenus.get(menuId);
         if (menu == null) {
@@ -213,6 +247,9 @@ public class MenuServiceImpl implements MenuService {
         );
     }
 
+    /**
+     * 将平铺菜单列表组装成树形结构。
+     */
     private List<MenuItem> buildTree(List<MenuItem> flatMenus) {
         List<MenuItem> roots = flatMenus.stream()
                 .filter(menu -> menu.parentId().equals(0L))
@@ -226,6 +263,9 @@ public class MenuServiceImpl implements MenuService {
         return result;
     }
 
+    /**
+     * 为单个菜单递归挂载子菜单，并保持排序稳定。
+     */
     private MenuItem attachChildren(MenuItem parent, List<MenuItem> flatMenus) {
         List<MenuItem> children = flatMenus.stream()
                 .filter(menu -> menu.parentId().equals(parent.menuId()))

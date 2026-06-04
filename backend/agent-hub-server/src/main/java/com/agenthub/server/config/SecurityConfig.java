@@ -38,6 +38,9 @@ import tools.jackson.databind.ObjectMapper;
 @Configuration
 public class SecurityConfig {
 
+    /**
+     * 构造 JWT 配置，默认值仅用于本地开发。
+     */
     @Bean
     JwtProperties jwtProperties(
             @Value("${agent-hub.security.jwt.secret:agent-hub-demo-secret-agent-hub-demo-secret}") String secret,
@@ -49,11 +52,17 @@ public class SecurityConfig {
         );
     }
 
+    /**
+     * 创建 JWT 服务实例。
+     */
     @Bean
     JwtService jwtService(JwtProperties jwtProperties) {
         return new JwtService(jwtProperties);
     }
 
+    /**
+     * 配置后端统一安全链路，登录接口放行，其余接口需要认证。
+     */
     @Bean
     SecurityFilterChain securityFilterChain(
             HttpSecurity http,
@@ -83,6 +92,9 @@ public class SecurityConfig {
                 .build();
     }
 
+    /**
+     * 在安全过滤链中直接写出统一错误响应，避免进入 Controller 异常处理链。
+     */
     private static void writeError(HttpServletResponse response, ObjectMapper objectMapper, int status, ErrorCode errorCode)
             throws IOException {
         response.setStatus(status);
@@ -110,6 +122,9 @@ public class SecurityConfig {
             this.objectMapper = objectMapper;
         }
 
+        /**
+         * 解析 Bearer Token，校验用户状态，并把角色和权限写入安全上下文。
+         */
         @Override
         protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
                 throws ServletException, IOException {
@@ -149,6 +164,9 @@ public class SecurityConfig {
             filterChain.doFilter(request, response);
         }
 
+        /**
+         * 从 Authorization 请求头中提取 Bearer Token。
+         */
         private String resolveToken(HttpServletRequest request) {
             String header = request.getHeader("Authorization");
             if (header != null && header.startsWith("Bearer ")) {

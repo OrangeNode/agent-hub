@@ -10,6 +10,9 @@ public final class LlmClientFactory {
     private LlmClientFactory() {
     }
 
+    /**
+     * 根据模型协议类型创建对应的 LLM 客户端适配器。
+     */
     public static LlmClient create(String protocolType) {
         if (protocolType == null) {
             throw new IllegalArgumentException("不支持的模型协议: null");

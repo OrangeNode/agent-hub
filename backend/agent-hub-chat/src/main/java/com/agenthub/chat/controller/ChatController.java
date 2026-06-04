@@ -30,6 +30,9 @@ public class ChatController {
         this.chatService = chatService;
     }
 
+    /**
+     * 发起或继续流式聊天会话。
+     */
     @PostMapping("/stream")
     public SseEmitter stream(
             Authentication authentication,
@@ -46,12 +49,18 @@ public class ChatController {
         );
     }
 
+    /**
+     * 查询当前用户的会话列表。
+     */
     @GetMapping("/conversations")
     public ApiResponse<List<ConversationItem>> listConversations(Authentication authentication) {
         LoginUser loginUser = (LoginUser) authentication.getPrincipal();
         return ApiResponse.success(chatService.listConversations(loginUser.userId()));
     }
 
+    /**
+     * 查询当前用户指定会话的消息列表。
+     */
     @GetMapping("/conversations/{conversationId}/messages")
     public ApiResponse<List<MessageItem>> listMessages(
             Authentication authentication,
@@ -61,6 +70,9 @@ public class ChatController {
         return ApiResponse.success(chatService.listMessages(loginUser.userId(), conversationId));
     }
 
+    /**
+     * 删除当前用户指定会话。
+     */
     @DeleteMapping("/conversations/{conversationId}")
     public ApiResponse<Void> deleteConversation(Authentication authentication, @PathVariable Long conversationId) {
         LoginUser loginUser = (LoginUser) authentication.getPrincipal();
@@ -68,6 +80,9 @@ public class ChatController {
         return ApiResponse.success();
     }
 
+    /**
+     * 重命名当前用户指定会话。
+     */
     @PatchMapping("/conversations/{conversationId}")
     public ApiResponse<Void> renameConversation(
             Authentication authentication,

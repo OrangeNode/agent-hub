@@ -31,6 +31,9 @@ public class UserController {
         this.userService = userService;
     }
 
+    /**
+     * 查询用户管理列表。
+     */
     @GetMapping
     public ApiResponse<List<UserProfile>> listUsers(
             @RequestParam(required = false) String username,
@@ -41,6 +44,9 @@ public class UserController {
         return ApiResponse.success(userService.list(new UserQuery(username, displayName, enabled, roleCode)));
     }
 
+    /**
+     * 创建系统用户。
+     */
     @PostMapping
     public ApiResponse<UserProfile> createUser(@Valid @RequestBody CreateUserRequest request) {
         return ApiResponse.success(userService.create(new CreateUserCommand(
@@ -52,6 +58,9 @@ public class UserController {
         )));
     }
 
+    /**
+     * 更新系统用户资料和角色。
+     */
     @PutMapping("/{userId}")
     public ApiResponse<UserProfile> updateUser(@PathVariable Long userId, @Valid @RequestBody UpdateUserRequest request) {
         return ApiResponse.success(userService.update(userId, new UpdateUserCommand(
@@ -61,11 +70,17 @@ public class UserController {
         )));
     }
 
+    /**
+     * 启用或禁用系统用户。
+     */
     @PatchMapping("/{userId}/status")
     public ApiResponse<UserProfile> updateUserStatus(@PathVariable Long userId, @RequestParam boolean enabled) {
         return ApiResponse.success(userService.updateStatus(userId, enabled));
     }
 
+    /**
+     * 删除系统用户。
+     */
     @DeleteMapping("/{userId}")
     public ApiResponse<Void> deleteUser(@PathVariable Long userId) {
         userService.delete(userId);

@@ -34,6 +34,9 @@ public class AnthropicMessagesClient implements LlmClient {
         this.httpClient = httpClient;
     }
 
+    /**
+     * 发送 Anthropic Messages 流式请求，并输出统一流式 chunk。
+     */
     @Override
     public void stream(LlmStreamRequest request, Consumer<LlmStreamChunk> chunkConsumer) {
         try {
@@ -51,6 +54,9 @@ public class AnthropicMessagesClient implements LlmClient {
         }
     }
 
+    /**
+     * 将 Anthropic SSE 事件转换为统一 chunk。
+     */
     public List<LlmStreamChunk> parseEvent(String eventName, String payload) {
         if (eventName == null || eventName.isBlank()) {
             return List.of();
@@ -90,6 +96,9 @@ public class AnthropicMessagesClient implements LlmClient {
         return httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
     }
 
+    /**
+     * 消费 Anthropic SSE 行协议，按 event/data 组合解析事件。
+     */
     private void consumeSse(Stream<String> lines, Consumer<LlmStreamChunk> chunkConsumer) {
         String eventName = null;
         try (Stream<String> closeableLines = lines) {
@@ -125,6 +134,9 @@ public class AnthropicMessagesClient implements LlmClient {
                 .build();
     }
 
+    /**
+     * 构造 Messages 请求体，system 消息按 Anthropic 协议拆到顶层字段。
+     */
     private Map<String, Object> buildRequestBody(LlmStreamRequest request) {
         Map<String, Object> body = new LinkedHashMap<>();
         int maxTokens = request.maxOutputTokens() == null ? DEFAULT_MAX_TOKENS : request.maxOutputTokens();
@@ -143,6 +155,9 @@ public class AnthropicMessagesClient implements LlmClient {
         return body;
     }
 
+    /**
+     * Anthropic 要求 thinking 预算小于输出上限，这里保留至少一个输出 token。
+     */
     private Map<String, Object> thinkingConfig(int maxTokens) {
         Map<String, Object> thinking = new LinkedHashMap<>();
         thinking.put("type", "enabled");
@@ -165,6 +180,9 @@ public class AnthropicMessagesClient implements LlmClient {
                 .toList();
     }
 
+    /**
+     * 合并多条 system 消息，适配 Anthropic 顶层 system 字段。
+     */
     private String systemPrompt(List<LlmMessage> messages) {
         if (messages == null) {
             return null;
@@ -185,6 +203,9 @@ public class AnthropicMessagesClient implements LlmClient {
         return request.apiVersion();
     }
 
+    /**
+     * 兼容传入根地址或 /v1 地址两种配置方式。
+     */
     private String endpoint(String baseUrl, String v1Path) {
         String normalizedBaseUrl = trimTrailingSlash(baseUrl);
         if (normalizedBaseUrl.endsWith("/v1")) {

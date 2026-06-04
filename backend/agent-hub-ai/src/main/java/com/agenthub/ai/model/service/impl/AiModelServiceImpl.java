@@ -29,28 +29,43 @@ public class AiModelServiceImpl implements AiModelService {
         this.providerService = providerService;
     }
 
+    /**
+     * 查询模型管理列表，包含供应商名称等展示字段。
+     */
     @Override
     public List<AiModelItem> list() {
         return modelMapper.selectJoinedItems();
     }
 
+    /**
+     * 查询启用且供应商也启用的模型列表。
+     */
     @Override
     public List<AiModelItem> listAvailable() {
         return modelMapper.selectAvailableItems();
     }
 
+    /**
+     * 获取指定模型运行时配置，并校验调用链路可用。
+     */
     @Override
     public AiModelRuntimeConfig requireAvailableRuntimeConfig(Long modelId) {
         AiModelRuntimeConfig config = modelMapper.selectRuntimeConfigById(modelId);
         return requireUsableRuntimeConfig(config, "模型不存在");
     }
 
+    /**
+     * 获取默认模型运行时配置，并校验调用链路可用。
+     */
     @Override
     public AiModelRuntimeConfig requireDefaultRuntimeConfig() {
         AiModelRuntimeConfig config = modelMapper.selectDefaultRuntimeConfig();
         return requireUsableRuntimeConfig(config, "默认模型不存在");
     }
 
+    /**
+     * 统一校验模型和供应商启用状态，避免聊天入口重复判断。
+     */
     private AiModelRuntimeConfig requireUsableRuntimeConfig(AiModelRuntimeConfig config, String notFoundMessage) {
         if (config == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, notFoundMessage);
@@ -64,6 +79,9 @@ public class AiModelServiceImpl implements AiModelService {
         return config;
     }
 
+    /**
+     * 创建模型配置，必要时把其他模型取消默认。
+     */
     @Override
     @Transactional
     public AiModelItem create(CreateModelCommand command) {
@@ -75,11 +93,15 @@ public class AiModelServiceImpl implements AiModelService {
         fillModel(model, command);
         insertModel(model);
         if (Boolean.TRUE.equals(model.getDefaultModel())) {
+            // 系统只允许一个默认模型，创建成功后再清理其他默认标记。
             modelMapper.clearDefaultModelExcept(model.getId());
         }
         return modelMapper.selectJoinedById(model.getId());
     }
 
+    /**
+     * 更新模型配置，必要时把其他模型取消默认。
+     */
     @Override
     @Transactional
     public AiModelItem update(Long modelId, UpdateModelCommand command) {
@@ -93,11 +115,15 @@ public class AiModelServiceImpl implements AiModelService {
         fillModel(updated, command);
         updateModel(updated);
         if (Boolean.TRUE.equals(updated.getDefaultModel())) {
+            // 保持默认模型互斥，当前模型以外的默认标记全部清除。
             modelMapper.clearDefaultModelExcept(updated.getId());
         }
         return modelMapper.selectJoinedById(modelId);
     }
 
+    /**
+     * 删除模型配置。
+     */
     @Override
     @Transactional
     public void delete(Long modelId) {
@@ -105,6 +131,9 @@ public class AiModelServiceImpl implements AiModelService {
         modelMapper.deleteById((Serializable) modelId);
     }
 
+    /**
+     * 查询模型实体，不存在时统一抛出业务异常。
+     */
     private AiModel requireModel(Long modelId) {
         AiModel model = modelMapper.selectById(modelId);
         if (model == null) {
@@ -113,6 +142,9 @@ public class AiModelServiceImpl implements AiModelService {
         return model;
     }
 
+    /**
+     * 插入模型时将数据库唯一约束冲突转换成业务异常。
+     */
     private void insertModel(AiModel model) {
         try {
             modelMapper.insert(model);
@@ -121,6 +153,9 @@ public class AiModelServiceImpl implements AiModelService {
         }
     }
 
+    /**
+     * 更新模型时将数据库唯一约束冲突转换成业务异常。
+     */
     private void updateModel(AiModel model) {
         try {
             modelMapper.updateById(model);
@@ -129,6 +164,9 @@ public class AiModelServiceImpl implements AiModelService {
         }
     }
 
+    /**
+     * 校验同一供应商下模型编码唯一，更新时排除当前模型。
+     */
     private void rejectDuplicateCode(Long providerId, String modelCode, Long excludedModelId) {
         LambdaQueryWrapper<AiModel> wrapper = new LambdaQueryWrapper<AiModel>()
                 .eq(AiModel::getProviderId, providerId)
@@ -142,6 +180,9 @@ public class AiModelServiceImpl implements AiModelService {
         }
     }
 
+    /**
+     * 默认模型必须自身启用且供应商启用，否则聊天入口无法回退到可用模型。
+     */
     private void rejectUnavailableDefaultModel(Boolean defaultModel, Boolean enabled, AiProviderItem provider) {
         if (!Boolean.TRUE.equals(defaultModel)) {
             return;

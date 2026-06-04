@@ -32,6 +32,9 @@ public class RoleServiceImpl implements RoleService {
         this.menuMapper = menuMapper;
     }
 
+    /**
+     * 查询所有角色，并附带当前绑定的菜单 ID。
+     */
     @Override
     public List<RoleItem> list() {
         return roleMapper.selectList(new LambdaQueryWrapper<SysRole>().orderByAsc(SysRole::getId)).stream()
@@ -39,6 +42,9 @@ public class RoleServiceImpl implements RoleService {
                 .toList();
     }
 
+    /**
+     * 查询指定编码下仍启用的角色，用于登录画像和授权校验。
+     */
     @Override
     public List<RoleItem> findByCodes(List<String> codes) {
         if (codes == null || codes.isEmpty()) {
@@ -49,6 +55,9 @@ public class RoleServiceImpl implements RoleService {
                 .toList();
     }
 
+    /**
+     * 创建角色并保存角色菜单关系。
+     */
     @Override
     @Transactional
     public RoleItem create(CreateRoleCommand command) {
@@ -69,6 +78,9 @@ public class RoleServiceImpl implements RoleService {
         return requireRoleItem(role.getId());
     }
 
+    /**
+     * 更新角色基础信息并整体替换菜单授权关系。
+     */
     @Override
     @Transactional
     public RoleItem update(Long roleId, UpdateRoleCommand command) {
@@ -86,6 +98,9 @@ public class RoleServiceImpl implements RoleService {
         return requireRoleItem(roleId);
     }
 
+    /**
+     * 删除未被用户占用的角色，同时清理角色菜单关系。
+     */
     @Override
     @Transactional
     public void delete(Long roleId) {
@@ -97,6 +112,9 @@ public class RoleServiceImpl implements RoleService {
         roleMapper.deleteById((java.io.Serializable) roleId);
     }
 
+    /**
+     * 查询角色实体，不存在时统一抛出业务异常。
+     */
     private SysRole requireRole(Long roleId) {
         SysRole role = roleMapper.selectById(roleId);
         if (role == null) {
@@ -109,6 +127,9 @@ public class RoleServiceImpl implements RoleService {
         return toRoleItem(requireRole(roleId));
     }
 
+    /**
+     * 校验授权菜单 ID 是否全部存在。
+     */
     private void validateMenuIds(List<Long> menuIds) {
         if (menuIds == null || menuIds.isEmpty()) {
             return;
@@ -125,6 +146,9 @@ public class RoleServiceImpl implements RoleService {
         }
     }
 
+    /**
+     * 以整体替换方式维护角色菜单关系，重复菜单 ID 会在写入前去重。
+     */
     private void replaceRoleMenus(Long roleId, List<Long> menuIds) {
         roleMapper.deleteRoleMenusByRoleId(roleId);
         if (menuIds == null) {

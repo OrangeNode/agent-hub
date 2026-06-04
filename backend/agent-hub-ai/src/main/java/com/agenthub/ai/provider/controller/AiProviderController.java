@@ -28,11 +28,17 @@ public class AiProviderController {
         this.providerService = providerService;
     }
 
+    /**
+     * 查询 AI 供应商管理列表。
+     */
     @GetMapping
     public ApiResponse<List<AiProviderItem>> listProviders() {
         return ApiResponse.success(providerService.list());
     }
 
+    /**
+     * 创建 AI 供应商配置。
+     */
     @PostMapping
     public ApiResponse<AiProviderItem> createProvider(@Valid @RequestBody CreateProviderRequest request) {
         return ApiResponse.success(providerService.create(new CreateProviderCommand(
@@ -51,6 +57,9 @@ public class AiProviderController {
         )));
     }
 
+    /**
+     * 更新 AI 供应商配置。
+     */
     @PutMapping("/{providerId}")
     public ApiResponse<AiProviderItem> updateProvider(
             @PathVariable Long providerId,
@@ -71,6 +80,9 @@ public class AiProviderController {
         )));
     }
 
+    /**
+     * 删除 AI 供应商配置。
+     */
     @DeleteMapping("/{providerId}")
     public ApiResponse<Void> deleteProvider(@PathVariable Long providerId) {
         providerService.delete(providerId);

@@ -28,11 +28,17 @@ public class RoleController {
         this.roleService = roleService;
     }
 
+    /**
+     * 查询角色管理列表。
+     */
     @GetMapping
     public ApiResponse<List<RoleItem>> listRoles() {
         return ApiResponse.success(roleService.list());
     }
 
+    /**
+     * 创建系统角色并配置菜单授权。
+     */
     @PostMapping
     public ApiResponse<RoleItem> createRole(@Valid @RequestBody CreateRoleRequest request) {
         return ApiResponse.success(roleService.create(new CreateRoleCommand(
@@ -43,6 +49,9 @@ public class RoleController {
         )));
     }
 
+    /**
+     * 更新系统角色和菜单授权。
+     */
     @PutMapping("/{roleId}")
     public ApiResponse<RoleItem> updateRole(@PathVariable Long roleId, @Valid @RequestBody UpdateRoleRequest request) {
         return ApiResponse.success(roleService.update(roleId, new UpdateRoleCommand(
@@ -52,6 +61,9 @@ public class RoleController {
         )));
     }
 
+    /**
+     * 删除未被用户占用的系统角色。
+     */
     @DeleteMapping("/{roleId}")
     public ApiResponse<Void> deleteRole(@PathVariable Long roleId) {
         roleService.delete(roleId);

@@ -17,6 +17,9 @@ public class AccessLogFilter extends OncePerRequestFilter {
         this.enabled = enabled;
     }
 
+    /**
+     * 按配置决定是否记录访问日志，并确保异常场景也能输出耗时。
+     */
     @Override
     protected void doFilterInternal(
             HttpServletRequest request,
@@ -44,6 +47,9 @@ public class AccessLogFilter extends OncePerRequestFilter {
         }
     }
 
+    /**
+     * 拼接请求路径和查询参数，便于定位具体访问。
+     */
     private String buildPath(HttpServletRequest request) {
         String queryString = request.getQueryString();
         if (queryString == null || queryString.isBlank()) {

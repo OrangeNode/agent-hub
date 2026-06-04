@@ -37,6 +37,9 @@ public class UserServiceImpl implements UserService {
         this.passwordEncoder = passwordEncoder;
     }
 
+    /**
+     * 按查询条件返回用户列表，并把用户角色编码填充到展示 DTO。
+     */
     @Override
     public List<UserProfile> list(UserQuery query) {
         return userMapper.selectByQuery(query).stream()
@@ -44,6 +47,9 @@ public class UserServiceImpl implements UserService {
                 .toList();
     }
 
+    /**
+     * 查询登录认证所需的用户账号信息。
+     */
     @Override
     public Optional<UserAccount> findAccountByUsername(String username) {
         SysUser user = userMapper.selectOne(new LambdaQueryWrapper<SysUser>()
@@ -52,11 +58,17 @@ public class UserServiceImpl implements UserService {
         return Optional.ofNullable(user).map(this::toAccount);
     }
 
+    /**
+     * 查询指定用户的账号信息，供 JWT 过滤器校验登录态使用。
+     */
     @Override
     public Optional<UserAccount> findAccountById(Long userId) {
         return Optional.ofNullable(userMapper.selectById(userId)).map(this::toAccount);
     }
 
+    /**
+     * 创建用户并在同一事务内写入用户角色关系。
+     */
     @Override
     @Transactional
     public UserProfile create(CreateUserCommand command) {
@@ -79,6 +91,9 @@ public class UserServiceImpl implements UserService {
         return toProfile(requireUser(user.getId()));
     }
 
+    /**
+     * 更新用户资料并整体替换角色关系。
+     */
     @Override
     @Transactional
     public UserProfile update(Long userId, UpdateUserCommand command) {
@@ -97,6 +112,9 @@ public class UserServiceImpl implements UserService {
         return toProfile(requireUser(userId));
     }
 
+    /**
+     * 更新用户启用状态，并返回更新后的用户画像。
+     */
     @Override
     @Transactional
     public UserProfile updateStatus(Long userId, boolean enabled) {
@@ -107,6 +125,9 @@ public class UserServiceImpl implements UserService {
         return toProfile(requireUser(userId));
     }
 
+    /**
+     * 删除用户前先清理角色关系，避免关联表残留无效数据。
+     */
     @Override
     @Transactional
     public void delete(Long userId) {
@@ -115,6 +136,9 @@ public class UserServiceImpl implements UserService {
         userMapper.deleteById((java.io.Serializable) userId);
     }
 
+    /**
+     * 查询用户实体，不存在时统一抛出业务异常。
+     */
     private SysUser requireUser(Long userId) {
         SysUser user = userMapper.selectById(userId);
         if (user == null) {
@@ -123,6 +147,9 @@ public class UserServiceImpl implements UserService {
         return user;
     }
 
+    /**
+     * 加载并校验待分配角色，拒绝不存在或已禁用的角色编码。
+     */
     private List<SysRole> loadRoles(List<String> roleCodes) {
         if (roleCodes == null || roleCodes.isEmpty()) {
             return List.of();
@@ -147,6 +174,9 @@ public class UserServiceImpl implements UserService {
         return roles;
     }
 
+    /**
+     * 以整体替换方式维护用户角色关系，避免增量差异计算遗漏删除项。
+     */
     private void replaceUserRoles(Long userId, List<SysRole> roles) {
         userMapper.deleteUserRolesByUserId(userId);
         for (SysRole role : roles) {

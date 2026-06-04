@@ -22,6 +22,9 @@ public class JwtService {
         this.secretKey = Keys.hmacShaKeyFor(properties.secret().getBytes(StandardCharsets.UTF_8));
     }
 
+    /**
+     * 根据登录用户信息签发 JWT。
+     */
     public String createToken(LoginUser loginUser) {
         Instant now = Instant.now();
 
@@ -36,6 +39,9 @@ public class JwtService {
                 .compact();
     }
 
+    /**
+     * 解析并校验 JWT，失败时转换为统一未认证业务异常。
+     */
     public LoginUser parseToken(String token) {
         try {
             Claims claims = Jwts.parser()
@@ -54,6 +60,9 @@ public class JwtService {
         }
     }
 
+    /**
+     * 将 JWT claims 中的角色集合安全转换为字符串列表。
+     */
     private List<String> castStringList(Object rawValue) {
         if (rawValue instanceof List<?> list) {
             return list.stream().map(String::valueOf).toList();

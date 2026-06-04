@@ -10,9 +10,15 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
+/**
+ * AI 模型表数据访问接口，负责模型与供应商的联合查询。
+ */
 @Mapper
 public interface AiModelMapper extends BaseMapper<AiModel> {
 
+    /**
+     * 查询模型管理列表，并带出供应商展示字段。
+     */
     @Select("""
             select
                 m.id as modelId,
@@ -35,6 +41,9 @@ public interface AiModelMapper extends BaseMapper<AiModel> {
             """)
     List<AiModelItem> selectJoinedItems();
 
+    /**
+     * 按模型 ID 查询模型管理详情。
+     */
     @Select("""
             select
                 m.id as modelId,
@@ -57,6 +66,9 @@ public interface AiModelMapper extends BaseMapper<AiModel> {
             """)
     AiModelItem selectJoinedById(@Param("modelId") Long modelId);
 
+    /**
+     * 查询模型和供应商都启用的可用模型列表。
+     */
     @Select("""
             select
                 m.id as modelId,
@@ -80,6 +92,9 @@ public interface AiModelMapper extends BaseMapper<AiModel> {
             """)
     List<AiModelItem> selectAvailableItems();
 
+    /**
+     * 查询指定模型的运行时调用配置。
+     */
     @Select("""
             select
                 m.id as modelId,
@@ -108,6 +123,9 @@ public interface AiModelMapper extends BaseMapper<AiModel> {
             """)
     AiModelRuntimeConfig selectRuntimeConfigById(@Param("modelId") Long modelId);
 
+    /**
+     * 查询默认模型的运行时调用配置。
+     */
     @Select("""
             select
                 m.id as modelId,
@@ -138,6 +156,9 @@ public interface AiModelMapper extends BaseMapper<AiModel> {
             """)
     AiModelRuntimeConfig selectDefaultRuntimeConfig();
 
+    /**
+     * 将指定模型以外的模型全部取消默认标记。
+     */
     @Update("update ai_model set default_model = false where id <> #{modelId}")
     int clearDefaultModelExcept(@Param("modelId") Long modelId);
 }

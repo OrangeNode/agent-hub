@@ -39,6 +39,9 @@ public class AuthServiceImpl implements AuthService {
         this.passwordEncoder = passwordEncoder;
     }
 
+    /**
+     * 校验用户名和密码，登录成功后返回包含角色权限的用户画像。
+     */
     @Override
     public LoginResult login(LoginCommand command) {
         UserAccount userAccount = userService.findAccountByUsername(command.username())
@@ -51,6 +54,9 @@ public class AuthServiceImpl implements AuthService {
         return new LoginResult(buildProfile(userAccount));
     }
 
+    /**
+     * 重新从数据库装配当前用户画像，保证禁用状态和授权变更立即生效。
+     */
     @Override
     public UserProfile currentUser(String username) {
         UserAccount userAccount = userService.findAccountByUsername(username)
@@ -58,6 +64,9 @@ public class AuthServiceImpl implements AuthService {
         return buildProfile(userAccount);
     }
 
+    /**
+     * 从菜单权限字段提取系统内可配置的权限点。
+     */
     @Override
     public List<PermissionItem> listPermissions() {
         return menuService.listFlat().stream()
@@ -68,6 +77,9 @@ public class AuthServiceImpl implements AuthService {
                 .toList();
     }
 
+    /**
+     * 根据账号、角色和菜单授权组装登录态用户画像。
+     */
     private UserProfile buildProfile(UserAccount userAccount) {
         if (!userAccount.enabled()) {
             throw new BusinessException(ErrorCode.FORBIDDEN, "当前用户已被禁用");
@@ -80,6 +92,7 @@ public class AuthServiceImpl implements AuthService {
                 .toList();
         Set<String> permissions = new LinkedHashSet<>();
 
+        // 使用 LinkedHashSet 保留菜单遍历顺序，同时去除重复权限标识。
         for (RoleItem role : roles) {
             menuService.listByIds(role.menuIds()).stream()
                     .map(MenuItem::permission)

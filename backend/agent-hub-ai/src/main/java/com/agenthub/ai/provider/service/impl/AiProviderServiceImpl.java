@@ -25,6 +25,9 @@ public class AiProviderServiceImpl implements AiProviderService {
         this.providerMapper = providerMapper;
     }
 
+    /**
+     * 查询供应商管理列表，并按人工排序展示。
+     */
     @Override
     public List<AiProviderItem> list() {
         return providerMapper.selectList(new LambdaQueryWrapper<AiProvider>()
@@ -35,11 +38,17 @@ public class AiProviderServiceImpl implements AiProviderService {
                 .toList();
     }
 
+    /**
+     * 查询指定供应商，不存在时抛出统一业务异常。
+     */
     @Override
     public AiProviderItem requireById(Long providerId) {
         return toItem(requireProvider(providerId));
     }
 
+    /**
+     * 创建供应商配置，并保证供应商编码唯一。
+     */
     @Override
     @Transactional
     public AiProviderItem create(CreateProviderCommand command) {
@@ -67,6 +76,9 @@ public class AiProviderServiceImpl implements AiProviderService {
         return toItem(requireProvider(provider.getId()));
     }
 
+    /**
+     * 更新供应商配置，API Key 为空时沿用原密钥密文。
+     */
     @Override
     @Transactional
     public AiProviderItem update(Long providerId, UpdateProviderCommand command) {
@@ -91,6 +103,9 @@ public class AiProviderServiceImpl implements AiProviderService {
         return toItem(requireProvider(providerId));
     }
 
+    /**
+     * 删除供应商配置。
+     */
     @Override
     @Transactional
     public void delete(Long providerId) {
@@ -98,6 +113,9 @@ public class AiProviderServiceImpl implements AiProviderService {
         providerMapper.deleteById((Serializable) providerId);
     }
 
+    /**
+     * 查询供应商实体，不存在时统一抛出业务异常。
+     */
     private AiProvider requireProvider(Long providerId) {
         AiProvider provider = providerMapper.selectById(providerId);
         if (provider == null) {
@@ -122,11 +140,17 @@ public class AiProviderServiceImpl implements AiProviderService {
         );
     }
 
+    /**
+     * API Key 加密占位方法，后续接入 KMS 或本地加密组件时集中替换。
+     */
     private String encryptApiKey(String apiKey) {
         return apiKey;
     }
 
     @SuppressWarnings("unused")
+    /**
+     * API Key 解密占位方法，保留给运行时调用真实密钥使用。
+     */
     private String decryptApiKey(String apiKeyCipher) {
         return apiKeyCipher;
     }
@@ -139,6 +163,9 @@ public class AiProviderServiceImpl implements AiProviderService {
         return sort == null ? 0 : sort;
     }
 
+    /**
+     * 额外请求头和请求体扩展默认落空对象，便于后续 JSON 合并。
+     */
     private String defaultJson(String value) {
         return hasText(value) ? value : DEFAULT_JSON;
     }

@@ -18,6 +18,9 @@ public class PermissionController {
         this.authService = authService;
     }
 
+    /**
+     * 查询系统内可配置的权限标识列表。
+     */
     @GetMapping
     public ApiResponse<List<PermissionItem>> listPermissions() {
         return ApiResponse.success(authService.listPermissions());

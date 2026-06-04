@@ -84,6 +84,9 @@ public class ChatServiceImpl implements ChatService {
         this.streamExecutor = streamExecutor;
     }
 
+    /**
+     * 创建 SSE 通道并异步执行模型流式调用，调用方可立即拿到响应连接。
+     */
     @Override
     public SseEmitter stream(Long userId, Long conversationId, Long modelId, String agentKey, String prompt, boolean thinkingEnabled) {
         String normalizedPrompt = requirePrompt(prompt);
@@ -100,6 +103,7 @@ public class ChatServiceImpl implements ChatService {
         if (connected) {
             streamExecutor.execute(() -> streamLlm(emitter, runtimeConfig, normalizedPrompt, assistantMessage, thinkingEnabled));
         } else {
+            // 初始事件发送失败说明客户端已断开，直接标记助手消息失败。
             failAssistantMessage(assistantMessage, new StringBuilder(), new StringBuilder(), SSE_CONNECTION_CLOSED);
             sseEventSender.complete(emitter);
         }
@@ -110,6 +114,9 @@ public class ChatServiceImpl implements ChatService {
         return command -> Thread.ofVirtual().name("chat-stream-").start(command);
     }
 
+    /**
+     * 查询用户仍处于有效状态的会话列表。
+     */
     @Override
     public List<ConversationItem> listConversations(Long userId) {
         LambdaQueryWrapper<ChatConversation> wrapper = new LambdaQueryWrapper<ChatConversation>()
@@ -122,6 +129,9 @@ public class ChatServiceImpl implements ChatService {
                 .toList();
     }
 
+    /**
+     * 查询会话消息前先校验会话归属，避免越权读取。
+     */
     @Override
     public List<MessageItem> listMessages(Long userId, Long conversationId) {
         requireActiveConversation(userId, conversationId);
@@ -135,6 +145,9 @@ public class ChatServiceImpl implements ChatService {
                 .toList();
     }
 
+    /**
+     * 将会话标记为删除状态，保留历史消息数据。
+     */
     @Override
     @Transactional
     public void deleteConversation(Long userId, Long conversationId) {
@@ -144,6 +157,9 @@ public class ChatServiceImpl implements ChatService {
         conversationMapper.updateById(conversation);
     }
 
+    /**
+     * 更新会话标题，并刷新会话更新时间用于列表排序。
+     */
     @Override
     @Transactional
     public void renameConversation(Long userId, Long conversationId, String title) {
@@ -175,6 +191,9 @@ public class ChatServiceImpl implements ChatService {
         return modelService.requireAvailableRuntimeConfig(modelId);
     }
 
+    /**
+     * 根据 conversationId 决定创建新会话还是续写已有会话。
+     */
     private ChatConversation resolveConversation(
             Long userId,
             Long conversationId,
@@ -218,6 +237,9 @@ public class ChatServiceImpl implements ChatService {
         return conversation;
     }
 
+    /**
+     * 优先让模型生成会话标题，模型失败或返回无效标题时使用本地兜底标题。
+     */
     private String generateConversationTitle(AiModelRuntimeConfig runtimeConfig, String prompt) {
         String fallbackTitle = titleService.generateFallbackTitle(prompt);
         try {
@@ -280,6 +302,9 @@ public class ChatServiceImpl implements ChatService {
         conversationMapper.updateById(conversation);
     }
 
+    /**
+     * 调用 LLM 客户端并把统一 chunk 转成 SSE 事件，同时维护助手消息最终状态。
+     */
     private void streamLlm(
             SseEmitter emitter,
             AiModelRuntimeConfig runtimeConfig,
@@ -290,6 +315,7 @@ public class ChatServiceImpl implements ChatService {
         StringBuilder content = new StringBuilder();
         StringBuilder reasoningContent = new StringBuilder();
         AtomicBoolean finished = new AtomicBoolean(false);
+        // 只有用户开启思考且模型声明支持时，才向前端透出推理片段。
         boolean reasoningRequested = thinkingEnabled && runtimeConfig.reasoningSupported();
         try {
             LlmClient client = llmClientFactory.apply(runtimeConfig.protocolType());
@@ -329,6 +355,9 @@ public class ChatServiceImpl implements ChatService {
         );
     }
 
+    /**
+     * 处理模型流式 chunk，保证成功、失败、断线三类终态只落库一次。
+     */
     private void handleChunk(
             SseEmitter emitter,
             ChatMessage assistantMessage,
@@ -376,6 +405,9 @@ public class ChatServiceImpl implements ChatService {
         }
     }
 
+    /**
+     * 将助手消息标记为完成，并通知前端消息已结束。
+     */
     private void completeAssistantMessage(
             SseEmitter emitter,
             ChatMessage assistantMessage,
@@ -393,6 +425,9 @@ public class ChatServiceImpl implements ChatService {
         }
     }
 
+    /**
+     * 将助手消息标记为失败，并通过 SSE 发送统一错误事件。
+     */
     private void failAssistantMessageAndSendError(
             SseEmitter emitter,
             ChatMessage assistantMessage,
@@ -404,6 +439,9 @@ public class ChatServiceImpl implements ChatService {
         send(emitter, SseEventType.ERROR, new SseEventData.Error(LLM_STREAM_FAILED, resolvedMessage));
     }
 
+    /**
+     * 持久化失败状态时保留已生成的正文和推理内容，方便用户看到部分结果。
+     */
     private String failAssistantMessage(
             ChatMessage assistantMessage,
             StringBuilder content,
@@ -420,6 +458,9 @@ public class ChatServiceImpl implements ChatService {
         return resolvedMessage;
     }
 
+    /**
+     * 包装 SSE 发送结果，调用方据此判断客户端连接是否仍然可用。
+     */
     private boolean send(SseEmitter emitter, SseEventType eventType, SseEventData data) {
         try {
             sseEventSender.send(emitter, eventType, data);

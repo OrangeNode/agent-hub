@@ -31,11 +31,17 @@ public class AiModelController {
         this.modelService = modelService;
     }
 
+    /**
+     * 查询 AI 模型管理列表。
+     */
     @GetMapping
     public ApiResponse<List<AiModelItem>> listModels() {
         return ApiResponse.success(modelService.list());
     }
 
+    /**
+     * 创建 AI 模型配置。
+     */
     @PostMapping
     public ApiResponse<AiModelItem> createModel(@Valid @RequestBody CreateModelRequest request) {
         return ApiResponse.success(modelService.create(new CreateModelCommand(
@@ -53,6 +59,9 @@ public class AiModelController {
         )));
     }
 
+    /**
+     * 更新 AI 模型配置。
+     */
     @PutMapping("/{modelId}")
     public ApiResponse<AiModelItem> updateModel(
             @PathVariable @Positive(message = "模型必须为正数") Long modelId,
@@ -73,6 +82,9 @@ public class AiModelController {
         )));
     }
 
+    /**
+     * 删除 AI 模型配置。
+     */
     @DeleteMapping("/{modelId}")
     public ApiResponse<Void> deleteModel(
             @PathVariable @Positive(message = "模型必须为正数") Long modelId
@@ -81,6 +93,9 @@ public class AiModelController {
         return ApiResponse.success();
     }
 
+    /**
+     * 查询当前可用于聊天调用的 AI 模型列表。
+     */
     @GetMapping("/available")
     public ApiResponse<List<AiModelItem>> listAvailableModels() {
         return ApiResponse.success(modelService.listAvailable());

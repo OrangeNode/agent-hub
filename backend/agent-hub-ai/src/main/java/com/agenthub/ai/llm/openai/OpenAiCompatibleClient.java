@@ -34,6 +34,9 @@ public class OpenAiCompatibleClient implements LlmClient {
         this.httpClient = httpClient;
     }
 
+    /**
+     * 发送 OpenAI Chat Completions 兼容协议请求，并输出统一流式 chunk。
+     */
     @Override
     public void stream(LlmStreamRequest request, Consumer<LlmStreamChunk> chunkConsumer) {
         try {
@@ -58,6 +61,9 @@ public class OpenAiCompatibleClient implements LlmClient {
         }
     }
 
+    /**
+     * 处理标准 chunk 和 think 标签拆分后的推理 chunk。
+     */
     private void emitChunk(
             LlmStreamChunk chunk,
             ThinkTagSplitter thinkTagSplitter,
@@ -73,6 +79,9 @@ public class OpenAiCompatibleClient implements LlmClient {
         }
     }
 
+    /**
+     * 解析单行 data 负载，兼容不同 OpenAI-like 服务的推理字段。
+     */
     public List<LlmStreamChunk> parseDataLine(String payload) {
         if (payload == null || payload.isBlank()) {
             return List.of();
@@ -116,6 +125,9 @@ public class OpenAiCompatibleClient implements LlmClient {
                 .build();
     }
 
+    /**
+     * 构造兼容协议请求体，推理开关同时写入常见扩展字段。
+     */
     private Map<String, Object> buildRequestBody(LlmStreamRequest request) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", request.model());
@@ -129,6 +141,9 @@ public class OpenAiCompatibleClient implements LlmClient {
         return body;
     }
 
+    /**
+     * 普通回答内容可能内嵌 think 标签，需要在解析阶段拆成推理和回答片段。
+     */
     private void addAnswerChunks(List<LlmStreamChunk> chunks, JsonNode node) {
         if (node == null || node.isMissingNode() || node.isNull() || node.asText().isEmpty()) {
             return;
@@ -168,6 +183,9 @@ public class OpenAiCompatibleClient implements LlmClient {
         return null;
     }
 
+    /**
+     * 兼容传入根地址或 /v1 地址两种配置方式。
+     */
     private String endpoint(String baseUrl, String v1Path) {
         String normalizedBaseUrl = trimTrailingSlash(baseUrl);
         if (normalizedBaseUrl.endsWith("/v1")) {
@@ -192,6 +210,9 @@ public class OpenAiCompatibleClient implements LlmClient {
         private final StringBuilder buffer = new StringBuilder();
         private boolean reasoning;
 
+        /**
+         * 接收增量文本并尽可能拆出完整的推理或回答片段。
+         */
         private void accept(String content, Consumer<LlmStreamChunk> chunkConsumer) {
             if (content == null || content.isEmpty()) {
                 return;
@@ -200,6 +221,9 @@ public class OpenAiCompatibleClient implements LlmClient {
             drain(chunkConsumer, false);
         }
 
+        /**
+         * 流结束时输出缓冲区内未闭合标签前后的剩余文本。
+         */
         private void flush(Consumer<LlmStreamChunk> chunkConsumer) {
             drain(chunkConsumer, true);
         }
@@ -240,6 +264,9 @@ public class OpenAiCompatibleClient implements LlmClient {
             return emitBufferedText(chunkConsumer, flush, THINK_CLOSE_TAG.length() - 1, true);
         }
 
+        /**
+         * 保留标签长度减一的尾部文本，避免跨 chunk 的标签被提前输出。
+         */
         private boolean emitBufferedText(
                 Consumer<LlmStreamChunk> chunkConsumer,
                 boolean flush,

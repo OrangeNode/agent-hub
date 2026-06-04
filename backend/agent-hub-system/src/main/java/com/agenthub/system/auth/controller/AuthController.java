@@ -29,6 +29,9 @@ public class AuthController {
         this.jwtService = jwtService;
     }
 
+    /**
+     * 用户登录接口，认证成功后签发 JWT 并返回用户画像。
+     */
     @PostMapping("/login")
     public ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
         LoginResult result = authService.login(new LoginCommand(request.username(), request.password()));
@@ -42,6 +45,9 @@ public class AuthController {
         return ApiResponse.success(new LoginResponse(token, profile));
     }
 
+    /**
+     * 查询当前登录用户信息。
+     */
     @GetMapping("/me")
     public ApiResponse<UserProfile> me(Authentication authentication) {
         LoginUser loginUser = (LoginUser) authentication.getPrincipal();

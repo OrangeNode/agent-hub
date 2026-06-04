@@ -227,11 +227,12 @@ class AttachmentServiceImplTest {
                 readyAttachment(1L, 7L, null, null, OffsetDateTime.now().plusDays(1)),
                 readyAttachment(2L, 7L, null, null, OffsetDateTime.now().plusDays(1))
         ));
+        when(mapper.update(any(ChatAttachment.class), any())).thenReturn(1);
         ArgumentCaptor<ChatAttachment> attachmentCaptor = ArgumentCaptor.forClass(ChatAttachment.class);
 
         service.bindToMessage(7L, 200L, 300L, attachmentIds);
 
-        verify(mapper, org.mockito.Mockito.times(2)).updateById(attachmentCaptor.capture());
+        verify(mapper, org.mockito.Mockito.times(2)).update(attachmentCaptor.capture(), any());
         assertThat(attachmentCaptor.getAllValues())
                 .extracting(ChatAttachment::getId)
                 .containsExactly(1L, 2L);
@@ -258,6 +259,25 @@ class AttachmentServiceImplTest {
                 .extracting("errorCode")
                 .isEqualTo(ErrorCode.BAD_REQUEST);
         verify(mapper, never()).updateById(any(ChatAttachment.class));
+    }
+
+    @Test
+    void shouldRejectWhenConditionalBindUpdateFails() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        when(mapper.selectByIds(List.of(1L, 2L))).thenReturn(List.of(
+                readyAttachment(1L, 7L, null, null, OffsetDateTime.now().plusDays(1)),
+                readyAttachment(2L, 7L, null, null, OffsetDateTime.now().plusDays(1))
+        ));
+        when(mapper.update(any(ChatAttachment.class), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> service.bindToMessage(7L, 200L, 300L, List.of(1L, 2L)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("图片上传失败，请重试")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(mapper, org.mockito.Mockito.times(1)).update(any(ChatAttachment.class), any());
     }
 
     @Test

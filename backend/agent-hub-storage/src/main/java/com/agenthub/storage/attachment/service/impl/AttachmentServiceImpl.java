@@ -12,6 +12,7 @@ import com.agenthub.storage.config.StorageProperties;
 import com.agenthub.storage.object.ObjectMetadata;
 import com.agenthub.storage.object.ObjectStorageClient;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -181,14 +182,23 @@ public class AttachmentServiceImpl implements AttachmentService {
             validateBindableImage(userId, attachment);
             attachments.add(attachment);
         }
-        attachments.forEach(attachment -> {
+        for (ChatAttachment attachment : attachments) {
             ChatAttachment updatedAttachment = new ChatAttachment();
             updatedAttachment.setId(attachment.getId());
             updatedAttachment.setConversationId(conversationId);
             updatedAttachment.setMessageId(messageId);
             updatedAttachment.setUpdatedAt(now);
-            chatAttachmentMapper.updateById(updatedAttachment);
-        });
+            LambdaUpdateWrapper<ChatAttachment> wrapper = new LambdaUpdateWrapper<ChatAttachment>()
+                    .eq(ChatAttachment::getId, attachment.getId())
+                    .eq(ChatAttachment::getUserId, userId)
+                    .eq(ChatAttachment::getStatus, STATUS_READY)
+                    .eq(ChatAttachment::getAttachmentType, IMAGE_TYPE)
+                    .isNull(ChatAttachment::getMessageId)
+                    .gt(ChatAttachment::getExpiresAt, now);
+            if (chatAttachmentMapper.update(updatedAttachment, wrapper) != 1) {
+                throw uploadFailedException();
+            }
+        }
     }
 
     @Override

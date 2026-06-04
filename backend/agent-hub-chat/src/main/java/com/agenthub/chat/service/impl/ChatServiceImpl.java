@@ -37,6 +37,7 @@ import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @Service
@@ -59,6 +60,7 @@ public class ChatServiceImpl implements ChatService {
     private final ChatMessageMapper messageMapper;
     private final AiModelService modelService;
     private final ConversationTitleService titleService;
+    private final TransactionTemplate transactionTemplate;
     private final AttachmentService attachmentService;
     private final SseEventSender sseEventSender;
     private final Function<String, LlmClient> llmClientFactory;
@@ -70,9 +72,10 @@ public class ChatServiceImpl implements ChatService {
             ChatMessageMapper messageMapper,
             AiModelService modelService,
             ConversationTitleService titleService,
+            TransactionTemplate transactionTemplate,
             AttachmentService attachmentService
     ) {
-        this(conversationMapper, messageMapper, modelService, titleService, new SseEventSender(),
+        this(conversationMapper, messageMapper, modelService, titleService, transactionTemplate, new SseEventSender(),
                 attachmentService, LlmClientFactory::create, defaultStreamExecutor());
     }
 
@@ -81,6 +84,7 @@ public class ChatServiceImpl implements ChatService {
             ChatMessageMapper messageMapper,
             AiModelService modelService,
             ConversationTitleService titleService,
+            TransactionTemplate transactionTemplate,
             SseEventSender sseEventSender,
             AttachmentService attachmentService,
             Function<String, LlmClient> llmClientFactory,
@@ -90,6 +94,7 @@ public class ChatServiceImpl implements ChatService {
         this.messageMapper = messageMapper;
         this.modelService = modelService;
         this.titleService = titleService;
+        this.transactionTemplate = transactionTemplate;
         this.attachmentService = attachmentService;
         this.sseEventSender = sseEventSender;
         this.llmClientFactory = llmClientFactory;
@@ -112,6 +117,44 @@ public class ChatServiceImpl implements ChatService {
     ) {
         String normalizedPrompt = requirePrompt(prompt);
         AiModelRuntimeConfig runtimeConfig = requireRuntimeConfig(modelId);
+        PreparedChat preparedChat = transactionTemplate.execute(status -> prepareChatRecords(
+                userId,
+                conversationId,
+                agentKey,
+                normalizedPrompt,
+                runtimeConfig,
+                attachmentIds,
+                reuseAttachmentIds
+        ));
+        if (preparedChat == null) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "聊天记录准备失败");
+        }
+
+        SseEmitter emitter = new SseEmitter(SSE_TIMEOUT);
+        boolean connected = send(emitter, SseEventType.CONVERSATION,
+                new SseEventData.Conversation(preparedChat.conversation().getId(), preparedChat.conversation().getTitle()))
+                && send(emitter, SseEventType.MESSAGE,
+                new SseEventData.Message(preparedChat.assistantMessage().getId(), ROLE_ASSISTANT));
+        if (connected) {
+            streamExecutor.execute(() -> streamLlm(emitter, runtimeConfig, normalizedPrompt, preparedChat.images(),
+                    preparedChat.assistantMessage(), thinkingEnabled));
+        } else {
+            // 初始事件发送失败说明客户端已断开，直接标记助手消息失败。
+            failAssistantMessage(preparedChat.assistantMessage(), new StringBuilder(), new StringBuilder(), SSE_CONNECTION_CLOSED);
+            sseEventSender.complete(emitter);
+        }
+        return emitter;
+    }
+
+    private PreparedChat prepareChatRecords(
+            Long userId,
+            Long conversationId,
+            String agentKey,
+            String normalizedPrompt,
+            AiModelRuntimeConfig runtimeConfig,
+            List<Long> attachmentIds,
+            List<Long> reuseAttachmentIds
+    ) {
         ChatConversation conversation = resolveConversation(userId, conversationId, agentKey, runtimeConfig, normalizedPrompt);
         int imageTokenEstimate = runtimeConfig.imageTokenEstimate() == null
                 ? DEFAULT_IMAGE_TOKEN_ESTIMATE
@@ -133,24 +176,19 @@ public class ChatServiceImpl implements ChatService {
         attachmentService.bindToMessage(userId, conversation.getId(), userMessage.getId(), attachmentIds);
         ChatMessage assistantMessage = saveAssistantMessage(userId, conversation.getId(), runtimeConfig);
         touchConversation(conversation);
-
-        SseEmitter emitter = new SseEmitter(SSE_TIMEOUT);
-        boolean connected = send(emitter, SseEventType.CONVERSATION,
-                new SseEventData.Conversation(conversation.getId(), conversation.getTitle()))
-                && send(emitter, SseEventType.MESSAGE, new SseEventData.Message(assistantMessage.getId(), ROLE_ASSISTANT));
-        if (connected) {
-            streamExecutor.execute(() -> streamLlm(emitter, runtimeConfig, normalizedPrompt, images,
-                    assistantMessage, thinkingEnabled));
-        } else {
-            // 初始事件发送失败说明客户端已断开，直接标记助手消息失败。
-            failAssistantMessage(assistantMessage, new StringBuilder(), new StringBuilder(), SSE_CONNECTION_CLOSED);
-            sseEventSender.complete(emitter);
-        }
-        return emitter;
+        return new PreparedChat(conversation, userMessage, assistantMessage, images);
     }
 
     private static Executor defaultStreamExecutor() {
         return command -> Thread.ofVirtual().name("chat-stream-").start(command);
+    }
+
+    private record PreparedChat(
+            ChatConversation conversation,
+            ChatMessage userMessage,
+            ChatMessage assistantMessage,
+            List<AttachmentReference> images
+    ) {
     }
 
     private Long resolveAutoReuseMessageId(

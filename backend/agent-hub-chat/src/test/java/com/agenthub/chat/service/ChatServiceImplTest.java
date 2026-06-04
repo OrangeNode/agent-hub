@@ -33,6 +33,9 @@ import java.util.List;
 import java.util.concurrent.Executor;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 class ChatServiceImplTest {
@@ -54,6 +57,7 @@ class ChatServiceImplTest {
                 messageMapper,
                 modelService,
                 new ConversationTitleService(),
+                transactionTemplate(),
                 sender,
                 mock(AttachmentService.class),
                 protocolType -> llmClient,
@@ -216,6 +220,7 @@ class ChatServiceImplTest {
                 messageMapper,
                 modelService,
                 new ConversationTitleService(),
+                transactionTemplate(),
                 sender,
                 mock(AttachmentService.class),
                 protocolType -> throwingClient,
@@ -279,6 +284,7 @@ class ChatServiceImplTest {
                 messageMapper,
                 modelService,
                 new ConversationTitleService(),
+                transactionTemplate(),
                 sender,
                 mock(AttachmentService.class),
                 protocolType -> throwingClient,
@@ -339,6 +345,7 @@ class ChatServiceImplTest {
                 messageMapper,
                 modelService,
                 new ConversationTitleService(),
+                transactionTemplate(),
                 sender,
                 mock(AttachmentService.class),
                 protocolType -> llmClient,
@@ -488,7 +495,8 @@ class ChatServiceImplTest {
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.done()));
-        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, sender,
                 attachmentService, llmClient);
         when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
@@ -510,6 +518,63 @@ class ChatServiceImplTest {
                 LlmContentPart.text("分析图片"),
                 LlmContentPart.imageUrl("https://example.com/cat.png")
         );
+    }
+
+    @Test
+    void shouldCommitPreparedRecordsBeforeSendingSseEvents() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        List<String> events = new ArrayList<>();
+        RecordingSseEventSender sender = new RecordingSseEventSender(events);
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(events),
+                sender,
+                mock(AttachmentService.class),
+                protocolType -> new RecordingLlmClient(List.of(LlmStreamChunk.done())),
+                Runnable::run
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+
+        service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
+
+        assertThat(events).contains("tx:commit", "sse:CONVERSATION", "sse:MESSAGE");
+        assertThat(events.indexOf("tx:commit")).isLessThan(events.indexOf("sse:CONVERSATION"));
+    }
+
+    @Test
+    void shouldNotStartLlmOrSaveAssistantWhenBindingAttachmentFails() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.done()));
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, sender,
+                attachmentService, llmClient);
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(1L), List.of(), 1500, null))
+                .thenReturn(List.of());
+        org.mockito.Mockito.doThrow(new BusinessException(ErrorCode.BAD_REQUEST, "图片上传失败，请重试"))
+                .when(attachmentService)
+                .bindToMessage(7L, 100L, 1L, List.of(1L));
+
+        assertThatThrownBy(() -> service.stream(7L, 100L, 10L, null, "继续", false, List.of(1L), List.of()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("图片上传失败，请重试")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(messageMapper, org.mockito.Mockito.times(1)).insert(any(ChatMessage.class));
+        assertThat(llmClient.lastRequest).isNull();
+        assertThat(sender.eventTypes).isEmpty();
     }
 
     @Test
@@ -555,11 +620,20 @@ class ChatServiceImplTest {
                 messageMapper,
                 modelService,
                 new ConversationTitleService(),
+                transactionTemplate(),
                 sender,
                 attachmentService,
                 protocolType -> llmClient,
                 Runnable::run
         );
+    }
+
+    private TransactionTemplate transactionTemplate() {
+        return transactionTemplate(null);
+    }
+
+    private TransactionTemplate transactionTemplate(List<String> events) {
+        return new TransactionTemplate(new RecordingTransactionManager(events));
     }
 
     private ChatConversation conversation(Long id, Long userId, String status) {
@@ -683,12 +757,24 @@ class ChatServiceImplTest {
 
         private final List<SseEventType> eventTypes = new ArrayList<>();
         private final List<SseEventData> eventData = new ArrayList<>();
+        private final List<String> orderedEvents;
         private boolean completed;
+
+        private RecordingSseEventSender() {
+            this(null);
+        }
+
+        private RecordingSseEventSender(List<String> orderedEvents) {
+            this.orderedEvents = orderedEvents;
+        }
 
         @Override
         public void send(SseEmitter emitter, SseEventType eventType, SseEventData data) throws IOException {
             eventTypes.add(eventType);
             eventData.add(data);
+            if (orderedEvents != null) {
+                orderedEvents.add("sse:" + eventType.name());
+            }
         }
 
         @Override
@@ -706,6 +792,38 @@ class ChatServiceImplTest {
                     .map(type::cast)
                     .findFirst()
                     .orElseThrow();
+        }
+    }
+
+    private static class RecordingTransactionManager extends AbstractPlatformTransactionManager {
+
+        private final List<String> orderedEvents;
+
+        private RecordingTransactionManager(List<String> orderedEvents) {
+            this.orderedEvents = orderedEvents;
+        }
+
+        @Override
+        protected Object doGetTransaction() {
+            return new Object();
+        }
+
+        @Override
+        protected void doBegin(Object transaction, org.springframework.transaction.TransactionDefinition definition) {
+        }
+
+        @Override
+        protected void doCommit(DefaultTransactionStatus status) {
+            if (orderedEvents != null) {
+                orderedEvents.add("tx:commit");
+            }
+        }
+
+        @Override
+        protected void doRollback(DefaultTransactionStatus status) {
+            if (orderedEvents != null) {
+                orderedEvents.add("tx:rollback");
+            }
         }
     }
 

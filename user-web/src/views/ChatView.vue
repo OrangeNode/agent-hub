@@ -135,19 +135,45 @@
       <section v-if="!hasMessages" class="empty-state">
         <h1>准备好了，随时开始</h1>
 
-        <div class="file-chips" v-if="uploadedFiles.length">
-          <span v-for="(file, idx) in uploadedFiles" :key="idx" class="file-chip">
-            {{ file.name }}
-            <button type="button" class="chip-remove" @click="removeFile(idx)">&times;</button>
-          </span>
+        <div
+          v-if="pendingImages.length"
+          class="pending-image-list"
+          :class="{ single: pendingImages.length === 1 }"
+        >
+          <div
+            v-for="image in pendingImages"
+            :key="image.localId"
+            class="pending-image-item"
+          >
+            <button type="button" class="image-preview-button" @click="imagePreviewUrl = image.previewUrl">
+              <img :src="image.previewUrl" :alt="image.file.name" />
+              <span v-if="image.status === 'uploading'" class="image-progress">{{ image.progress }}%</span>
+              <span v-if="image.status === 'failed'" class="image-error">上传失败</span>
+            </button>
+            <button
+              type="button"
+              class="image-remove-button"
+              aria-label="移除图片"
+              @click.stop="removePendingImage(image.localId)"
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         <div class="landing-composer" :class="{ 'is-multiline': isMultiline }">
-          <button type="button" class="round-action composer-upload" aria-label="上传文件" @click="triggerFileUpload">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-          </button>
+          <n-dropdown
+            trigger="click"
+            placement="top-start"
+            :options="uploadMenuOptions"
+            @select="handleUploadMenuSelect"
+          >
+            <button type="button" class="round-action composer-upload" aria-label="添加附件" @click="handleUploadButtonClick">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            </button>
+          </n-dropdown>
           <span v-if="activeAgentName !== '通用 Agent'" class="agent-tag composer-agent">
             {{ activeAgentName }}
             <button type="button" class="agent-tag-close" @click="activeAgentName = '通用 Agent'">&times;</button>
@@ -167,21 +193,12 @@
             @select="selectThinkingMode"
             @configure="thinkingConfigOpen = true"
           />
-          <button type="button" class="send-orb composer-send" :disabled="streaming" @click="handleSend" aria-label="发送">
+          <button type="button" class="send-orb composer-send" :disabled="sendDisabled" @click="handleSend" aria-label="发送">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M5 12h14M13 6l6 6-6 6" />
             </svg>
           </button>
         </div>
-
-        <input
-          ref="fileInputRef"
-          type="file"
-          multiple
-          accept="image/*,.doc,.docx"
-          style="display: none"
-          @change="handleFileSelect"
-        />
       </section>
 
       <section v-else class="conversation-view" aria-label="聊天消息">
@@ -262,18 +279,44 @@
         </div>
 
         <footer class="conversation-composer">
-          <div class="file-chips" v-if="uploadedFiles.length">
-            <span v-for="(file, idx) in uploadedFiles" :key="idx" class="file-chip">
-              {{ file.name }}
-              <button type="button" class="chip-remove" @click="removeFile(idx)">&times;</button>
-            </span>
+          <div
+            v-if="pendingImages.length"
+            class="pending-image-list"
+            :class="{ single: pendingImages.length === 1 }"
+          >
+            <div
+              v-for="image in pendingImages"
+              :key="image.localId"
+              class="pending-image-item"
+            >
+              <button type="button" class="image-preview-button" @click="imagePreviewUrl = image.previewUrl">
+                <img :src="image.previewUrl" :alt="image.file.name" />
+                <span v-if="image.status === 'uploading'" class="image-progress">{{ image.progress }}%</span>
+                <span v-if="image.status === 'failed'" class="image-error">上传失败</span>
+              </button>
+              <button
+                type="button"
+                class="image-remove-button"
+                aria-label="移除图片"
+                @click.stop="removePendingImage(image.localId)"
+              >
+                ×
+              </button>
+            </div>
           </div>
           <div class="landing-composer compact" :class="{ 'is-multiline': isMultiline }">
-            <button type="button" class="round-action composer-upload" aria-label="上传文件" @click="triggerFileUpload">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 5v14M5 12h14" />
-              </svg>
-            </button>
+            <n-dropdown
+              trigger="click"
+              placement="top-start"
+              :options="uploadMenuOptions"
+              @select="handleUploadMenuSelect"
+            >
+              <button type="button" class="round-action composer-upload" aria-label="添加附件" @click="handleUploadButtonClick">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+              </button>
+            </n-dropdown>
             <span v-if="activeAgentName !== '通用 Agent'" class="agent-tag composer-agent">
               {{ activeAgentName }}
               <button type="button" class="agent-tag-close" @click="activeAgentName = '通用 Agent'">&times;</button>
@@ -293,7 +336,7 @@
               @select="selectThinkingMode"
               @configure="thinkingConfigOpen = true"
             />
-            <button type="button" class="send-orb composer-send" :disabled="streaming" @click="handleSend" aria-label="发送">
+            <button type="button" class="send-orb composer-send" :disabled="sendDisabled" @click="handleSend" aria-label="发送">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M5 12h14M13 6l6 6-6 6" />
               </svg>
@@ -302,6 +345,15 @@
           <p>Agent Hub 也可能会犯错。请核查重要信息。</p>
         </footer>
       </section>
+
+      <input
+        ref="imageInputRef"
+        type="file"
+        accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
+        multiple
+        hidden
+        @change="handleImageSelected"
+      />
     </main>
 
     <aside v-if="workPanelOpen" class="work-panel" aria-label="工作面板">
@@ -362,6 +414,17 @@
       </section>
     </n-modal>
 
+    <n-modal
+      :show="!!imagePreviewUrl"
+      to="body"
+      transform-origin="center"
+      @update:show="handleImagePreviewVisibleChange"
+    >
+      <div class="image-preview-modal">
+        <img v-if="imagePreviewUrl" :src="imagePreviewUrl" alt="图片预览" />
+      </div>
+    </n-modal>
+
     <n-modal v-model:show="thinkingConfigOpen" preset="card" class="thinking-config-modal" title="思考时长">
       <div class="config-row">
         <span>模型</span>
@@ -384,9 +447,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { useMessage, NButton, NInput, NModal, NSelect } from 'naive-ui'
+import { useMessage, NButton, NDropdown, NInput, NModal, NSelect } from 'naive-ui'
 
 import {
+  confirmImageUpload,
+  createImageUploadUrl,
   deleteConversation,
   fetchAvailableModels,
   fetchConversationMessages,
@@ -398,6 +463,7 @@ import type { AvailableModelRecord, ChatMessageRecord, ConversationRecord } from
 import { useAuthStore } from '../stores/auth'
 import { renderAssistantMarkdown } from './message-render.helpers'
 import { buildReasoningStatusText } from './reasoning-timer.helpers'
+import { validateImageCount, validateImageFile } from './chat-attachments.helpers'
 import ThinkingModeSelect from './ThinkingModeSelect.vue'
 
 type ChatRole = 'user' | 'assistant'
@@ -427,9 +493,14 @@ interface AgentOption {
   description: string
 }
 
-interface UploadedFile {
-  name: string
-  size: number
+interface PendingImage {
+  localId: string
+  file: File
+  previewUrl: string
+  attachmentId?: number
+  progress: number
+  status: 'uploading' | 'ready' | 'failed'
+  error?: string
 }
 
 const router = useRouter()
@@ -451,8 +522,9 @@ const openConversationMenuId = ref<number | null>(null)
 const conversationMenuPosition = ref({ top: 0, left: 0 })
 const pendingDeleteConversationId = ref<number | null>(null)
 const streamControllerRef = ref<AbortController | null>(null)
-const fileInputRef = ref<HTMLInputElement | null>(null)
-const uploadedFiles = ref<UploadedFile[]>([])
+const imageInputRef = ref<HTMLInputElement | null>(null)
+const pendingImages = ref<PendingImage[]>([])
+const imagePreviewUrl = ref<string | null>(null)
 const selectedModel = ref<number | null>(null)
 const availableModels = ref<AvailableModelRecord[]>([])
 const reasoningNow = ref(Date.now())
@@ -480,6 +552,16 @@ const selectedModelLabel = computed(() => {
 const selectedModelItem = computed(() =>
   availableModels.value.find((item) => item.modelId === selectedModel.value) ?? null
 )
+const uploadMenuOptions = computed(() => [
+  {
+    key: 'upload-image',
+    label: '上传照片和文件',
+    disabled: !selectedModelItem.value?.imageInputSupported
+  }
+])
+const hasUploadingImage = computed(() => pendingImages.value.some((image) => image.status === 'uploading'))
+const hasFailedImage = computed(() => pendingImages.value.some((image) => image.status === 'failed'))
+const sendDisabled = computed(() => streaming.value || hasUploadingImage.value || hasFailedImage.value)
 const firstReasoningModel = computed(() => availableModels.value.find((item) => item.reasoningSupported) ?? null)
 const activeMenuConversation = computed(() =>
   conversations.value.find((item) => item.id === openConversationMenuId.value) ?? null
@@ -578,14 +660,14 @@ function createConversation() {
   activeConversationId.value = null
   workPanelOpen.value = false
   prompt.value = ''
-  uploadedFiles.value = []
+  clearPendingImages()
 }
 
 async function switchConversation(conversationId: number) {
   activeConversationId.value = conversationId
   openConversationMenuId.value = null
   prompt.value = ''
-  uploadedFiles.value = []
+  clearPendingImages()
   await loadMessages(conversationId)
 }
 
@@ -705,33 +787,143 @@ function selectAgent(agent: AgentOption) {
   createConversation()
 }
 
-function triggerFileUpload() {
-  fileInputRef.value?.click()
+function handleUploadButtonClick() {
+  if (!selectedModelItem.value?.imageInputSupported) {
+    message.warning('当前模型不支持图片输入')
+  }
 }
 
-function handleFileSelect(event: Event) {
+function handleUploadMenuSelect(key: string | number) {
+  if (key !== 'upload-image') {
+    return
+  }
+
+  if (!selectedModelItem.value?.imageInputSupported) {
+    message.warning('当前模型不支持图片输入')
+    return
+  }
+
+  imageInputRef.value?.click()
+}
+
+function handleImageSelected(event: Event) {
   const input = event.target as HTMLInputElement
-  if (!input.files) return
+  const files = Array.from(input.files ?? [])
 
-  const allowedImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/bmp']
-  const allowedDocTypes = [
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-  ]
+  if (!files.length) {
+    return
+  }
 
-  for (const file of Array.from(input.files)) {
-    if (allowedImageTypes.includes(file.type) || allowedDocTypes.includes(file.type)) {
-      uploadedFiles.value.push({ name: file.name, size: file.size })
-    } else {
-      message.warning(`不支持的文件类型: ${file.name}，请上传图片或 Word 文件`)
+  if (!selectedModelItem.value?.imageInputSupported) {
+    message.warning('当前模型不支持图片输入')
+    input.value = ''
+    return
+  }
+
+  const countError = validateImageCount(pendingImages.value.length, files.length)
+  if (countError) {
+    message.warning(countError)
+    input.value = ''
+    return
+  }
+
+  for (const file of files) {
+    const fileError = validateImageFile(file)
+    if (fileError) {
+      message.warning(fileError)
+      continue
     }
+
+    const item: PendingImage = {
+      localId: createLocalImageId(),
+      file,
+      previewUrl: URL.createObjectURL(file),
+      progress: 0,
+      status: 'uploading'
+    }
+    pendingImages.value.push(item)
+    void uploadImage(item)
   }
 
   input.value = ''
 }
 
-function removeFile(index: number) {
-  uploadedFiles.value.splice(index, 1)
+function createLocalImageId() {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+async function uploadImage(item: PendingImage) {
+  try {
+    const signed = await createImageUploadUrl(item.file.name, item.file.type, item.file.size)
+    item.attachmentId = signed.attachmentId
+    await uploadImageFile(signed.uploadUrl, signed.headers, item.file, (progress) => {
+      item.progress = progress
+    })
+    await confirmImageUpload(signed.attachmentId)
+    item.status = 'ready'
+    item.progress = 100
+  } catch {
+    item.status = 'failed'
+    item.error = '图片上传失败，请重试'
+  }
+}
+
+function uploadImageFile(uploadUrl: string, headers: Record<string, string>, file: File, onProgress: (progress: number) => void) {
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', uploadUrl)
+
+    for (const [key, value] of Object.entries(headers)) {
+      xhr.setRequestHeader(key, value)
+    }
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable || event.total <= 0) {
+        return
+      }
+      onProgress(Math.min(99, Math.max(1, Math.round((event.loaded / event.total) * 100))))
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve()
+        return
+      }
+      reject(new Error(`图片上传失败：${xhr.status}`))
+    }
+    xhr.onerror = () => reject(new Error('图片上传失败'))
+    xhr.send(file)
+  })
+}
+
+function removePendingImage(localId: string) {
+  const image = pendingImages.value.find((item) => item.localId === localId)
+  if (!image) {
+    return
+  }
+
+  revokePendingImageUrl(image)
+  pendingImages.value = pendingImages.value.filter((item) => item.localId !== localId)
+}
+
+function clearPendingImages() {
+  for (const image of pendingImages.value) {
+    revokePendingImageUrl(image)
+  }
+  pendingImages.value = []
+  imagePreviewUrl.value = null
+}
+
+function revokePendingImageUrl(image: PendingImage) {
+  if (imagePreviewUrl.value === image.previewUrl) {
+    imagePreviewUrl.value = null
+  }
+  URL.revokeObjectURL(image.previewUrl)
+}
+
+function handleImagePreviewVisibleChange(show: boolean) {
+  if (!show) {
+    imagePreviewUrl.value = null
+  }
 }
 
 function copyMessage(content: string) {
@@ -811,7 +1003,21 @@ function closeStream() {
 function handleSend() {
   const trimmedPrompt = prompt.value.trim()
 
-  if (!trimmedPrompt || streaming.value) {
+  if (streaming.value) {
+    return
+  }
+
+  if (hasUploadingImage.value) {
+    message.warning('图片仍在上传中')
+    return
+  }
+
+  if (hasFailedImage.value) {
+    message.warning('请先移除上传失败的图片')
+    return
+  }
+
+  if (!trimmedPrompt) {
     return
   }
 
@@ -856,8 +1062,11 @@ function handleSend() {
 
   const currentPrompt = trimmedPrompt
   const currentThinkingEnabled = thinkingMode.value === 'thinking'
+  const currentAttachmentIds = pendingImages.value
+    .filter((image) => image.status === 'ready' && typeof image.attachmentId === 'number')
+    .map((image) => image.attachmentId as number)
   prompt.value = ''
-  uploadedFiles.value = []
+  clearPendingImages()
   streaming.value = true
 
   streamControllerRef.value = openChatStream(
@@ -867,7 +1076,8 @@ function handleSend() {
       conversationId: conversationId > 0 ? conversationId : null,
       modelId: selectedModel.value,
       agentKey: agentOptions.some((agent) => agent.name === activeAgentName.value) ? activeAgentName.value : null,
-      thinkingEnabled: currentThinkingEnabled
+      thinkingEnabled: currentThinkingEnabled,
+      attachmentIds: currentAttachmentIds
     },
     {
       onConversation: (data) => {
@@ -947,6 +1157,7 @@ function handleLogout() {
 
 onBeforeUnmount(() => {
   closeStream()
+  clearPendingImages()
   if (reasoningTimer) {
     window.clearInterval(reasoningTimer)
     reasoningTimer = null
@@ -1019,6 +1230,8 @@ onMounted(() => {
 .round-action,
 .send-orb,
 .message-tools button,
+.image-preview-button,
+.image-remove-button,
 .agent-option,
 .mode-option {
   border: 0;
@@ -1466,45 +1679,94 @@ svg {
   height: 18px;
 }
 
-.file-chips {
+.pending-image-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: 8px;
   width: min(100%, var(--chat-column-width));
+  margin-bottom: 10px;
 }
 
-.file-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: #eff6ff;
-  color: #2563eb;
-  font-size: 12px;
-  max-width: 200px;
+.pending-image-item {
+  position: relative;
+  width: 56px;
+  height: 56px;
+}
+
+.pending-image-list.single .pending-image-item {
+  width: 148px;
+  height: 148px;
+}
+
+.image-preview-button {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border-radius: 8px;
+  background: #f3f4f6;
+  cursor: zoom-in;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.chip-remove {
+.image-preview-button img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.image-remove-button {
+  position: absolute;
+  top: -7px;
+  right: -7px;
   display: grid;
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   place-items: center;
-  border: 0;
+  border: 1px solid #ffffff;
   border-radius: 999px;
-  background: transparent;
-  color: #2563eb;
-  font-size: 14px;
+  background: #111827;
+  color: #ffffff;
   cursor: pointer;
+  font-size: 16px;
   line-height: 1;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.2);
 }
 
-.chip-remove:hover {
-  background: #dbeafe;
+.image-progress,
+.image-error {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(17, 24, 39, 0.58);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.image-error {
+  background: rgba(185, 28, 28, 0.72);
+}
+
+.image-preview-modal {
+  display: grid;
+  place-items: center;
+  max-width: min(92vw, 980px);
+  max-height: 86vh;
+}
+
+.image-preview-modal img {
+  display: block;
+  max-width: min(92vw, 980px);
+  max-height: 86vh;
+  border-radius: 8px;
+  object-fit: contain;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.3);
 }
 
 .agent-tag {

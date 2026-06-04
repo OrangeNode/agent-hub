@@ -1,6 +1,7 @@
 package com.agenthub.ai.llm;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.agenthub.ai.llm.openai.OpenAiCompatibleClient;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -162,6 +163,45 @@ class OpenAiCompatibleClientTest {
                 .isEqualTo("https://example.com/cat.png");
         assertThat(bodyText).contains("\"type\":\"image_url\"");
         assertThat(bodyText).contains("https://example.com/cat.png");
+    }
+
+    @Test
+    void shouldRejectInvalidContentParts() {
+        assertThatThrownBy(() -> LlmContentPart.text(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("文本内容不能为空");
+        assertThatThrownBy(() -> LlmContentPart.imageUrl(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("图片地址不能为空");
+        assertThatThrownBy(() -> LlmContentPart.imageUrl(" "))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("图片地址不能为空");
+        assertThatThrownBy(() -> new LlmContentPart(null, null, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("不支持的内容片段类型");
+        assertThatThrownBy(() -> new LlmContentPart("audio", null, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("不支持的内容片段类型");
+    }
+
+    @Test
+    void shouldKeepTextOnlyMessageContentAsString() {
+        CapturingOpenAiClient capturingClient = new CapturingOpenAiClient();
+        LlmStreamRequest request = new LlmStreamRequest(
+                "http://localhost:3000/v1",
+                "test-api-key",
+                null,
+                "test-model",
+                List.of(new LlmMessage("user", "你好")),
+                null,
+                false);
+
+        capturingClient.stream(request, ignored -> {
+        });
+
+        String bodyText = readBody(capturingClient.capturedRequest);
+        assertThat(bodyText).contains("\"content\":\"你好\"");
+        assertThat(bodyText).doesNotContain("\"content\":[");
     }
 
     @Test

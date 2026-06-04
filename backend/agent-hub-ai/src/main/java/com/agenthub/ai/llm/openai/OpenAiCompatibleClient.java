@@ -173,11 +173,10 @@ public class OpenAiCompatibleClient implements LlmClient {
                 .map(part -> {
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("type", part.type());
-                    if ("text".equals(part.type())) {
-                        item.put("text", part.text());
-                    }
-                    if ("image_url".equals(part.type())) {
-                        item.put("image_url", Map.of("url", part.imageUrl()));
+                    switch (part.type()) {
+                        case LlmContentPart.TYPE_TEXT -> item.put("text", part.text());
+                        case LlmContentPart.TYPE_IMAGE_URL -> item.put("image_url", Map.of("url", part.imageUrl()));
+                        default -> throw new IllegalArgumentException("不支持的内容片段类型");
                     }
                     return item;
                 })

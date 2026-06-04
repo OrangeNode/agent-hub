@@ -17,6 +17,8 @@ public record AiModelRuntimeConfig(
         String displayName,
         boolean streamSupported,
         boolean reasoningSupported,
+        boolean imageInputSupported,
+        Integer imageTokenEstimate,
         Integer contextWindow,
         Integer maxOutputTokens,
         boolean enabled,

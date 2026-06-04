@@ -67,6 +67,8 @@ class AiModelMapperIntegrationTest {
                         capability_type varchar(64) not null,
                         stream_supported boolean not null default true,
                         reasoning_supported boolean not null default false,
+                        image_input_supported boolean not null default false,
+                        image_token_estimate int,
                         context_window int,
                         max_output_tokens int,
                         default_model boolean not null default false,
@@ -100,12 +102,16 @@ class AiModelMapperIntegrationTest {
         assertThat(item.providerCode()).isEqualTo("enabled-provider");
         assertThat(item.providerName()).isEqualTo("启用供应商");
         assertThat(item.modelCode()).isEqualTo("enabled-model");
+        assertThat(item.imageInputSupported()).isTrue();
+        assertThat(item.imageTokenEstimate()).isEqualTo(1500);
         assertThat(config.providerType()).isEqualTo("LLM");
         assertThat(config.protocolType()).isEqualTo("OPENAI");
         assertThat(config.baseUrl()).isEqualTo("https://api.example.com/v1");
         assertThat(config.apiKeyCipher()).isEqualTo("cipher-enabled");
         assertThat(config.extraHeaders()).isEqualTo("{\"h\":\"v\"}");
         assertThat(config.extraBody()).isEqualTo("{\"b\":\"v\"}");
+        assertThat(config.imageInputSupported()).isTrue();
+        assertThat(config.imageTokenEstimate()).isEqualTo(1500);
         assertThat(config.enabled()).isTrue();
         assertThat(config.providerEnabled()).isTrue();
     }
@@ -122,11 +128,11 @@ class AiModelMapperIntegrationTest {
                     """);
             statement.execute("""
                     insert into ai_model
-                        (id, provider_id, model_code, display_name, capability_type, stream_supported, reasoning_supported, context_window, max_output_tokens, default_model, enabled, sort)
+                        (id, provider_id, model_code, display_name, capability_type, stream_supported, reasoning_supported, image_input_supported, image_token_estimate, context_window, max_output_tokens, default_model, enabled, sort)
                     values
-                        (1, 1, 'enabled-model', '启用模型', 'CHAT', true, false, 128000, 4096, true, true, 1),
-                        (2, 1, 'disabled-model', '禁用模型', 'CHAT', true, false, 64000, 2048, false, false, 2),
-                        (3, 2, 'disabled-provider-model', '禁用供应商模型', 'CHAT', true, false, 32000, 1024, false, true, 3)
+                        (1, 1, 'enabled-model', '启用模型', 'CHAT', true, false, true, 1500, 128000, 4096, true, true, 1),
+                        (2, 1, 'disabled-model', '禁用模型', 'CHAT', true, false, false, null, 64000, 2048, false, false, 2),
+                        (3, 2, 'disabled-provider-model', '禁用供应商模型', 'CHAT', true, false, false, null, 32000, 1024, false, true, 3)
                     """);
         }
     }

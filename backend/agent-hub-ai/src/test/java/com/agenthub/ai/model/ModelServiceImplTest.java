@@ -80,6 +80,37 @@ class ModelServiceImplTest {
     }
 
     @Test
+    void shouldCreateModelWithImageInputConfiguration() {
+        AiModelMapper mapper = mock(AiModelMapper.class);
+        AiProviderService providerService = mock(AiProviderService.class);
+        AiModelServiceImpl service = new AiModelServiceImpl(mapper, providerService);
+        when(providerService.requireById(1L)).thenReturn(providerItem(1L));
+        when(mapper.selectCount(any())).thenReturn(0L);
+        CreateModelCommand command = new CreateModelCommand(
+                1L,
+                "gpt-4o",
+                "GPT-4o",
+                "MULTIMODAL",
+                true,
+                true,
+                128000,
+                4096,
+                true,
+                true,
+                1,
+                true,
+                1500
+        );
+
+        service.create(command);
+
+        ArgumentCaptor<AiModel> captor = ArgumentCaptor.forClass(AiModel.class);
+        verify(mapper).insert(captor.capture());
+        assertThat(captor.getValue().getImageInputSupported()).isTrue();
+        assertThat(captor.getValue().getImageTokenEstimate()).isEqualTo(1500);
+    }
+
+    @Test
     void shouldListAvailableModelsFromEnabledProvidersAndEnabledModels() {
         AiModelMapper mapper = mock(AiModelMapper.class);
         AiProviderService providerService = mock(AiProviderService.class);
@@ -265,7 +296,9 @@ class ModelServiceImplTest {
                 4096,
                 true,
                 false,
-                0
+                0,
+                false,
+                null
         )))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("默认模型必须处于可用状态")
@@ -315,12 +348,15 @@ class ModelServiceImplTest {
                     -2,
                     false,
                     true,
-                    -1
+                    -1,
+                    true,
+                    0
             );
 
             assertThat(validator.validate(request))
                     .extracting(violation -> violation.getPropertyPath().toString())
-                    .contains("providerId", "capabilityType", "contextWindow", "maxOutputTokens", "sort");
+                    .contains("providerId", "capabilityType", "contextWindow", "maxOutputTokens", "sort",
+                            "imageTokenEstimate");
         }
     }
 
@@ -336,6 +372,8 @@ class ModelServiceImplTest {
                 4096,
                 defaultModel,
                 null,
+                null,
+                false,
                 null
         );
     }
@@ -352,7 +390,9 @@ class ModelServiceImplTest {
                 4096,
                 defaultModel,
                 true,
-                1
+                1,
+                false,
+                null
         );
     }
 
@@ -400,6 +440,8 @@ class ModelServiceImplTest {
                 "CHAT",
                 true,
                 false,
+                false,
+                null,
                 128000,
                 4096,
                 defaultModel,
@@ -426,6 +468,8 @@ class ModelServiceImplTest {
                 "GPT-4o",
                 true,
                 false,
+                false,
+                null,
                 128000,
                 4096,
                 modelEnabled,

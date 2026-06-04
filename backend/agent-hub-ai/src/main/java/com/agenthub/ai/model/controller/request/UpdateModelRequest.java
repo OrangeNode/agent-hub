@@ -28,6 +28,9 @@ public record UpdateModelRequest(
         Boolean defaultModel,
         Boolean enabled,
         @Min(value = 0, message = "排序值不能小于0")
-        Integer sort
+        Integer sort,
+        Boolean imageInputSupported,
+        @Min(value = 1, message = "图片 token 估算必须大于 0")
+        Integer imageTokenEstimate
 ) {
 }

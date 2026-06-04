@@ -11,6 +11,8 @@ public record UpdateModelCommand(
         Integer maxOutputTokens,
         Boolean defaultModel,
         Boolean enabled,
-        Integer sort
+        Integer sort,
+        boolean imageInputSupported,
+        Integer imageTokenEstimate
 ) {
 }

@@ -55,7 +55,9 @@ public class AiModelController {
                 request.maxOutputTokens(),
                 request.defaultModel(),
                 request.enabled(),
-                request.sort()
+                request.sort(),
+                Boolean.TRUE.equals(request.imageInputSupported()),
+                request.imageTokenEstimate()
         )));
     }
 
@@ -78,7 +80,9 @@ public class AiModelController {
                 request.maxOutputTokens(),
                 request.defaultModel(),
                 request.enabled(),
-                request.sort()
+                request.sort(),
+                Boolean.TRUE.equals(request.imageInputSupported()),
+                request.imageTokenEstimate()
         )));
     }
 

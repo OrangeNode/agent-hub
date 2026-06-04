@@ -10,6 +10,8 @@ public record AiModelItem(
         String capabilityType,
         boolean streamSupported,
         boolean reasoningSupported,
+        boolean imageInputSupported,
+        Integer imageTokenEstimate,
         Integer contextWindow,
         Integer maxOutputTokens,
         boolean defaultModel,

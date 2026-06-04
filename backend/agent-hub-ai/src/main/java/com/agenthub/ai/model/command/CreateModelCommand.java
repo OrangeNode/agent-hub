@@ -11,6 +11,8 @@ public record CreateModelCommand(
         Integer maxOutputTokens,
         Boolean defaultModel,
         Boolean enabled,
-        Integer sort
+        Integer sort,
+        boolean imageInputSupported,
+        Integer imageTokenEstimate
 ) {
 }

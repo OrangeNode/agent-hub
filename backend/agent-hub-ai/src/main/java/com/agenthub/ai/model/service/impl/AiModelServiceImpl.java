@@ -202,6 +202,8 @@ public class AiModelServiceImpl implements AiModelService {
         model.setCapabilityType(command.capabilityType());
         model.setStreamSupported(defaultStreamSupported(command.streamSupported()));
         model.setReasoningSupported(defaultReasoningSupported(command.reasoningSupported()));
+        model.setImageInputSupported(command.imageInputSupported());
+        model.setImageTokenEstimate(command.imageTokenEstimate());
         model.setContextWindow(command.contextWindow());
         model.setMaxOutputTokens(command.maxOutputTokens());
         model.setDefaultModel(defaultDefaultModel(command.defaultModel()));
@@ -216,6 +218,8 @@ public class AiModelServiceImpl implements AiModelService {
         model.setCapabilityType(command.capabilityType());
         model.setStreamSupported(defaultStreamSupported(command.streamSupported()));
         model.setReasoningSupported(defaultReasoningSupported(command.reasoningSupported()));
+        model.setImageInputSupported(command.imageInputSupported());
+        model.setImageTokenEstimate(command.imageTokenEstimate());
         model.setContextWindow(command.contextWindow());
         model.setMaxOutputTokens(command.maxOutputTokens());
         model.setDefaultModel(defaultDefaultModel(command.defaultModel()));

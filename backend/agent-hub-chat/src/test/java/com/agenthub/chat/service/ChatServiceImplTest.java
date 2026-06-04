@@ -13,11 +13,14 @@ import com.agenthub.ai.llm.LlmClient;
 import com.agenthub.ai.llm.LlmStreamChunk;
 import com.agenthub.ai.model.dto.AiModelRuntimeConfig;
 import com.agenthub.ai.model.service.AiModelService;
+import com.agenthub.chat.context.ConversationContextBuilder;
+import com.agenthub.chat.context.SimpleTokenEstimator;
 import com.agenthub.chat.conversation.entity.ChatConversation;
 import com.agenthub.chat.conversation.mapper.ChatConversationMapper;
 import com.agenthub.chat.message.entity.ChatMessage;
 import com.agenthub.chat.message.mapper.ChatMessageMapper;
 import com.agenthub.chat.service.impl.ChatServiceImpl;
+import com.agenthub.chat.summary.mapper.ChatConversationSummaryMapper;
 import com.agenthub.chat.title.ConversationTitleService;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
@@ -60,6 +63,7 @@ class ChatServiceImplTest {
                 transactionTemplate(),
                 sender,
                 mock(AttachmentService.class),
+                contextBuilder(messageMapper, llmClient),
                 protocolType -> llmClient,
                 Runnable::run
         );
@@ -223,6 +227,7 @@ class ChatServiceImplTest {
                 transactionTemplate(),
                 sender,
                 mock(AttachmentService.class),
+                contextBuilder(messageMapper, throwingClient),
                 protocolType -> throwingClient,
                 Runnable::run
         );
@@ -287,6 +292,7 @@ class ChatServiceImplTest {
                 transactionTemplate(),
                 sender,
                 mock(AttachmentService.class),
+                contextBuilder(messageMapper, throwingClient),
                 protocolType -> throwingClient,
                 Runnable::run
         );
@@ -348,6 +354,7 @@ class ChatServiceImplTest {
                 transactionTemplate(),
                 sender,
                 mock(AttachmentService.class),
+                contextBuilder(messageMapper, llmClient),
                 protocolType -> llmClient,
                 executor
         );
@@ -535,6 +542,7 @@ class ChatServiceImplTest {
                 transactionTemplate(events),
                 sender,
                 mock(AttachmentService.class),
+                contextBuilder(messageMapper, new RecordingLlmClient(List.of(LlmStreamChunk.done()))),
                 protocolType -> new RecordingLlmClient(List.of(LlmStreamChunk.done())),
                 Runnable::run
         );
@@ -623,8 +631,18 @@ class ChatServiceImplTest {
                 transactionTemplate(),
                 sender,
                 attachmentService,
+                contextBuilder(messageMapper, llmClient),
                 protocolType -> llmClient,
                 Runnable::run
+        );
+    }
+
+    private ConversationContextBuilder contextBuilder(ChatMessageMapper messageMapper, LlmClient llmClient) {
+        return new ConversationContextBuilder(
+                messageMapper,
+                mock(ChatConversationSummaryMapper.class),
+                new SimpleTokenEstimator(),
+                protocolType -> llmClient
         );
     }
 

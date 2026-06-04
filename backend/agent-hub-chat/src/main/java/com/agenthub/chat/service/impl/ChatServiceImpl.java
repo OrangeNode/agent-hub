@@ -2,12 +2,13 @@ package com.agenthub.chat.service.impl;
 
 import com.agenthub.ai.llm.LlmClient;
 import com.agenthub.ai.llm.LlmClientFactory;
-import com.agenthub.ai.llm.LlmContentPart;
 import com.agenthub.ai.llm.LlmMessage;
 import com.agenthub.ai.llm.LlmStreamChunk;
 import com.agenthub.ai.llm.LlmStreamRequest;
 import com.agenthub.ai.model.dto.AiModelRuntimeConfig;
 import com.agenthub.ai.model.service.AiModelService;
+import com.agenthub.chat.context.ConversationContext;
+import com.agenthub.chat.context.ConversationContextBuilder;
 import com.agenthub.chat.conversation.dto.ConversationItem;
 import com.agenthub.chat.conversation.entity.ChatConversation;
 import com.agenthub.chat.conversation.mapper.ChatConversationMapper;
@@ -27,7 +28,6 @@ import com.agenthub.storage.attachment.service.AttachmentService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import java.io.IOException;
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
@@ -64,6 +64,7 @@ public class ChatServiceImpl implements ChatService {
     private final AttachmentService attachmentService;
     private final SseEventSender sseEventSender;
     private final Function<String, LlmClient> llmClientFactory;
+    private final ConversationContextBuilder contextBuilder;
     private final Executor streamExecutor;
 
     @Autowired
@@ -73,10 +74,11 @@ public class ChatServiceImpl implements ChatService {
             AiModelService modelService,
             ConversationTitleService titleService,
             TransactionTemplate transactionTemplate,
-            AttachmentService attachmentService
+            AttachmentService attachmentService,
+            ConversationContextBuilder contextBuilder
     ) {
         this(conversationMapper, messageMapper, modelService, titleService, transactionTemplate, new SseEventSender(),
-                attachmentService, LlmClientFactory::create, defaultStreamExecutor());
+                attachmentService, contextBuilder, LlmClientFactory::create, defaultStreamExecutor());
     }
 
     public ChatServiceImpl(
@@ -87,6 +89,7 @@ public class ChatServiceImpl implements ChatService {
             TransactionTemplate transactionTemplate,
             SseEventSender sseEventSender,
             AttachmentService attachmentService,
+            ConversationContextBuilder contextBuilder,
             Function<String, LlmClient> llmClientFactory,
             Executor streamExecutor
     ) {
@@ -98,6 +101,7 @@ public class ChatServiceImpl implements ChatService {
         this.attachmentService = attachmentService;
         this.sseEventSender = sseEventSender;
         this.llmClientFactory = llmClientFactory;
+        this.contextBuilder = contextBuilder;
         this.streamExecutor = streamExecutor;
     }
 
@@ -136,7 +140,7 @@ public class ChatServiceImpl implements ChatService {
                 && send(emitter, SseEventType.MESSAGE,
                 new SseEventData.Message(preparedChat.assistantMessage().getId(), ROLE_ASSISTANT));
         if (connected) {
-            streamExecutor.execute(() -> streamLlm(emitter, runtimeConfig, normalizedPrompt, preparedChat.images(),
+            streamExecutor.execute(() -> streamLlm(emitter, runtimeConfig, preparedChat.context().messages(),
                     preparedChat.assistantMessage(), thinkingEnabled));
         } else {
             // 初始事件发送失败说明客户端已断开，直接标记助手消息失败。
@@ -172,11 +176,12 @@ public class ChatServiceImpl implements ChatService {
         if (!images.isEmpty() && !runtimeConfig.imageInputSupported()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "当前模型不支持图片输入");
         }
+        ConversationContext context = contextBuilder.build(userId, conversation.getId(), runtimeConfig, normalizedPrompt, images);
         ChatMessage userMessage = saveUserMessage(userId, conversation.getId(), normalizedPrompt, runtimeConfig);
         attachmentService.bindToMessage(userId, conversation.getId(), userMessage.getId(), attachmentIds);
         ChatMessage assistantMessage = saveAssistantMessage(userId, conversation.getId(), runtimeConfig);
         touchConversation(conversation);
-        return new PreparedChat(conversation, userMessage, assistantMessage, images);
+        return new PreparedChat(conversation, userMessage, assistantMessage, images, context);
     }
 
     private static Executor defaultStreamExecutor() {
@@ -187,7 +192,8 @@ public class ChatServiceImpl implements ChatService {
             ChatConversation conversation,
             ChatMessage userMessage,
             ChatMessage assistantMessage,
-            List<AttachmentReference> images
+            List<AttachmentReference> images,
+            ConversationContext context
     ) {
     }
 
@@ -418,8 +424,7 @@ public class ChatServiceImpl implements ChatService {
     private void streamLlm(
             SseEmitter emitter,
             AiModelRuntimeConfig runtimeConfig,
-            String prompt,
-            List<AttachmentReference> images,
+            List<LlmMessage> messages,
             ChatMessage assistantMessage,
             boolean thinkingEnabled
     ) {
@@ -430,7 +435,7 @@ public class ChatServiceImpl implements ChatService {
         boolean reasoningRequested = thinkingEnabled && runtimeConfig.reasoningSupported();
         try {
             LlmClient client = llmClientFactory.apply(runtimeConfig.protocolType());
-            client.stream(buildRequest(runtimeConfig, prompt, images, reasoningRequested), chunk ->
+            client.stream(buildRequest(runtimeConfig, messages, reasoningRequested), chunk ->
                     handleChunk(emitter, assistantMessage, content, reasoningContent, finished, reasoningRequested, chunk));
         } catch (Exception exception) {
             if (finished.compareAndSet(false, true)) {
@@ -444,8 +449,7 @@ public class ChatServiceImpl implements ChatService {
 
     private LlmStreamRequest buildRequest(
             AiModelRuntimeConfig runtimeConfig,
-            String prompt,
-            List<AttachmentReference> images,
+            List<LlmMessage> messages,
             boolean reasoningRequested
     ) {
         return new LlmStreamRequest(
@@ -453,23 +457,10 @@ public class ChatServiceImpl implements ChatService {
                 runtimeConfig.apiKeyCipher(),
                 runtimeConfig.apiVersion(),
                 runtimeConfig.modelCode(),
-                List.of(buildUserLlmMessage(prompt, images)),
+                messages,
                 runtimeConfig.maxOutputTokens(),
                 reasoningRequested
         );
-    }
-
-    private LlmMessage buildUserLlmMessage(String prompt, List<AttachmentReference> images) {
-        if (images == null || images.isEmpty()) {
-            return new LlmMessage("user", prompt);
-        }
-        List<LlmContentPart> parts = new ArrayList<>();
-        parts.add(LlmContentPart.text(prompt));
-        images.stream()
-                .map(AttachmentReference::readUrl)
-                .map(LlmContentPart::imageUrl)
-                .forEach(parts::add);
-        return LlmMessage.user(parts);
     }
 
     private LlmStreamRequest buildTitleRequest(AiModelRuntimeConfig runtimeConfig, String prompt) {

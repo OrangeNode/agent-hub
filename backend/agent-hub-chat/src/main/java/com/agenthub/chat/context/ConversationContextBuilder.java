@@ -12,13 +12,17 @@ import com.agenthub.chat.summary.entity.ChatConversationSummary;
 import com.agenthub.chat.summary.mapper.ChatConversationSummaryMapper;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
+import com.agenthub.storage.attachment.dto.AttachmentItem;
 import com.agenthub.storage.attachment.dto.AttachmentReference;
+import com.agenthub.storage.attachment.service.AttachmentService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -40,6 +44,7 @@ public class ConversationContextBuilder {
 
     private final ChatMessageMapper messageMapper;
     private final ChatConversationSummaryMapper summaryMapper;
+    private final AttachmentService attachmentService;
     private final TokenEstimator tokenEstimator;
     private final Function<String, LlmClient> llmClientFactory;
 
@@ -47,19 +52,22 @@ public class ConversationContextBuilder {
     public ConversationContextBuilder(
             ChatMessageMapper messageMapper,
             ChatConversationSummaryMapper summaryMapper,
+            AttachmentService attachmentService,
             TokenEstimator tokenEstimator
     ) {
-        this(messageMapper, summaryMapper, tokenEstimator, LlmClientFactory::create);
+        this(messageMapper, summaryMapper, attachmentService, tokenEstimator, LlmClientFactory::create);
     }
 
     public ConversationContextBuilder(
             ChatMessageMapper messageMapper,
             ChatConversationSummaryMapper summaryMapper,
+            AttachmentService attachmentService,
             TokenEstimator tokenEstimator,
             Function<String, LlmClient> llmClientFactory
     ) {
         this.messageMapper = messageMapper;
         this.summaryMapper = summaryMapper;
+        this.attachmentService = attachmentService;
         this.tokenEstimator = tokenEstimator;
         this.llmClientFactory = llmClientFactory;
     }
@@ -73,9 +81,10 @@ public class ConversationContextBuilder {
     ) {
         int contextWindow = resolveContextWindow(runtimeConfig);
         int reservedOutputTokens = resolveReservedOutputTokens(runtimeConfig);
+        int historyImageTokenEstimate = resolveImageTokenEstimate(runtimeConfig);
         int availableInputTokens = contextWindow - reservedOutputTokens - SAFETY_MARGIN_TOKENS;
-        if (availableInputTokens < 1) {
-            availableInputTokens = Math.max(1, contextWindow / 2);
+        if (availableInputTokens <= 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, CURRENT_INPUT_TOO_LONG);
         }
 
         int currentInputEstimate = estimateCurrentInput(currentPrompt, images);
@@ -84,13 +93,16 @@ public class ConversationContextBuilder {
         }
 
         List<ChatMessage> history = listHistory(userId, conversationId);
+        Map<Long, List<AttachmentItem>> attachmentsByMessageId = listHistoryAttachments(userId, history);
         ChatConversationSummary summary = loadSummary(userId, conversationId);
         SummaryUpdate summaryUpdate = maybeUpdateSummary(
                 userId,
                 conversationId,
                 runtimeConfig,
                 contextWindow,
+                historyImageTokenEstimate,
                 history,
+                attachmentsByMessageId,
                 summary
         );
         ChatConversationSummary effectiveSummary = summaryUpdate.summary();
@@ -99,7 +111,7 @@ public class ConversationContextBuilder {
         int usedTokens = 0;
         if (effectiveSummary != null && hasText(effectiveSummary.getSummary())) {
             LlmMessage summaryMessage = new LlmMessage("system", "以下是此前会话摘要：\n" + effectiveSummary.getSummary());
-            int summaryTokens = estimateMessage(summaryMessage);
+            int summaryTokens = estimateMessage(summaryMessage, historyImageTokenEstimate);
             if (usedTokens + summaryTokens + currentInputEstimate <= availableInputTokens) {
                 messages.add(summaryMessage);
                 usedTokens += summaryTokens;
@@ -108,9 +120,11 @@ public class ConversationContextBuilder {
 
         List<ChatMessage> candidates = messagesAfterSummary(history, effectiveSummary);
         List<LlmMessage> recentMessages = selectRecentMessages(candidates,
-                availableInputTokens - usedTokens - currentInputEstimate);
+                attachmentsByMessageId,
+                availableInputTokens - usedTokens - currentInputEstimate,
+                historyImageTokenEstimate);
         for (LlmMessage recentMessage : recentMessages) {
-            int messageTokens = estimateMessage(recentMessage);
+            int messageTokens = estimateMessage(recentMessage, historyImageTokenEstimate);
             if (usedTokens + messageTokens + currentInputEstimate <= availableInputTokens) {
                 messages.add(recentMessage);
                 usedTokens += messageTokens;
@@ -136,6 +150,28 @@ public class ConversationContextBuilder {
         return List.copyOf(messages);
     }
 
+    private Map<Long, List<AttachmentItem>> listHistoryAttachments(Long userId, List<ChatMessage> history) {
+        List<Long> messageIds = history.stream()
+                .map(ChatMessage::getId)
+                .filter(id -> id != null)
+                .toList();
+        if (messageIds.isEmpty()) {
+            return Map.of();
+        }
+        List<AttachmentItem> attachments = attachmentService.listMessageAttachments(userId, messageIds);
+        if (attachments == null || attachments.isEmpty()) {
+            return Map.of();
+        }
+        return attachments.stream()
+                .filter(attachment -> attachment.messageId() != null)
+                .filter(this::isAvailableHistoryImage)
+                .collect(Collectors.groupingBy(AttachmentItem::messageId));
+    }
+
+    private boolean isAvailableHistoryImage(AttachmentItem attachment) {
+        return !attachment.expired() && hasText(attachment.previewUrl());
+    }
+
     private ChatConversationSummary loadSummary(Long userId, Long conversationId) {
         LambdaQueryWrapper<ChatConversationSummary> wrapper = new LambdaQueryWrapper<ChatConversationSummary>()
                 .eq(ChatConversationSummary::getConversationId, conversationId)
@@ -149,10 +185,13 @@ public class ConversationContextBuilder {
             Long conversationId,
             AiModelRuntimeConfig runtimeConfig,
             int contextWindow,
+            int historyImageTokenEstimate,
             List<ChatMessage> history,
+            Map<Long, List<AttachmentItem>> attachmentsByMessageId,
             ChatConversationSummary currentSummary
     ) {
-        int fullHistoryEstimate = estimateHistory(history) + estimateText(currentSummary == null ? null : currentSummary.getSummary());
+        int fullHistoryEstimate = estimateHistory(history, attachmentsByMessageId, historyImageTokenEstimate)
+                + estimateText(currentSummary == null ? null : currentSummary.getSummary());
         if (fullHistoryEstimate < Math.ceil(contextWindow * SUMMARY_TRIGGER_RATIO)) {
             return new SummaryUpdate(currentSummary, false);
         }
@@ -258,7 +297,12 @@ public class ConversationContextBuilder {
                 .toList();
     }
 
-    private List<LlmMessage> selectRecentMessages(List<ChatMessage> candidates, int budget) {
+    private List<LlmMessage> selectRecentMessages(
+            List<ChatMessage> candidates,
+            Map<Long, List<AttachmentItem>> attachmentsByMessageId,
+            int budget,
+            int imageTokenEstimate
+    ) {
         if (candidates.isEmpty() || budget <= 0) {
             return List.of();
         }
@@ -266,8 +310,8 @@ public class ConversationContextBuilder {
         int usedTokens = 0;
         int start = Math.max(0, candidates.size() - RECENT_MESSAGE_MAX_COUNT);
         for (int i = candidates.size() - 1; i >= start; i--) {
-            LlmMessage message = toLlmMessage(candidates.get(i));
-            int messageTokens = estimateMessage(message);
+            LlmMessage message = toLlmMessage(candidates.get(i), attachmentsByMessageId);
+            int messageTokens = estimateMessage(message, imageTokenEstimate);
             if (usedTokens + messageTokens > budget) {
                 if (selected.size() >= RECENT_TURN_MIN_MESSAGE_COUNT) {
                     break;
@@ -280,8 +324,19 @@ public class ConversationContextBuilder {
         return selected;
     }
 
-    private LlmMessage toLlmMessage(ChatMessage message) {
-        return new LlmMessage(toLlmRole(message.getRole()), defaultString(message.getContent()));
+    private LlmMessage toLlmMessage(ChatMessage message, Map<Long, List<AttachmentItem>> attachmentsByMessageId) {
+        String role = toLlmRole(message.getRole());
+        List<AttachmentItem> attachments = attachmentsFor(message, attachmentsByMessageId);
+        if (!"user".equals(role) || attachments.isEmpty()) {
+            return new LlmMessage(role, defaultString(message.getContent()));
+        }
+        List<LlmContentPart> parts = new ArrayList<>();
+        parts.add(LlmContentPart.text(defaultString(message.getContent())));
+        attachments.stream()
+                .map(AttachmentItem::previewUrl)
+                .map(LlmContentPart::imageUrl)
+                .forEach(parts::add);
+        return LlmMessage.user(parts);
     }
 
     private String toLlmRole(String role) {
@@ -308,10 +363,25 @@ public class ConversationContextBuilder {
         return LlmMessage.user(parts);
     }
 
-    private int estimateHistory(List<ChatMessage> history) {
+    private int estimateHistory(
+            List<ChatMessage> history,
+            Map<Long, List<AttachmentItem>> attachmentsByMessageId,
+            int imageTokenEstimate
+    ) {
         return history.stream()
-                .mapToInt(message -> estimateText(message.getContent()))
+                .mapToInt(message -> estimateText(message.getContent())
+                        + attachmentsFor(message, attachmentsByMessageId).size() * imageTokenEstimate)
                 .sum();
+    }
+
+    private List<AttachmentItem> attachmentsFor(
+            ChatMessage message,
+            Map<Long, List<AttachmentItem>> attachmentsByMessageId
+    ) {
+        if (message.getId() == null) {
+            return List.of();
+        }
+        return attachmentsByMessageId.getOrDefault(message.getId(), List.of());
     }
 
     private int estimateCurrentInput(String prompt, List<AttachmentReference> images) {
@@ -324,14 +394,14 @@ public class ConversationContextBuilder {
                 .sum();
     }
 
-    private int estimateMessage(LlmMessage message) {
+    private int estimateMessage(LlmMessage message, int imageTokenEstimate) {
         if (message.hasParts()) {
             int estimate = 0;
             for (LlmContentPart part : message.parts()) {
                 if (LlmContentPart.TYPE_TEXT.equals(part.type())) {
                     estimate += estimateText(part.text());
                 } else if (LlmContentPart.TYPE_IMAGE_URL.equals(part.type())) {
-                    estimate += DEFAULT_IMAGE_TOKEN_ESTIMATE;
+                    estimate += imageTokenEstimate;
                 }
             }
             return estimate;
@@ -344,10 +414,17 @@ public class ConversationContextBuilder {
     }
 
     private int resolveContextWindow(AiModelRuntimeConfig runtimeConfig) {
-        if (runtimeConfig.contextWindow() == null || runtimeConfig.contextWindow() <= SAFETY_MARGIN_TOKENS) {
+        if (runtimeConfig.contextWindow() == null || runtimeConfig.contextWindow() <= 0) {
             return DEFAULT_CONTEXT_WINDOW;
         }
         return runtimeConfig.contextWindow();
+    }
+
+    private int resolveImageTokenEstimate(AiModelRuntimeConfig runtimeConfig) {
+        if (runtimeConfig.imageTokenEstimate() == null || runtimeConfig.imageTokenEstimate() <= 0) {
+            return DEFAULT_IMAGE_TOKEN_ESTIMATE;
+        }
+        return runtimeConfig.imageTokenEstimate();
     }
 
     private int resolveReservedOutputTokens(AiModelRuntimeConfig runtimeConfig) {

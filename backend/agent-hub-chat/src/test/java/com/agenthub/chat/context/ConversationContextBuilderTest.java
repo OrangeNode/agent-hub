@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.agenthub.ai.llm.LlmClient;
+import com.agenthub.ai.llm.LlmContentPart;
 import com.agenthub.ai.llm.LlmMessage;
 import com.agenthub.ai.llm.LlmStreamChunk;
 import com.agenthub.ai.llm.LlmStreamRequest;
@@ -18,7 +19,9 @@ import com.agenthub.chat.summary.entity.ChatConversationSummary;
 import com.agenthub.chat.summary.mapper.ChatConversationSummaryMapper;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
+import com.agenthub.storage.attachment.dto.AttachmentItem;
 import com.agenthub.storage.attachment.dto.AttachmentReference;
+import com.agenthub.storage.attachment.service.AttachmentService;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -39,14 +42,27 @@ class ConversationContextBuilderTest {
     }
 
     @Test
+    void shouldRejectEvenShortInputWhenAvailableBudgetIsNotPositive() {
+        ConversationContextBuilder builder = builder(List.of(), null, summaryClient("摘要"));
+
+        assertThatThrownBy(() -> builder.build(7L, 100L, runtimeConfig(1_000, 100), "hi", List.of()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("当前输入内容过长，已超过模型上下文限制，请缩短后重试")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+    }
+
+    @Test
     void shouldTriggerSummaryWhenFullHistoryReachesEightyPercent() {
         ChatConversationSummaryMapper summaryMapper = mock(ChatConversationSummaryMapper.class);
         ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
         when(messageMapper.selectList(any())).thenReturn(history(10, "a".repeat(800)));
         RecordingLlmClient llmClient = summaryClient("压缩后的中文摘要");
         ConversationContextBuilder builder = new ConversationContextBuilder(
                 messageMapper,
                 summaryMapper,
+                attachmentService,
                 new SimpleTokenEstimator(),
                 protocolType -> llmClient
         );
@@ -84,10 +100,47 @@ class ConversationContextBuilderTest {
         assertThat(result.inputTokenEstimate()).isLessThanOrEqualTo(10_000 - 1_000 - 1_024);
     }
 
+    @Test
+    void shouldIncludeAvailableHistoryImagesAsMessageParts() {
+        ChatMessage historyMessage = message(1L, "USER", "analyze historical image");
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        when(attachmentService.listMessageAttachments(7L, List.of(1L))).thenReturn(List.of(
+                attachment(10L, 1L, false, "https://example.com/history.png"),
+                attachment(11L, 1L, true, "https://example.com/expired.png"),
+                attachment(12L, 1L, false, " ")
+        ));
+        ConversationContextBuilder builder = builder(
+                List.of(historyMessage),
+                null,
+                summaryClient("summary"),
+                attachmentService
+        );
+
+        ConversationContext result = builder.build(7L, 100L, runtimeConfig(10_000, 1_000), "continue", List.of());
+
+        LlmMessage historyLlmMessage = result.messages().getFirst();
+        assertThat(historyLlmMessage.role()).isEqualTo("user");
+        assertThat(historyLlmMessage.content()).isNull();
+        assertThat(historyLlmMessage.parts()).containsExactly(
+                LlmContentPart.text("analyze historical image"),
+                LlmContentPart.imageUrl("https://example.com/history.png")
+        );
+        assertThat(result.inputTokenEstimate()).isGreaterThan(1_500);
+    }
+
     private ConversationContextBuilder builder(
             List<ChatMessage> history,
             ChatConversationSummary summary,
             LlmClient llmClient
+    ) {
+        return builder(history, summary, llmClient, mock(AttachmentService.class));
+    }
+
+    private ConversationContextBuilder builder(
+            List<ChatMessage> history,
+            ChatConversationSummary summary,
+            LlmClient llmClient,
+            AttachmentService attachmentService
     ) {
         ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
         ChatConversationSummaryMapper summaryMapper = mock(ChatConversationSummaryMapper.class);
@@ -96,6 +149,7 @@ class ConversationContextBuilderTest {
         return new ConversationContextBuilder(
                 messageMapper,
                 summaryMapper,
+                attachmentService,
                 new SimpleTokenEstimator(),
                 protocolType -> llmClient
         );
@@ -118,6 +172,19 @@ class ConversationContextBuilderTest {
         message.setContent(content);
         message.setStatus("COMPLETED");
         return message;
+    }
+
+    private AttachmentItem attachment(Long attachmentId, Long messageId, boolean expired, String previewUrl) {
+        return new AttachmentItem(
+                attachmentId,
+                "image.png",
+                "image/png",
+                "READY",
+                expired,
+                previewUrl,
+                null,
+                messageId
+        );
     }
 
     private RecordingLlmClient summaryClient(String summary) {

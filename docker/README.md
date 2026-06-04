@@ -6,6 +6,7 @@
 
 - PostgreSQL 16
 - Redis 7.2
+- MinIO
 - PostgreSQL 初始化脚本
 - 后端环境变量样例
 
@@ -16,6 +17,7 @@ docker
 ├── docker-compose.yml
 ├── env
 │   ├── backend.env
+│   ├── minio.env
 │   ├── postgres.env
 │   └── redis.env
 ├── initdb
@@ -28,9 +30,10 @@ docker
 1. 根据实际环境修改：
    - `env/postgres.env`
    - `env/redis.env`
+   - `env/minio.env`
    - `env/backend.env`
 2. 在服务器或本机进入 `docker/` 目录
-3. 启动 PostgreSQL 与 Redis
+3. 启动 PostgreSQL、Redis 与 MinIO
 
 ```bash
 docker compose up -d
@@ -52,6 +55,8 @@ docker compose down
 
 - PostgreSQL：`5432`
 - Redis：`6379`
+- MinIO API：`9000`
+- MinIO Console：`9001`
 
 ## PostgreSQL 初始化
 
@@ -77,6 +82,18 @@ docker compose down
 - 普通用户账号：`user` / `user123`
 
 如果你的 PostgreSQL 容器已经启动且数据卷已存在，这个脚本不会自动补跑；这时应通过后端 Flyway 启动迁移，或手动在库里执行同内容 SQL。
+
+## MinIO 图片存储
+
+[minio.env](/D:/project/Agent-Hub/docker/env/minio.env) 提供了聊天图片对象存储所需的默认变量。
+
+- API 端口：`9000`
+- Console 端口：`9001`
+- 聊天图片 bucket 名称来自 `MINIO_BUCKET_CHAT_IMAGES`，默认值为 `agent-hub-chat-images`
+- `minio-init` 会在 MinIO 健康后创建 bucket，并配置 `MINIO_IMAGE_EXPIRE_DAYS` 指定的生命周期规则，默认 7 天后过期清理
+- bucket 默认不公开读
+- 前端上传图片和模型读取图片都通过后端签发的短期预签名 URL 完成
+- 云模型读取图片时，后端 `agent-hub.storage.public-endpoint` 必须配置为模型可访问的公网或内网地址
 
 ## 后端环境变量
 

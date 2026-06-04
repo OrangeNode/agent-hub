@@ -42,6 +42,57 @@ services:
     networks:
       - agent-hub-network
 
+  minio:
+    image: minio/minio:RELEASE.2025-05-24T17-08-30Z
+    container_name: agent-hub-minio
+    restart: unless-stopped
+    env_file:
+      - ./env/minio.env
+    command: server /data --console-address :9001
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - agent-hub-network
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-05-21T01-59-54Z
+    container_name: agent-hub-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    env_file:
+      - ./env/minio.env
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mc alias set agent-hub http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "agent-hub/$$MINIO_BUCKET_CHAT_IMAGES"
+        cat > /tmp/chat-image-lifecycle.json <<EOF
+        {
+          "Rules": [
+            {
+              "ID": "expire-chat-images-after-seven-days",
+              "Status": "Enabled",
+              "Expiration": {
+                "Days": $$MINIO_IMAGE_EXPIRE_DAYS
+              }
+            }
+          ]
+        }
+        EOF
+        mc ilm import "agent-hub/$$MINIO_BUCKET_CHAT_IMAGES" < /tmp/chat-image-lifecycle.json
+    networks:
+      - agent-hub-network
+
 networks:
   agent-hub-network:
     driver: bridge
@@ -49,3 +100,4 @@ networks:
 volumes:
   postgres-data:
   redis-data:
+  minio-data:

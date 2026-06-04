@@ -18,6 +18,7 @@
 
 - PostgreSQL 16
 - Redis 7.2
+- MinIO：聊天图片对象存储，默认 7 天生命周期清理
 - PostgreSQL 初始化脚本
 - 后端环境变量样例
 
@@ -32,6 +33,7 @@ docker compose up -d
 
 - `docker/env/postgres.env`
 - `docker/env/redis.env`
+- `docker/env/minio.env`
 - `docker/env/backend.env`
 
 ## RBAC 数据库化说明

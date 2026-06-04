@@ -136,9 +136,9 @@
         <h1>准备好了，随时开始</h1>
 
         <div
-          v-if="pendingImages.length"
+          v-if="composerImageCount"
           class="pending-image-list"
-          :class="{ single: pendingImages.length === 1 }"
+          :class="{ single: composerImageCount === 1 }"
         >
           <div
             v-for="image in pendingImages"
@@ -155,6 +155,28 @@
               class="image-remove-button"
               aria-label="移除图片"
               @click.stop="removePendingImage(image.localId)"
+            >
+              ×
+            </button>
+          </div>
+          <div
+            v-for="attachment in selectedReuseAttachments"
+            :key="`reuse-${attachment.attachmentId}`"
+            class="pending-image-item reused"
+          >
+            <button
+              type="button"
+              class="image-preview-button"
+              @click="imagePreviewUrl = attachment.previewUrl ?? null"
+            >
+              <img :src="attachment.previewUrl ?? ''" :alt="attachment.filename || '历史图片'" />
+              <span class="image-reuse-badge">已选</span>
+            </button>
+            <button
+              type="button"
+              class="image-remove-button"
+              aria-label="移除历史图片"
+              @click.stop="removeSelectedReuseAttachment(attachment.attachmentId)"
             >
               ×
             </button>
@@ -210,7 +232,25 @@
             :class="messageItem.role"
           >
             <div v-if="messageItem.role === 'user'" class="user-bubble">
-              {{ messageItem.content }}
+              <p v-if="messageItem.content" class="user-message-text">{{ messageItem.content }}</p>
+              <div v-if="messageItem.attachments?.length" class="message-attachments">
+                <button
+                  v-for="attachment in messageItem.attachments"
+                  :key="attachment.attachmentId"
+                  type="button"
+                  class="message-attachment"
+                  :class="{ disabled: !canPreviewAttachment(attachment) }"
+                  :disabled="!canPreviewAttachment(attachment)"
+                  @click="previewMessageAttachment(attachment)"
+                >
+                  <img
+                    v-if="canPreviewAttachment(attachment)"
+                    :src="attachment.previewUrl ?? ''"
+                    :alt="attachment.filename || '历史图片'"
+                  />
+                  <span v-else>{{ attachment.message || '图片已过期' }}</span>
+                </button>
+              </div>
             </div>
 
             <div v-else class="assistant-message">
@@ -280,9 +320,9 @@
 
         <footer class="conversation-composer">
           <div
-            v-if="pendingImages.length"
+            v-if="composerImageCount"
             class="pending-image-list"
-            :class="{ single: pendingImages.length === 1 }"
+            :class="{ single: composerImageCount === 1 }"
           >
             <div
               v-for="image in pendingImages"
@@ -299,6 +339,28 @@
                 class="image-remove-button"
                 aria-label="移除图片"
                 @click.stop="removePendingImage(image.localId)"
+              >
+                ×
+              </button>
+            </div>
+            <div
+              v-for="attachment in selectedReuseAttachments"
+              :key="`reuse-${attachment.attachmentId}`"
+              class="pending-image-item reused"
+            >
+              <button
+                type="button"
+                class="image-preview-button"
+                @click="imagePreviewUrl = attachment.previewUrl ?? null"
+              >
+                <img :src="attachment.previewUrl ?? ''" :alt="attachment.filename || '历史图片'" />
+                <span class="image-reuse-badge">已选</span>
+              </button>
+              <button
+                type="button"
+                class="image-remove-button"
+                aria-label="移除历史图片"
+                @click.stop="removeSelectedReuseAttachment(attachment.attachmentId)"
               >
                 ×
               </button>
@@ -425,6 +487,31 @@
       </div>
     </n-modal>
 
+    <n-modal v-model:show="historyImagePickerOpen" to="body" transform-origin="center">
+      <section class="history-image-modal" role="dialog" aria-modal="true" aria-labelledby="history-image-title">
+        <header class="history-image-header">
+          <div>
+            <h3 id="history-image-title">选择历史图片</h3>
+            <span>已选 {{ selectedReuseAttachmentIds.length }} 张</span>
+          </div>
+          <n-button quaternary size="small" @click="historyImagePickerOpen = false">完成</n-button>
+        </header>
+        <div class="history-image-grid">
+          <button
+            v-for="attachment in reusableHistoryAttachments"
+            :key="attachment.attachmentId"
+            type="button"
+            class="history-image-option"
+            :class="{ selected: isReuseAttachmentSelected(attachment.attachmentId) }"
+            @click="toggleReuseAttachment(attachment.attachmentId)"
+          >
+            <img :src="attachment.previewUrl ?? ''" :alt="attachment.filename || '历史图片'" />
+            <span v-if="isReuseAttachmentSelected(attachment.attachmentId)">已选择</span>
+          </button>
+        </div>
+      </section>
+    </n-modal>
+
     <n-modal v-model:show="thinkingConfigOpen" preset="card" class="thinking-config-modal" title="思考时长">
       <div class="config-row">
         <span>模型</span>
@@ -444,6 +531,26 @@
   </div>
 </template>
 
+<script lang="ts">
+export interface ReusableImageAttachmentLike {
+  attachmentId: number
+  expired: boolean
+  previewUrl?: string | null
+}
+
+export function selectReusableImageAttachments<T extends ReusableImageAttachmentLike>(attachments: T[]) {
+  return attachments.filter((item) => !item.expired && Boolean(item.previewUrl))
+}
+
+export function validateReuseImageCount(pendingCount: number, reuseCount: number) {
+  if (pendingCount + reuseCount > 8) {
+    return '单条消息最多上传 8 张图片'
+  }
+
+  return null
+}
+</script>
+
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -459,7 +566,7 @@ import {
   openChatStream,
   renameConversation
 } from '../api/chat'
-import type { AvailableModelRecord, ChatMessageRecord, ConversationRecord } from '../api/chat'
+import type { AvailableModelRecord, ChatAttachmentRecord, ChatMessageRecord, ConversationRecord } from '../api/chat'
 import { useAuthStore } from '../stores/auth'
 import { renderAssistantMarkdown } from './message-render.helpers'
 import { buildReasoningStatusText } from './reasoning-timer.helpers'
@@ -484,6 +591,18 @@ interface ChatMessageItem {
   reasoningStartedAt?: number
   reasoningFinishedAt?: number
   status?: string
+  attachments?: ChatAttachmentItem[]
+}
+
+interface ChatAttachmentItem {
+  attachmentId: number
+  filename?: string | null
+  contentType?: string | null
+  status?: string | null
+  expired: boolean
+  previewUrl?: string | null
+  message?: string | null
+  messageId?: number | null
 }
 
 interface AgentOption {
@@ -525,6 +644,8 @@ const streamControllerRef = ref<AbortController | null>(null)
 const imageInputRef = ref<HTMLInputElement | null>(null)
 const pendingImages = ref<PendingImage[]>([])
 const imagePreviewUrl = ref<string | null>(null)
+const historyImagePickerOpen = ref(false)
+const selectedReuseAttachmentIds = ref<number[]>([])
 const selectedModel = ref<number | null>(null)
 const availableModels = ref<AvailableModelRecord[]>([])
 const reasoningNow = ref(Date.now())
@@ -559,6 +680,13 @@ const uploadMenuOptions = computed(() => [
       ? '上传照片和文件'
       : '上传照片和文件（当前模型不支持图片输入）',
     disabled: !selectedModelItem.value?.imageInputSupported
+  },
+  {
+    key: 'reuse-image',
+    label: historyImageReuseDisabledReason.value
+      ? `选择历史图片（${historyImageReuseDisabledReason.value}）`
+      : '选择历史图片',
+    disabled: Boolean(historyImageReuseDisabledReason.value)
   }
 ])
 const hasUploadingImage = computed(() => pendingImages.value.some((image) => image.status === 'uploading'))
@@ -591,6 +719,36 @@ const currentMessages = computed(() =>
 )
 const hasMessages = computed(() => currentMessages.value.length > 0)
 const userInitial = computed(() => (authStore.displayName || '用户').trim().slice(0, 1).toUpperCase())
+const reusableHistoryAttachments = computed(() => {
+  const seenAttachmentIds = new Set<number>()
+  const attachments = selectReusableImageAttachments(
+    currentMessages.value.flatMap((item) => item.attachments ?? [])
+  )
+
+  return attachments.filter((item) => {
+    if (seenAttachmentIds.has(item.attachmentId)) {
+      return false
+    }
+    seenAttachmentIds.add(item.attachmentId)
+    return true
+  })
+})
+const selectedReuseAttachments = computed(() => {
+  const selectedIds = new Set(selectedReuseAttachmentIds.value)
+  return reusableHistoryAttachments.value.filter((item) => selectedIds.has(item.attachmentId))
+})
+const composerImageCount = computed(() => pendingImages.value.length + selectedReuseAttachments.value.length)
+const historyImageReuseDisabledReason = computed(() => {
+  if (!selectedModelItem.value?.imageInputSupported) {
+    return '当前模型不支持图片输入'
+  }
+
+  if (!reusableHistoryAttachments.value.length) {
+    return '当前会话暂无可复用图片'
+  }
+
+  return ''
+})
 
 function mapConversation(item: ConversationRecord): ConversationItem {
   return {
@@ -607,7 +765,21 @@ function mapMessage(item: ChatMessageRecord): ChatMessageItem {
     content: item.content,
     reasoningContent: item.reasoningContent ?? '',
     reasoningExpanded: false,
-    status: item.status
+    status: item.status,
+    attachments: item.attachments?.map(mapAttachment) ?? []
+  }
+}
+
+function mapAttachment(item: ChatAttachmentRecord): ChatAttachmentItem {
+  return {
+    attachmentId: item.attachmentId,
+    filename: item.filename,
+    contentType: item.contentType,
+    status: item.status,
+    expired: item.expired,
+    previewUrl: item.previewUrl ?? null,
+    message: item.message ?? null,
+    messageId: item.messageId ?? null
   }
 }
 
@@ -663,6 +835,7 @@ function createConversation() {
   workPanelOpen.value = false
   prompt.value = ''
   clearPendingImages()
+  clearSelectedReuseAttachments()
 }
 
 async function switchConversation(conversationId: number) {
@@ -670,6 +843,7 @@ async function switchConversation(conversationId: number) {
   openConversationMenuId.value = null
   prompt.value = ''
   clearPendingImages()
+  clearSelectedReuseAttachments()
   await loadMessages(conversationId)
 }
 
@@ -768,6 +942,8 @@ async function confirmDeleteConversation() {
     conversations.value = conversations.value.filter((item) => item.id !== conversationId)
     delete messageMap.value[conversationId]
     if (activeConversationId.value === conversationId) {
+      clearSelectedReuseAttachments()
+      clearPendingImages()
       activeConversationId.value = conversations.value[0]?.id ?? null
       if (activeConversationId.value) {
         await loadMessages(activeConversationId.value)
@@ -790,6 +966,11 @@ function selectAgent(agent: AgentOption) {
 }
 
 function handleUploadMenuSelect(key: string | number) {
+  if (key === 'reuse-image') {
+    openHistoryImagePicker()
+    return
+  }
+
   if (key !== 'upload-image') {
     return
   }
@@ -816,7 +997,7 @@ function handleImageSelected(event: Event) {
     return
   }
 
-  const countError = validateImageCount(pendingImages.value.length, files.length)
+  const countError = validateImageCount(composerImageCount.value, files.length)
   if (countError) {
     message.warning(countError)
     input.value = ''
@@ -842,6 +1023,40 @@ function handleImageSelected(event: Event) {
   }
 
   input.value = ''
+}
+
+function openHistoryImagePicker() {
+  if (historyImageReuseDisabledReason.value) {
+    message.warning(historyImageReuseDisabledReason.value)
+    return
+  }
+
+  historyImagePickerOpen.value = true
+}
+
+function isReuseAttachmentSelected(attachmentId: number) {
+  return selectedReuseAttachmentIds.value.includes(attachmentId)
+}
+
+function toggleReuseAttachment(attachmentId: number) {
+  if (isReuseAttachmentSelected(attachmentId)) {
+    removeSelectedReuseAttachment(attachmentId)
+    return
+  }
+
+  const attachment = reusableHistoryAttachments.value.find((item) => item.attachmentId === attachmentId)
+  if (!attachment) {
+    message.warning('只能选择未过期图片')
+    return
+  }
+
+  const countError = validateReuseImageCount(pendingImages.value.length, selectedReuseAttachmentIds.value.length + 1)
+  if (countError) {
+    message.warning(countError)
+    return
+  }
+
+  selectedReuseAttachmentIds.value = [...selectedReuseAttachmentIds.value, attachmentId]
 }
 
 function createLocalImageId() {
@@ -901,6 +1116,15 @@ function removePendingImage(localId: string) {
   pendingImages.value = pendingImages.value.filter((item) => item.localId !== localId)
 }
 
+function removeSelectedReuseAttachment(attachmentId: number) {
+  selectedReuseAttachmentIds.value = selectedReuseAttachmentIds.value.filter((item) => item !== attachmentId)
+}
+
+function clearSelectedReuseAttachments() {
+  selectedReuseAttachmentIds.value = []
+  historyImagePickerOpen.value = false
+}
+
 function clearPendingImages() {
   for (const image of pendingImages.value) {
     revokePendingImageUrl(image)
@@ -920,6 +1144,18 @@ function handleImagePreviewVisibleChange(show: boolean) {
   if (!show) {
     imagePreviewUrl.value = null
   }
+}
+
+function canPreviewAttachment(attachment: ChatAttachmentItem) {
+  return !attachment.expired && Boolean(attachment.previewUrl)
+}
+
+function previewMessageAttachment(attachment: ChatAttachmentItem) {
+  if (!canPreviewAttachment(attachment)) {
+    return
+  }
+
+  imagePreviewUrl.value = attachment.previewUrl ?? null
 }
 
 function copyMessage(content: string) {
@@ -1013,6 +1249,11 @@ function handleSend() {
     return
   }
 
+  if (composerImageCount.value > 0 && !selectedModelItem.value?.imageInputSupported) {
+    message.warning('当前模型不支持图片输入')
+    return
+  }
+
   if (!trimmedPrompt) {
     return
   }
@@ -1038,11 +1279,13 @@ function handleSend() {
   const messages = ensureConversationMessages(conversationId)
   const assistantMessageId = -Date.now()
   let currentAssistantMessageId = assistantMessageId
+  const currentReuseAttachments = selectedReuseAttachments.value.map((attachment) => ({ ...attachment }))
 
   messages.push({
     id: assistantMessageId - 1,
     role: 'user',
-    content: trimmedPrompt
+    content: trimmedPrompt,
+    attachments: currentReuseAttachments
   })
 
   messages.push({
@@ -1061,8 +1304,10 @@ function handleSend() {
   const currentAttachmentIds = pendingImages.value
     .filter((image) => image.status === 'ready' && typeof image.attachmentId === 'number')
     .map((image) => image.attachmentId as number)
+  const currentReuseAttachmentIds = currentReuseAttachments.map((attachment) => attachment.attachmentId)
   prompt.value = ''
   clearPendingImages()
+  clearSelectedReuseAttachments()
   streaming.value = true
 
   streamControllerRef.value = openChatStream(
@@ -1073,7 +1318,8 @@ function handleSend() {
       modelId: selectedModel.value,
       agentKey: agentOptions.some((agent) => agent.name === activeAgentName.value) ? activeAgentName.value : null,
       thinkingEnabled: currentThinkingEnabled,
-      attachmentIds: currentAttachmentIds
+      attachmentIds: currentAttachmentIds,
+      reuseAttachmentIds: currentReuseAttachmentIds
     },
     {
       onConversation: (data) => {
@@ -1229,7 +1475,9 @@ onMounted(() => {
 .image-preview-button,
 .image-remove-button,
 .agent-option,
-.mode-option {
+.mode-option,
+.message-attachment,
+.history-image-option {
   border: 0;
   background: transparent;
   color: inherit;
@@ -1689,6 +1937,11 @@ svg {
   height: 56px;
 }
 
+.pending-image-item.reused .image-preview-button {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
 .pending-image-list.single .pending-image-item {
   width: 148px;
   height: 148px;
@@ -1749,6 +2002,19 @@ svg {
   background: rgba(185, 28, 28, 0.72);
 }
 
+.image-reuse-badge {
+  position: absolute;
+  left: 5px;
+  bottom: 5px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(37, 99, 235, 0.92);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
 .image-preview-modal {
   display: grid;
   place-items: center;
@@ -1763,6 +2029,78 @@ svg {
   border-radius: 8px;
   object-fit: contain;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.3);
+}
+
+.history-image-modal {
+  width: min(92vw, 560px);
+  padding: 18px;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.22);
+}
+
+.history-image-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.history-image-header h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.history-image-header span {
+  display: block;
+  margin-top: 4px;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.history-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 10px;
+  max-height: min(56vh, 420px);
+  overflow-y: auto;
+}
+
+.history-image-option {
+  position: relative;
+  display: block;
+  aspect-ratio: 1;
+  padding: 0;
+  border-radius: 8px;
+  background: #f3f4f6;
+  overflow: hidden;
+}
+
+.history-image-option img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.history-image-option.selected {
+  outline: 3px solid #2563eb;
+  outline-offset: -3px;
+}
+
+.history-image-option span {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(37, 99, 235, 0.92);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .agent-tag {
@@ -1825,6 +2163,49 @@ svg {
   color: #111827;
   line-height: 1.7;
   white-space: pre-wrap;
+}
+
+.user-message-text {
+  margin: 0;
+}
+
+.message-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.message-attachment {
+  display: grid;
+  width: 72px;
+  height: 72px;
+  place-items: center;
+  padding: 0;
+  border-radius: 8px;
+  background: #e5e7eb;
+  color: #6b7280;
+  overflow: hidden;
+}
+
+.message-attachment img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.message-attachment span {
+  padding: 6px;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+  white-space: normal;
+}
+
+.message-attachment.disabled {
+  cursor: not-allowed;
+  opacity: 0.78;
 }
 
 .assistant-message {

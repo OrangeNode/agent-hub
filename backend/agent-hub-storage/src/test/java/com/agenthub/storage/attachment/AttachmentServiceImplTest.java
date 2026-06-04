@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -23,6 +24,10 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 class AttachmentServiceImplTest {
+
+    private static final byte[] PNG_MAGIC = new byte[] {
+            (byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A
+    };
 
     @Test
     void shouldCreatePendingImageUploadUrl() {
@@ -98,6 +103,8 @@ class AttachmentServiceImplTest {
         when(mapper.selectById(100L)).thenReturn(pendingAttachment);
         when(objectStorageClient.stat("users/7/chat-images/20260604/cat.png"))
                 .thenReturn(new ObjectMetadata(1024, "image/png"));
+        when(objectStorageClient.readFirstBytes("users/7/chat-images/20260604/cat.png", 16))
+                .thenReturn(PNG_MAGIC);
         ArgumentCaptor<ChatAttachment> attachmentCaptor = ArgumentCaptor.forClass(ChatAttachment.class);
 
         service.confirmUpload(7L, 100L);
@@ -108,6 +115,61 @@ class AttachmentServiceImplTest {
         assertThat(updatedAttachment.getStatus()).isEqualTo("READY");
         assertThat(updatedAttachment.getConfirmedAt()).isNotNull();
         assertThat(updatedAttachment.getUpdatedAt()).isNotNull();
+    }
+
+    @Test
+    void shouldRejectAttachmentWhenContentTypeAndExtensionMismatch() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        ChatAttachment pendingAttachment = pendingAttachment();
+        pendingAttachment.setFileExt("jpg");
+        when(mapper.selectById(100L)).thenReturn(pendingAttachment);
+        when(objectStorageClient.stat("users/7/chat-images/20260604/cat.png"))
+                .thenReturn(new ObjectMetadata(1024, "image/png"));
+
+        assertThatThrownBy(() -> service.confirmUpload(7L, 100L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("图片上传失败，请重试")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(mapper, never()).updateById(any(ChatAttachment.class));
+    }
+
+    @Test
+    void shouldRejectAttachmentWhenImageMagicMismatch() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        when(mapper.selectById(100L)).thenReturn(pendingAttachment());
+        when(objectStorageClient.stat("users/7/chat-images/20260604/cat.png"))
+                .thenReturn(new ObjectMetadata(1024, "image/png"));
+        when(objectStorageClient.readFirstBytes("users/7/chat-images/20260604/cat.png", 16))
+                .thenReturn(new byte[] {0x25, 0x50, 0x44, 0x46});
+
+        assertThatThrownBy(() -> service.confirmUpload(7L, 100L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("图片上传失败，请重试")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(mapper, never()).updateById(any(ChatAttachment.class));
+    }
+
+    @Test
+    void shouldPropagateObjectStorageInternalErrorWhenStatFails() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        when(mapper.selectById(100L)).thenReturn(pendingAttachment());
+        when(objectStorageClient.stat("users/7/chat-images/20260604/cat.png"))
+                .thenThrow(new BusinessException(ErrorCode.INTERNAL_ERROR, "对象存储操作失败"));
+
+        assertThatThrownBy(() -> service.confirmUpload(7L, 100L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("对象存储操作失败")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.INTERNAL_ERROR);
+        verify(mapper, never()).updateById(any(ChatAttachment.class));
     }
 
     private StorageProperties storageProperties() {
@@ -126,6 +188,7 @@ class AttachmentServiceImplTest {
         attachment.setObjectKey("users/7/chat-images/20260604/cat.png");
         attachment.setContentType("image/png");
         attachment.setFileSize(1024L);
+        attachment.setFileExt("png");
         return attachment;
     }
 }

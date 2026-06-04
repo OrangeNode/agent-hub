@@ -3,12 +3,14 @@ package com.agenthub.storage.object;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
 import com.agenthub.storage.config.StorageProperties;
+import io.minio.GetObjectArgs;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
 import io.minio.RemoveObjectArgs;
 import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
 import io.minio.http.Method;
+import java.io.InputStream;
 import java.time.Duration;
 import java.util.Map;
 
@@ -16,25 +18,26 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
 
     private static final String STORAGE_ERROR_MESSAGE = "对象存储操作失败";
 
-    private final MinioClient minioClient;
+    private final MinioClient internalClient;
+    private final MinioClient presignClient;
     private final StorageProperties properties;
 
-    public MinioObjectStorageClient(MinioClient minioClient, StorageProperties properties) {
-        this.minioClient = minioClient;
+    public MinioObjectStorageClient(MinioClient internalClient, MinioClient presignClient, StorageProperties properties) {
+        this.internalClient = internalClient;
+        this.presignClient = presignClient;
         this.properties = properties;
     }
 
     @Override
     public String presignPut(String objectKey, String contentType, Duration ttl) {
         try {
-            String url = minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+            return presignClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(Method.PUT)
                     .bucket(properties.getBucket())
                     .object(objectKey)
                     .expiry((int) ttl.toSeconds())
                     .extraHeaders(Map.of("Content-Type", contentType))
                     .build());
-            return replacePublicEndpoint(url);
         } catch (Exception exception) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, STORAGE_ERROR_MESSAGE);
         }
@@ -43,13 +46,12 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
     @Override
     public String presignGet(String objectKey, Duration ttl) {
         try {
-            String url = minioClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+            return presignClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(Method.GET)
                     .bucket(properties.getBucket())
                     .object(objectKey)
                     .expiry((int) ttl.toSeconds())
                     .build());
-            return replacePublicEndpoint(url);
         } catch (Exception exception) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, STORAGE_ERROR_MESSAGE);
         }
@@ -58,7 +60,7 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
     @Override
     public ObjectMetadata stat(String objectKey) {
         try {
-            StatObjectResponse response = minioClient.statObject(StatObjectArgs.builder()
+            StatObjectResponse response = internalClient.statObject(StatObjectArgs.builder()
                     .bucket(properties.getBucket())
                     .object(objectKey)
                     .build());
@@ -69,22 +71,26 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
     }
 
     @Override
+    public byte[] readFirstBytes(String objectKey, int length) {
+        try (InputStream inputStream = internalClient.getObject(GetObjectArgs.builder()
+                .bucket(properties.getBucket())
+                .object(objectKey)
+                .build())) {
+            return inputStream.readNBytes(length);
+        } catch (Exception exception) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, STORAGE_ERROR_MESSAGE);
+        }
+    }
+
+    @Override
     public void delete(String objectKey) {
         try {
-            minioClient.removeObject(RemoveObjectArgs.builder()
+            internalClient.removeObject(RemoveObjectArgs.builder()
                     .bucket(properties.getBucket())
                     .object(objectKey)
                     .build());
         } catch (Exception exception) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, STORAGE_ERROR_MESSAGE);
         }
-    }
-
-    private String replacePublicEndpoint(String url) {
-        if (properties.getPublicEndpoint() == null || properties.getPublicEndpoint().isBlank()
-                || properties.getEndpoint() == null || properties.getEndpoint().isBlank()) {
-            return url;
-        }
-        return url.replaceFirst("^" + java.util.regex.Pattern.quote(properties.getEndpoint()), properties.getPublicEndpoint());
     }
 }

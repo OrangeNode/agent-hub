@@ -10,5 +10,7 @@ public interface ObjectStorageClient {
 
     ObjectMetadata stat(String objectKey);
 
+    byte[] readFirstBytes(String objectKey, int length);
+
     void delete(String objectKey);
 }

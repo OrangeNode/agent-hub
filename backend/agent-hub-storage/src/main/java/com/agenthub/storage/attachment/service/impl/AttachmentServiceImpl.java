@@ -9,6 +9,7 @@ import com.agenthub.storage.attachment.service.AttachmentService;
 import com.agenthub.storage.config.StorageProperties;
 import com.agenthub.storage.object.ObjectMetadata;
 import com.agenthub.storage.object.ObjectStorageClient;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
@@ -35,6 +36,7 @@ public class AttachmentServiceImpl implements AttachmentService {
     private static final String UNSUPPORTED_IMAGE_MESSAGE = "仅支持 jpg、jpeg、png、webp、gif 图片";
     private static final String IMAGE_TOO_LARGE_MESSAGE = "图片不能超过 20MB";
     private static final String UPLOAD_FAILED_MESSAGE = "图片上传失败，请重试";
+    private static final int IMAGE_MAGIC_READ_LENGTH = 16;
 
     private final ChatAttachmentMapper chatAttachmentMapper;
     private final ObjectStorageClient objectStorageClient;
@@ -94,10 +96,25 @@ public class AttachmentServiceImpl implements AttachmentService {
         ObjectMetadata metadata;
         try {
             metadata = objectStorageClient.stat(attachment.getObjectKey());
-        } catch (RuntimeException exception) {
-            throw uploadFailedException();
+        } catch (BusinessException exception) {
+            throwStorageInternalOrUploadFailed(exception);
+            return;
         }
         if (metadata.size() != attachment.getFileSize() || !attachment.getContentType().equals(metadata.contentType())) {
+            throw uploadFailedException();
+        }
+        if (!contentTypeMatchesExtension(attachment.getContentType(), attachment.getFileExt())) {
+            throw uploadFailedException();
+        }
+
+        byte[] firstBytes;
+        try {
+            firstBytes = objectStorageClient.readFirstBytes(attachment.getObjectKey(), IMAGE_MAGIC_READ_LENGTH);
+        } catch (BusinessException exception) {
+            throwStorageInternalOrUploadFailed(exception);
+            return;
+        }
+        if (!hasValidImageMagic(attachment.getContentType(), attachment.getFileExt(), firstBytes)) {
             throw uploadFailedException();
         }
 
@@ -111,7 +128,8 @@ public class AttachmentServiceImpl implements AttachmentService {
     }
 
     private void validateImage(String contentType, String fileExt, long fileSize) {
-        if (!SUPPORTED_CONTENT_TYPES.contains(contentType) || !SUPPORTED_EXTENSIONS.contains(fileExt)) {
+        if (!SUPPORTED_CONTENT_TYPES.contains(contentType) || !SUPPORTED_EXTENSIONS.contains(fileExt)
+                || !contentTypeMatchesExtension(contentType, fileExt)) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, UNSUPPORTED_IMAGE_MESSAGE);
         }
         if (fileSize > MAX_IMAGE_SIZE) {
@@ -133,6 +151,56 @@ public class AttachmentServiceImpl implements AttachmentService {
     private String buildObjectKey(Long userId, String fileExt, OffsetDateTime now) {
         return "users/" + userId + "/chat-images/" + now.format(DateTimeFormatter.BASIC_ISO_DATE)
                 + "/" + UUID.randomUUID() + "." + fileExt;
+    }
+
+    private boolean contentTypeMatchesExtension(String contentType, String fileExt) {
+        return switch (fileExt) {
+            case "jpg", "jpeg" -> "image/jpeg".equals(contentType);
+            case "png" -> "image/png".equals(contentType);
+            case "webp" -> "image/webp".equals(contentType);
+            case "gif" -> "image/gif".equals(contentType);
+            default -> false;
+        };
+    }
+
+    private boolean hasValidImageMagic(String contentType, String fileExt, byte[] bytes) {
+        if (!contentTypeMatchesExtension(contentType, fileExt)) {
+            return false;
+        }
+        return switch (contentType) {
+            case "image/jpeg" -> startsWith(bytes, new byte[] {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF});
+            case "image/png" -> startsWith(bytes, new byte[] {
+                    (byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A
+            });
+            case "image/gif" -> startsWith(bytes, "GIF87a".getBytes(StandardCharsets.US_ASCII))
+                    || startsWith(bytes, "GIF89a".getBytes(StandardCharsets.US_ASCII));
+            case "image/webp" -> bytes.length >= 12
+                    && startsWith(bytes, "RIFF".getBytes(StandardCharsets.US_ASCII))
+                    && bytes[8] == 'W'
+                    && bytes[9] == 'E'
+                    && bytes[10] == 'B'
+                    && bytes[11] == 'P';
+            default -> false;
+        };
+    }
+
+    private boolean startsWith(byte[] bytes, byte[] prefix) {
+        if (bytes.length < prefix.length) {
+            return false;
+        }
+        for (int index = 0; index < prefix.length; index++) {
+            if (bytes[index] != prefix[index]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private void throwStorageInternalOrUploadFailed(BusinessException exception) {
+        if (exception.errorCode() == ErrorCode.INTERNAL_ERROR) {
+            throw exception;
+        }
+        throw uploadFailedException();
     }
 
     private BusinessException uploadFailedException() {

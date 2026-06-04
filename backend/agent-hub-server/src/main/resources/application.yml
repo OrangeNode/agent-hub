@@ -23,6 +23,17 @@ agent-hub:
     jwt:
       secret: ${AGENT_HUB_JWT_SECRET:agent-hub-demo-secret-agent-hub-demo-secret}
       ttl-hours: ${AGENT_HUB_JWT_TTL_HOURS:12}
+  storage:
+    endpoint: ${AGENT_HUB_STORAGE_ENDPOINT:http://127.0.0.1:9000}
+    public-endpoint: ${AGENT_HUB_STORAGE_PUBLIC_ENDPOINT:http://127.0.0.1:9000}
+    access-key: ${AGENT_HUB_STORAGE_ACCESS_KEY:agenthub}
+    secret-key: ${AGENT_HUB_STORAGE_SECRET_KEY:agenthub123}
+    bucket: ${AGENT_HUB_STORAGE_BUCKET:agent-hub-chat-images}
+    image-expire-days: ${AGENT_HUB_STORAGE_IMAGE_EXPIRE_DAYS:7}
+    presigned-upload-ttl-minutes: ${AGENT_HUB_STORAGE_PRESIGNED_UPLOAD_TTL_MINUTES:10}
+    presigned-read-ttl-minutes: ${AGENT_HUB_STORAGE_PRESIGNED_READ_TTL_MINUTES:10}
+    pending-cleanup-minutes: ${AGENT_HUB_STORAGE_PENDING_CLEANUP_MINUTES:60}
+    unused-ready-cleanup-hours: ${AGENT_HUB_STORAGE_UNUSED_READY_CLEANUP_HOURS:24}
   logging:
     path: logs/agent-hub
     access-log-enabled: true

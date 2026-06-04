@@ -3,6 +3,7 @@ package com.agenthub.storage.config;
 import com.agenthub.storage.object.MinioObjectStorageClient;
 import com.agenthub.storage.object.ObjectStorageClient;
 import io.minio.MinioClient;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -12,7 +13,7 @@ import org.springframework.context.annotation.Configuration;
 public class StorageAutoConfiguration {
 
     @Bean
-    public MinioClient minioClient(StorageProperties properties) {
+    public MinioClient internalMinioClient(StorageProperties properties) {
         return MinioClient.builder()
                 .endpoint(properties.getEndpoint())
                 .credentials(properties.getAccessKey(), properties.getSecretKey())
@@ -20,7 +21,22 @@ public class StorageAutoConfiguration {
     }
 
     @Bean
-    public ObjectStorageClient objectStorageClient(MinioClient minioClient, StorageProperties properties) {
-        return new MinioObjectStorageClient(minioClient, properties);
+    public MinioClient presignMinioClient(StorageProperties properties) {
+        String endpoint = properties.getPublicEndpoint() == null || properties.getPublicEndpoint().isBlank()
+                ? properties.getEndpoint()
+                : properties.getPublicEndpoint();
+        return MinioClient.builder()
+                .endpoint(endpoint)
+                .credentials(properties.getAccessKey(), properties.getSecretKey())
+                .build();
+    }
+
+    @Bean
+    public ObjectStorageClient objectStorageClient(
+            @Qualifier("internalMinioClient") MinioClient internalMinioClient,
+            @Qualifier("presignMinioClient") MinioClient presignMinioClient,
+            StorageProperties properties
+    ) {
+        return new MinioObjectStorageClient(internalMinioClient, presignMinioClient, properties);
     }
 }

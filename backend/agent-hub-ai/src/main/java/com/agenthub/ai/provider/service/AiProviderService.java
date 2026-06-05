@@ -2,6 +2,7 @@ package com.agenthub.ai.provider.service;
 
 import com.agenthub.ai.provider.command.CreateProviderCommand;
 import com.agenthub.ai.provider.command.UpdateProviderCommand;
+import com.agenthub.ai.provider.dto.AiProviderConnectionTestResult;
 import com.agenthub.ai.provider.dto.AiProviderItem;
 import java.util.List;
 
@@ -31,4 +32,6 @@ public interface AiProviderService {
      * 删除 AI 供应商配置。
      */
     void delete(Long providerId);
+
+    AiProviderConnectionTestResult testConnection(Long providerId);
 }

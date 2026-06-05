@@ -10,9 +10,11 @@ import static org.mockito.Mockito.when;
 import com.agenthub.ai.provider.command.CreateProviderCommand;
 import com.agenthub.ai.provider.command.UpdateProviderCommand;
 import com.agenthub.ai.provider.controller.request.CreateProviderRequest;
+import com.agenthub.ai.provider.dto.AiProviderConnectionTestResult;
 import com.agenthub.ai.provider.dto.AiProviderItem;
 import com.agenthub.ai.provider.entity.AiProvider;
 import com.agenthub.ai.provider.mapper.AiProviderMapper;
+import com.agenthub.ai.provider.service.AiProviderConnectivityTester;
 import com.agenthub.ai.provider.service.impl.AiProviderServiceImpl;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
@@ -29,7 +31,7 @@ class ProviderServiceImplTest {
     @Test
     void shouldCreateProviderWithApiKeyFlagAndWithoutPlainApiKey() {
         AiProviderMapper mapper = mock(AiProviderMapper.class);
-        AiProviderServiceImpl service = new AiProviderServiceImpl(mapper);
+        AiProviderServiceImpl service = service(mapper);
         ArgumentCaptor<AiProvider> providerCaptor = ArgumentCaptor.forClass(AiProvider.class);
         when(mapper.selectCount(any())).thenReturn(0L);
         when(mapper.insert(providerCaptor.capture())).thenAnswer(invocation -> {
@@ -62,7 +64,7 @@ class ProviderServiceImplTest {
     @Test
     void shouldRejectDuplicateProviderCode() {
         AiProviderMapper mapper = mock(AiProviderMapper.class);
-        AiProviderServiceImpl service = new AiProviderServiceImpl(mapper);
+        AiProviderServiceImpl service = service(mapper);
         when(mapper.selectCount(any())).thenReturn(1L);
 
         assertThatThrownBy(() -> service.create(new CreateProviderCommand(
@@ -88,7 +90,7 @@ class ProviderServiceImplTest {
     @Test
     void shouldKeepOldApiKeyCipherWhenUpdateApiKeyIsBlank() {
         AiProviderMapper mapper = mock(AiProviderMapper.class);
-        AiProviderServiceImpl service = new AiProviderServiceImpl(mapper);
+        AiProviderServiceImpl service = service(mapper);
         AiProvider existed = provider(1L, "openai", "old-secret");
         ArgumentCaptor<AiProvider> providerCaptor = ArgumentCaptor.forClass(AiProvider.class);
         when(mapper.selectById(1L)).thenReturn(existed, existed);
@@ -115,7 +117,7 @@ class ProviderServiceImplTest {
     @Test
     void shouldOverwriteOldApiKeyCipherWhenUpdateApiKeyIsNonblank() {
         AiProviderMapper mapper = mock(AiProviderMapper.class);
-        AiProviderServiceImpl service = new AiProviderServiceImpl(mapper);
+        AiProviderServiceImpl service = service(mapper);
         AiProvider existed = provider(1L, "openai", "old-secret");
         ArgumentCaptor<AiProvider> providerCaptor = ArgumentCaptor.forClass(AiProvider.class);
         when(mapper.selectById(1L)).thenReturn(existed, existed);
@@ -142,7 +144,7 @@ class ProviderServiceImplTest {
     @Test
     void shouldRejectDeletingNonexistentProvider() {
         AiProviderMapper mapper = mock(AiProviderMapper.class);
-        AiProviderServiceImpl service = new AiProviderServiceImpl(mapper);
+        AiProviderServiceImpl service = service(mapper);
         when(mapper.selectById(99L)).thenReturn(null);
 
         assertThatThrownBy(() -> service.delete(99L))
@@ -155,7 +157,7 @@ class ProviderServiceImplTest {
     @Test
     void shouldRequireProviderByIdAndReturnItem() {
         AiProviderMapper mapper = mock(AiProviderMapper.class);
-        AiProviderServiceImpl service = new AiProviderServiceImpl(mapper);
+        AiProviderServiceImpl service = service(mapper);
         when(mapper.selectById(1L)).thenReturn(provider(1L, "openai", "secret"));
 
         AiProviderItem item = service.requireById(1L);
@@ -166,9 +168,25 @@ class ProviderServiceImplTest {
     }
 
     @Test
+    void shouldTestProviderConnectionWithSavedConfig() {
+        AiProviderMapper mapper = mock(AiProviderMapper.class);
+        AiProviderConnectivityTester tester = mock(AiProviderConnectivityTester.class);
+        AiProvider provider = provider(1L, "openai", "secret");
+        AiProviderConnectionTestResult expected = new AiProviderConnectionTestResult(true, "连接成功", 200);
+        AiProviderServiceImpl service = new AiProviderServiceImpl(mapper, tester);
+        when(mapper.selectById(1L)).thenReturn(provider);
+        when(tester.test(provider)).thenReturn(expected);
+
+        AiProviderConnectionTestResult result = service.testConnection(1L);
+
+        assertThat(result).isEqualTo(expected);
+        verify(tester).test(provider);
+    }
+
+    @Test
     void shouldRejectRequiringNonexistentProvider() {
         AiProviderMapper mapper = mock(AiProviderMapper.class);
-        AiProviderServiceImpl service = new AiProviderServiceImpl(mapper);
+        AiProviderServiceImpl service = service(mapper);
         when(mapper.selectById(99L)).thenReturn(null);
 
         assertThatThrownBy(() -> service.requireById(99L))
@@ -219,5 +237,9 @@ class ProviderServiceImplTest {
         provider.setEnabled(true);
         provider.setSort(0);
         return provider;
+    }
+
+    private AiProviderServiceImpl service(AiProviderMapper mapper) {
+        return new AiProviderServiceImpl(mapper, mock(AiProviderConnectivityTester.class));
     }
 }

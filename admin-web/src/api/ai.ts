@@ -1,6 +1,7 @@
 import http from './http'
 import type { ApiResponse } from '../types/rbac'
 import type {
+  AiProviderConnectionTestResult,
   AiModelFormPayload,
   AiModelRecord,
   AiProviderFormPayload,
@@ -27,6 +28,13 @@ export async function updateAiProvider(
 
 export async function deleteAiProvider(providerId: number) {
   await http.delete(`/ai/providers/${providerId}`)
+}
+
+export async function testAiProviderConnection(providerId: number) {
+  const response = await http.post<ApiResponse<AiProviderConnectionTestResult>>(
+    `/ai/providers/${providerId}/test-connection`
+  )
+  return response.data.data
 }
 
 export async function fetchAiModels() {

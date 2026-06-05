@@ -2,9 +2,11 @@ package com.agenthub.ai.provider.service.impl;
 
 import com.agenthub.ai.provider.command.CreateProviderCommand;
 import com.agenthub.ai.provider.command.UpdateProviderCommand;
+import com.agenthub.ai.provider.dto.AiProviderConnectionTestResult;
 import com.agenthub.ai.provider.dto.AiProviderItem;
 import com.agenthub.ai.provider.entity.AiProvider;
 import com.agenthub.ai.provider.mapper.AiProviderMapper;
+import com.agenthub.ai.provider.service.AiProviderConnectivityTester;
 import com.agenthub.ai.provider.service.AiProviderService;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
@@ -20,9 +22,11 @@ public class AiProviderServiceImpl implements AiProviderService {
     private static final String DEFAULT_JSON = "{}";
 
     private final AiProviderMapper providerMapper;
+    private final AiProviderConnectivityTester connectivityTester;
 
-    public AiProviderServiceImpl(AiProviderMapper providerMapper) {
+    public AiProviderServiceImpl(AiProviderMapper providerMapper, AiProviderConnectivityTester connectivityTester) {
         this.providerMapper = providerMapper;
+        this.connectivityTester = connectivityTester;
     }
 
     /**
@@ -111,6 +115,11 @@ public class AiProviderServiceImpl implements AiProviderService {
     public void delete(Long providerId) {
         requireProvider(providerId);
         providerMapper.deleteById((Serializable) providerId);
+    }
+
+    @Override
+    public AiProviderConnectionTestResult testConnection(Long providerId) {
+        return connectivityTester.test(requireProvider(providerId));
     }
 
     /**

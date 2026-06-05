@@ -4,6 +4,7 @@ import com.agenthub.ai.provider.command.CreateProviderCommand;
 import com.agenthub.ai.provider.command.UpdateProviderCommand;
 import com.agenthub.ai.provider.controller.request.CreateProviderRequest;
 import com.agenthub.ai.provider.controller.request.UpdateProviderRequest;
+import com.agenthub.ai.provider.dto.AiProviderConnectionTestResult;
 import com.agenthub.ai.provider.dto.AiProviderItem;
 import com.agenthub.ai.provider.service.AiProviderService;
 import com.agenthub.common.api.ApiResponse;
@@ -87,5 +88,10 @@ public class AiProviderController {
     public ApiResponse<Void> deleteProvider(@PathVariable Long providerId) {
         providerService.delete(providerId);
         return ApiResponse.success();
+    }
+
+    @PostMapping("/{providerId}/test-connection")
+    public ApiResponse<AiProviderConnectionTestResult> testConnection(@PathVariable Long providerId) {
+        return ApiResponse.success(providerService.testConnection(providerId));
     }
 }

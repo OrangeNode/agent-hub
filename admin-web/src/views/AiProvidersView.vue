@@ -117,6 +117,7 @@ import {
   createAiProvider,
   deleteAiProvider,
   fetchAiProviders,
+  testAiProviderConnection,
   updateAiProvider
 } from '../api/ai'
 import type { AiProviderFormPayload, AiProviderRecord } from '../types/ai'
@@ -129,6 +130,7 @@ const protocolFilter = ref<string | null>(null)
 const statusFilter = ref<string | null>(null)
 const providers = ref<AiProviderRecord[]>([])
 const editingProvider = ref<AiProviderRecord | null>(null)
+const testingProviderIds = ref<Set<number>>(new Set())
 
 const providerTypeOptions: SelectOption[] = [
   { label: 'LLM', value: 'LLM' }
@@ -213,11 +215,22 @@ const columns: DataTableColumns<AiProviderRecord> = [
   {
     title: '操作',
     key: 'actions',
-    width: 220,
+    width: 280,
     render: (row) =>
       h(NSpace, { wrap: false }, {
         default: () => [
           h(NButton, { size: 'small', tertiary: true, onClick: () => openEdit(row) }, { default: () => '编辑' }),
+          h(
+            NButton,
+            {
+              size: 'small',
+              tertiary: true,
+              loading: testingProviderIds.value.has(row.providerId),
+              disabled: testingProviderIds.value.has(row.providerId),
+              onClick: () => handleTestConnection(row)
+            },
+            { default: () => '测试' }
+          ),
           h(
             NSwitch,
             {
@@ -339,6 +352,23 @@ async function handleStatusChange(provider: AiProviderRecord, enabled: boolean) 
   }
 }
 
+async function handleTestConnection(provider: AiProviderRecord) {
+  setProviderTesting(provider.providerId, true)
+  try {
+    const result = await testAiProviderConnection(provider.providerId)
+    const text = `${provider.name}：${result.message}`
+    if (result.success) {
+      message.success(text)
+    } else {
+      message.error(text)
+    }
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '测试连通性失败')
+  } finally {
+    setProviderTesting(provider.providerId, false)
+  }
+}
+
 async function handleDelete(providerId: number) {
   try {
     await deleteAiProvider(providerId)
@@ -347,6 +377,16 @@ async function handleDelete(providerId: number) {
   } catch (error) {
     message.error(error instanceof Error ? error.message : '删除供应商失败')
   }
+}
+
+function setProviderTesting(providerId: number, testing: boolean) {
+  const next = new Set(testingProviderIds.value)
+  if (testing) {
+    next.add(providerId)
+  } else {
+    next.delete(providerId)
+  }
+  testingProviderIds.value = next
 }
 
 onMounted(() => {

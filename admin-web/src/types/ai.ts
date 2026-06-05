@@ -27,6 +27,12 @@ export interface AiProviderFormPayload {
   sort: number
 }
 
+export interface AiProviderConnectionTestResult {
+  success: boolean
+  message: string
+  statusCode?: number | null
+}
+
 export interface AiModelRecord {
   modelId: number
   providerId: number

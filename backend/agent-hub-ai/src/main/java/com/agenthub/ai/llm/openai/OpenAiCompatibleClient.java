@@ -12,6 +12,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -23,12 +24,16 @@ public class OpenAiCompatibleClient implements LlmClient {
 
     private static final String THINK_OPEN_TAG = "<think>";
     private static final String THINK_CLOSE_TAG = "</think>";
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
+    private static final Duration STREAM_REQUEST_TIMEOUT = Duration.ofSeconds(60);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final HttpClient httpClient;
 
     public OpenAiCompatibleClient() {
-        this(HttpClient.newHttpClient());
+        this(HttpClient.newBuilder()
+                .connectTimeout(CONNECT_TIMEOUT)
+                .build());
     }
 
     public OpenAiCompatibleClient(HttpClient httpClient) {
@@ -120,6 +125,7 @@ public class OpenAiCompatibleClient implements LlmClient {
         String body = OBJECT_MAPPER.writeValueAsString(buildRequestBody(request));
         return HttpRequest.newBuilder()
                 .uri(URI.create(endpoint(request.baseUrl(), "/chat/completions")))
+                .timeout(STREAM_REQUEST_TIMEOUT)
                 .header("Authorization", "Bearer " + request.apiKey())
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body))

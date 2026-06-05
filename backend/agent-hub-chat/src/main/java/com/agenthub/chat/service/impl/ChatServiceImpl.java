@@ -380,11 +380,10 @@ public class ChatServiceImpl implements ChatService {
             LlmClient client = llmClientFactory.apply(runtimeConfig.protocolType());
             StringBuilder title = new StringBuilder();
             client.stream(buildTitleRequest(runtimeConfig, prompt), chunk -> {
-                switch (chunk.type()) {
-                    case ANSWER_DELTA -> title.append(defaultString(chunk.content()));
-                    case ERROR -> title.setLength(0);
-                    case REASONING_DELTA, DONE, USAGE -> {
-                    }
+                if (chunk.type() == LlmStreamChunkType.ANSWER_DELTA) {
+                    title.append(defaultString(chunk.content()));
+                } else if (chunk.type() == LlmStreamChunkType.ERROR) {
+                    title.setLength(0);
                 }
             });
             String cleanedTitle = titleService.cleanGeneratedTitle(title.toString());
@@ -620,37 +619,32 @@ public class ChatServiceImpl implements ChatService {
         if (finished.get()) {
             return;
         }
-        switch (chunk.type()) {
-            case REASONING_DELTA -> {
-                if (!reasoningRequested) {
-                    return;
-                }
-                reasoningContent.append(defaultString(chunk.content()));
-                assistantMessage.setReasoningContent(reasoningContent.toString());
-                if (!send(emitter, SseEventType.REASONING_DELTA, new SseEventData.Delta(defaultString(chunk.content())))
-                        && finished.compareAndSet(false, true)) {
-                    failAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED);
-                }
+        LlmStreamChunkType type = chunk.type();
+        String delta = defaultString(chunk.content());
+        if (type == LlmStreamChunkType.REASONING_DELTA) {
+            if (!reasoningRequested) {
+                return;
             }
-            case ANSWER_DELTA -> {
-                content.append(defaultString(chunk.content()));
-                assistantMessage.setContent(content.toString());
-                if (!send(emitter, SseEventType.ANSWER_DELTA, new SseEventData.Delta(defaultString(chunk.content())))
-                        && finished.compareAndSet(false, true)) {
-                    failAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED);
-                }
+            reasoningContent.append(delta);
+            assistantMessage.setReasoningContent(reasoningContent.toString());
+            if (!send(emitter, SseEventType.REASONING_DELTA, new SseEventData.Delta(delta))
+                    && finished.compareAndSet(false, true)) {
+                failAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED);
             }
-            case ERROR -> {
-                if (finished.compareAndSet(false, true)) {
-                    failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent, chunk.errorMessage());
-                }
+        } else if (type == LlmStreamChunkType.ANSWER_DELTA) {
+            content.append(delta);
+            assistantMessage.setContent(content.toString());
+            if (!send(emitter, SseEventType.ANSWER_DELTA, new SseEventData.Delta(delta))
+                    && finished.compareAndSet(false, true)) {
+                failAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED);
             }
-            case DONE -> {
-                if (finished.compareAndSet(false, true)) {
-                    completeAssistantMessage(emitter, assistantMessage, content, reasoningContent);
-                }
+        } else if (type == LlmStreamChunkType.ERROR) {
+            if (finished.compareAndSet(false, true)) {
+                failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent, chunk.errorMessage());
             }
-            case USAGE -> {
+        } else if (type == LlmStreamChunkType.DONE) {
+            if (finished.compareAndSet(false, true)) {
+                completeAssistantMessage(emitter, assistantMessage, content, reasoningContent);
             }
         }
     }

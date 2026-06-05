@@ -12,6 +12,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -132,6 +133,16 @@ class OpenAiCompatibleClientTest {
         assertThat(body.has("chat_template_kwargs")).isTrue();
         assertThat(body.path("chat_template_kwargs").has("enable_thinking")).isTrue();
         assertThat(body.path("chat_template_kwargs").path("enable_thinking").asBoolean()).isFalse();
+    }
+
+    @Test
+    void shouldSetRequestTimeoutForStreamingCall() {
+        CapturingOpenAiClient capturingClient = new CapturingOpenAiClient();
+
+        capturingClient.stream(request("http://localhost:3000/v1"), ignored -> {
+        });
+
+        assertThat(capturingClient.capturedRequest.timeout()).contains(Duration.ofSeconds(60));
     }
 
     @Test

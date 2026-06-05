@@ -571,6 +571,7 @@ import { useAuthStore } from '../stores/auth'
 import { renderAssistantMarkdown } from './message-render.helpers'
 import { buildReasoningStatusText } from './reasoning-timer.helpers'
 import { validateImageCount, validateImageFile } from './chat-attachments.helpers'
+import { updatePendingImageByLocalId } from './chat-pending-images.helpers'
 import ThinkingModeSelect from './ThinkingModeSelect.vue'
 
 type ChatRole = 'user' | 'assistant'
@@ -1027,7 +1028,7 @@ function handleImageSelected(event: Event) {
       status: 'uploading'
     }
     pendingImages.value.push(item)
-    void uploadImage(item)
+    void uploadImage(item.localId)
   }
 
   input.value = ''
@@ -1071,19 +1072,33 @@ function createLocalImageId() {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-async function uploadImage(item: PendingImage) {
+async function uploadImage(localId: string) {
+  const item = pendingImages.value.find((image) => image.localId === localId)
+  if (!item) {
+    return
+  }
+
   try {
     const signed = await createImageUploadUrl(item.file.name, item.file.type, item.file.size)
-    item.attachmentId = signed.attachmentId
+    if (!updatePendingImageByLocalId(pendingImages, localId, { attachmentId: signed.attachmentId })) {
+      return
+    }
     await uploadImageFile(signed.uploadUrl, signed.headers, item.file, (progress) => {
-      item.progress = progress
+      updatePendingImageByLocalId(pendingImages, localId, { progress })
     })
+    if (!pendingImages.value.some((image) => image.localId === localId)) {
+      return
+    }
     await confirmImageUpload(signed.attachmentId)
-    item.status = 'ready'
-    item.progress = 100
+    updatePendingImageByLocalId(pendingImages, localId, {
+      status: 'ready',
+      progress: 100
+    })
   } catch {
-    item.status = 'failed'
-    item.error = '图片上传失败，请重试'
+    updatePendingImageByLocalId(pendingImages, localId, {
+      status: 'failed',
+      error: '图片上传失败，请重试'
+    })
   }
 }
 
@@ -2019,13 +2034,15 @@ svg {
   width: 20px;
   height: 20px;
   place-items: center;
+  padding: 0;
   border: 1px solid #ffffff;
   border-radius: 999px;
   background: #111827;
   color: #ffffff;
   cursor: pointer;
   font-size: 16px;
-  line-height: 1;
+  font-family: Arial, Helvetica, sans-serif;
+  line-height: 20px;
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.2);
 }
 

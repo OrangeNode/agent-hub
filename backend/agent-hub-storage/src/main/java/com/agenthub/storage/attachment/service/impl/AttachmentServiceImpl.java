@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -342,10 +343,7 @@ public class AttachmentServiceImpl implements AttachmentService {
     }
 
     private AttachmentReference toAttachmentReference(ChatAttachment attachment, int imageTokenEstimate) {
-        String readUrl = objectStorageClient.presignGet(
-                attachment.getObjectKey(),
-                Duration.ofMinutes(storageProperties.getPresignedReadTtlMinutes())
-        );
+        String readUrl = toImageDataUrl(attachment);
         return new AttachmentReference(
                 attachment.getId(),
                 attachment.getOriginalFilename(),
@@ -353,6 +351,12 @@ public class AttachmentServiceImpl implements AttachmentService {
                 readUrl,
                 imageTokenEstimate
         );
+    }
+
+    private String toImageDataUrl(ChatAttachment attachment) {
+        // 模型供应商通常无法访问本地 MinIO 预签名地址，聊天入参改为内嵌 data URL。
+        byte[] bytes = objectStorageClient.readBytes(attachment.getObjectKey());
+        return "data:" + attachment.getContentType() + ";base64," + Base64.getEncoder().encodeToString(bytes);
     }
 
     private AttachmentItem toAttachmentItem(ChatAttachment attachment) {

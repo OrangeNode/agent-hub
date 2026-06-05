@@ -85,6 +85,18 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
     }
 
     @Override
+    public byte[] readBytes(String objectKey) {
+        try (InputStream inputStream = internalClient.getObject(GetObjectArgs.builder()
+                .bucket(properties.getBucket())
+                .object(objectKey)
+                .build())) {
+            return inputStream.readAllBytes();
+        } catch (Exception exception) {
+            throw storageException(exception);
+        }
+    }
+
+    @Override
     public void delete(String objectKey) {
         try {
             internalClient.removeObject(RemoveObjectArgs.builder()

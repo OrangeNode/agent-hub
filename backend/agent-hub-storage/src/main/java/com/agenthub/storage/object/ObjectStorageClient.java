@@ -12,5 +12,7 @@ public interface ObjectStorageClient {
 
     byte[] readFirstBytes(String objectKey, int length);
 
+    byte[] readBytes(String objectKey);
+
     void delete(String objectKey);
 }

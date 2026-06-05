@@ -6,11 +6,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
+import com.agenthub.storage.attachment.dto.AttachmentReference;
 import com.agenthub.storage.attachment.dto.AttachmentUploadUrl;
 import com.agenthub.storage.attachment.entity.ChatAttachment;
 import com.agenthub.storage.attachment.mapper.ChatAttachmentMapper;
@@ -197,7 +199,7 @@ class AttachmentServiceImplTest {
                 .hasMessage("单条消息最多上传 8 张图片")
                 .extracting("errorCode")
                 .isEqualTo(ErrorCode.BAD_REQUEST);
-        verify(objectStorageClient, never()).presignGet(any(), any());
+        verify(objectStorageClient, never()).readBytes(any());
     }
 
     @Test
@@ -207,14 +209,31 @@ class AttachmentServiceImplTest {
         AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
         ChatAttachment attachment = readyAttachment(1L, 7L, 200L, null, OffsetDateTime.now().plusDays(1));
         when(mapper.selectByIds(List.of(1L))).thenReturn(List.of(attachment));
-        when(objectStorageClient.presignGet("users/7/chat-images/20260604/cat.png", Duration.ofMinutes(15)))
-                .thenReturn("https://example.com/cat.png");
+        when(objectStorageClient.readBytes("users/7/chat-images/20260604/cat.png"))
+                .thenReturn(PNG_MAGIC);
 
-        List<com.agenthub.storage.attachment.dto.AttachmentReference> references =
+        List<AttachmentReference> references =
                 service.resolveImagesForChat(7L, 200L, List.of(1L), List.of(1L), 1500);
 
         assertThat(references).hasSize(1);
         assertThat(references.getFirst().attachmentId()).isEqualTo(1L);
+        verify(objectStorageClient, times(1)).readBytes("users/7/chat-images/20260604/cat.png");
+    }
+
+    @Test
+    void shouldResolveChatImageAsDataUrlForLlmInput() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        ChatAttachment attachment = readyAttachment(1L, 7L, 200L, null, OffsetDateTime.now().plusDays(1));
+        when(mapper.selectByIds(List.of(1L))).thenReturn(List.of(attachment));
+        when(objectStorageClient.readBytes("users/7/chat-images/20260604/cat.png"))
+                .thenReturn(PNG_MAGIC);
+
+        List<AttachmentReference> references =
+                service.resolveImagesForChat(7L, 200L, List.of(1L), List.of(), 1500);
+
+        assertThat(references.getFirst().readUrl()).startsWith("data:image/png;base64,");
     }
 
     @Test
@@ -225,17 +244,17 @@ class AttachmentServiceImplTest {
         ChatAttachment olderImage = readyAttachment(1L, 7L, 200L, 300L, OffsetDateTime.now().plusDays(1));
         ChatAttachment latestImage = readyAttachment(2L, 7L, 200L, 302L, OffsetDateTime.now().plusDays(1));
         when(mapper.selectList(any())).thenReturn(List.of(latestImage, olderImage));
-        when(objectStorageClient.presignGet("users/7/chat-images/20260604/cat.png", Duration.ofMinutes(15)))
-                .thenReturn("https://example.com/cat.png");
+        when(objectStorageClient.readBytes("users/7/chat-images/20260604/cat.png"))
+                .thenReturn(PNG_MAGIC);
 
-        List<com.agenthub.storage.attachment.dto.AttachmentReference> references =
+        List<AttachmentReference> references =
                 service.resolveImagesForChat(7L, 200L, List.of(), List.of(), 1500);
 
         assertThat(references).hasSize(2);
-        assertThat(references).extracting(com.agenthub.storage.attachment.dto.AttachmentReference::attachmentId)
+        assertThat(references).extracting(AttachmentReference::attachmentId)
                 .containsExactly(1L, 2L);
-        verify(objectStorageClient, org.mockito.Mockito.times(2))
-                .presignGet("users/7/chat-images/20260604/cat.png", Duration.ofMinutes(15));
+        verify(objectStorageClient, times(2))
+                .readBytes("users/7/chat-images/20260604/cat.png");
     }
 
     @Test
@@ -253,7 +272,7 @@ class AttachmentServiceImplTest {
 
         service.bindToMessage(7L, 200L, 300L, attachmentIds);
 
-        verify(mapper, org.mockito.Mockito.times(2)).update(attachmentCaptor.capture(), any());
+        verify(mapper, times(2)).update(attachmentCaptor.capture(), any());
         assertThat(attachmentCaptor.getAllValues())
                 .extracting(ChatAttachment::getId)
                 .containsExactly(1L, 2L);
@@ -298,7 +317,7 @@ class AttachmentServiceImplTest {
                 .hasMessage("图片上传失败，请重试")
                 .extracting("errorCode")
                 .isEqualTo(ErrorCode.BAD_REQUEST);
-        verify(mapper, org.mockito.Mockito.times(1)).update(any(ChatAttachment.class), any());
+        verify(mapper, times(1)).update(any(ChatAttachment.class), any());
     }
 
     @Test
@@ -385,7 +404,7 @@ class AttachmentServiceImplTest {
                 .hasMessage(message)
                 .extracting("errorCode")
                 .isEqualTo(ErrorCode.BAD_REQUEST);
-        verify(objectStorageClient, never()).presignGet(any(), any());
+        verify(objectStorageClient, never()).readBytes(any());
     }
 
     private ChatAttachment readyAttachment(

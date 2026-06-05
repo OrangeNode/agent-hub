@@ -57,6 +57,17 @@ export interface AvailableModelRecord {
   sort: number
 }
 
+export interface AvailableAgentRecord {
+  agentId: number
+  agentKey: string
+  name: string
+  shortName?: string | null
+  description?: string | null
+  defaultModelId?: number | null
+  enabled: boolean
+  sort: number
+}
+
 export interface OpenChatStreamOptions {
   prompt: string
   token: string
@@ -271,6 +282,11 @@ export async function renameConversation(conversationId: number, title: string) 
 
 export async function fetchAvailableModels() {
   const response = await http.get<ApiResponse<AvailableModelRecord[]>>('/ai/models/available')
+  return response.data.data
+}
+
+export async function fetchAvailableAgents() {
+  const response = await http.get<ApiResponse<AvailableAgentRecord[]>>('/agents/available')
   return response.data.data
 }
 

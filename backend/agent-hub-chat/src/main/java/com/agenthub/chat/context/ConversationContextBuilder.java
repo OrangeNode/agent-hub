@@ -79,6 +79,17 @@ public class ConversationContextBuilder {
             String currentPrompt,
             List<AttachmentReference> images
     ) {
+        return build(userId, conversationId, runtimeConfig, currentPrompt, images, null);
+    }
+
+    public ConversationContext build(
+            Long userId,
+            Long conversationId,
+            AiModelRuntimeConfig runtimeConfig,
+            String currentPrompt,
+            List<AttachmentReference> images,
+            String systemPrompt
+    ) {
         int contextWindow = resolveContextWindow(runtimeConfig);
         int reservedOutputTokens = resolveReservedOutputTokens(runtimeConfig);
         int historyImageTokenEstimate = resolveImageTokenEstimate(runtimeConfig);
@@ -110,6 +121,15 @@ public class ConversationContextBuilder {
 
         List<LlmMessage> messages = new ArrayList<>();
         int usedTokens = 0;
+        if (hasText(systemPrompt)) {
+            LlmMessage systemMessage = new LlmMessage("system", systemPrompt.strip());
+            int systemTokens = estimateMessage(systemMessage, historyImageTokenEstimate);
+            if (systemTokens + currentInputEstimate > availableInputTokens) {
+                throw new BusinessException(ErrorCode.BAD_REQUEST, CURRENT_INPUT_TOO_LONG);
+            }
+            messages.add(systemMessage);
+            usedTokens += systemTokens;
+        }
         if (effectiveSummary != null && hasText(effectiveSummary.getSummary())) {
             LlmMessage summaryMessage = new LlmMessage("system", "以下是此前会话摘要：\n" + effectiveSummary.getSummary());
             int summaryTokens = estimateMessage(summaryMessage, historyImageTokenEstimate);

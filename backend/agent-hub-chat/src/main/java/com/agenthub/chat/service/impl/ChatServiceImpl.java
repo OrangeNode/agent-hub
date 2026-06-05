@@ -1,5 +1,7 @@
 package com.agenthub.chat.service.impl;
 
+import com.agenthub.agent.dto.AgentRuntimeConfig;
+import com.agenthub.agent.service.AgentService;
 import com.agenthub.ai.llm.LlmClient;
 import com.agenthub.ai.llm.LlmClientFactory;
 import com.agenthub.ai.llm.LlmMessage;
@@ -66,6 +68,7 @@ public class ChatServiceImpl implements ChatService {
     private final ConversationTitleService titleService;
     private final TransactionTemplate transactionTemplate;
     private final AttachmentService attachmentService;
+    private final AgentService agentService;
     private final SseEventSender sseEventSender;
     private final Function<String, LlmClient> llmClientFactory;
     private final ConversationContextBuilder contextBuilder;
@@ -79,10 +82,11 @@ public class ChatServiceImpl implements ChatService {
             ConversationTitleService titleService,
             TransactionTemplate transactionTemplate,
             AttachmentService attachmentService,
+            AgentService agentService,
             ConversationContextBuilder contextBuilder
     ) {
         this(conversationMapper, messageMapper, modelService, titleService, transactionTemplate, new SseEventSender(),
-                attachmentService, contextBuilder, LlmClientFactory::create, defaultStreamExecutor());
+                attachmentService, agentService, contextBuilder, LlmClientFactory::create, defaultStreamExecutor());
     }
 
     public ChatServiceImpl(
@@ -97,12 +101,30 @@ public class ChatServiceImpl implements ChatService {
             Function<String, LlmClient> llmClientFactory,
             Executor streamExecutor
     ) {
+        this(conversationMapper, messageMapper, modelService, titleService, transactionTemplate, sseEventSender,
+                attachmentService, null, contextBuilder, llmClientFactory, streamExecutor);
+    }
+
+    public ChatServiceImpl(
+            ChatConversationMapper conversationMapper,
+            ChatMessageMapper messageMapper,
+            AiModelService modelService,
+            ConversationTitleService titleService,
+            TransactionTemplate transactionTemplate,
+            SseEventSender sseEventSender,
+            AttachmentService attachmentService,
+            AgentService agentService,
+            ConversationContextBuilder contextBuilder,
+            Function<String, LlmClient> llmClientFactory,
+            Executor streamExecutor
+    ) {
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
         this.modelService = modelService;
         this.titleService = titleService;
         this.transactionTemplate = transactionTemplate;
         this.attachmentService = attachmentService;
+        this.agentService = agentService;
         this.sseEventSender = sseEventSender;
         this.llmClientFactory = llmClientFactory;
         this.contextBuilder = contextBuilder;
@@ -125,13 +147,15 @@ public class ChatServiceImpl implements ChatService {
     ) {
         String normalizedPrompt = normalizePrompt(prompt);
         requireChatInput(normalizedPrompt, attachmentIds, reuseAttachmentIds);
-        AiModelRuntimeConfig runtimeConfig = requireRuntimeConfig(modelId);
+        AgentRuntimeConfig agentRuntime = resolveAgentRuntime(agentKey);
+        AiModelRuntimeConfig runtimeConfig = requireRuntimeConfig(modelId, agentRuntime);
         ChatPreparation preparation = prepareChat(
                 userId,
                 conversationId,
-                agentKey,
+                resolvedAgentKey(agentKey, agentRuntime),
                 normalizedPrompt,
                 runtimeConfig,
+                agentRuntime,
                 attachmentIds,
                 reuseAttachmentIds
         );
@@ -162,6 +186,7 @@ public class ChatServiceImpl implements ChatService {
             String agentKey,
             String normalizedPrompt,
             AiModelRuntimeConfig runtimeConfig,
+            AgentRuntimeConfig agentRuntime,
             List<Long> attachmentIds,
             List<Long> reuseAttachmentIds
     ) {
@@ -180,7 +205,8 @@ public class ChatServiceImpl implements ChatService {
         if (!images.isEmpty() && !runtimeConfig.imageInputSupported()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "当前模型不支持图片输入");
         }
-        ConversationContext context = contextBuilder.build(userId, resolvedConversationId, runtimeConfig, normalizedPrompt, images);
+        ConversationContext context = contextBuilder.build(userId, resolvedConversationId, runtimeConfig, normalizedPrompt,
+                images, systemPrompt(agentRuntime));
         return new ChatPreparation(
                 userId,
                 conversationId == null,
@@ -320,10 +346,35 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private AiModelRuntimeConfig requireRuntimeConfig(Long modelId) {
+        return requireRuntimeConfig(modelId, null);
+    }
+
+    private AiModelRuntimeConfig requireRuntimeConfig(Long modelId, AgentRuntimeConfig agentRuntime) {
         if (modelId == null) {
+            if (agentRuntime != null && agentRuntime.defaultModelId() != null) {
+                return modelService.requireAvailableRuntimeConfig(agentRuntime.defaultModelId());
+            }
             return modelService.requireDefaultRuntimeConfig();
         }
         return modelService.requireAvailableRuntimeConfig(modelId);
+    }
+
+    private AgentRuntimeConfig resolveAgentRuntime(String agentKey) {
+        if (!hasText(agentKey) || agentService == null) {
+            return null;
+        }
+        return agentService.requireEnabledRuntimeConfig(agentKey.strip());
+    }
+
+    private String resolvedAgentKey(String agentKey, AgentRuntimeConfig agentRuntime) {
+        if (agentRuntime != null) {
+            return agentRuntime.agentKey();
+        }
+        return hasText(agentKey) ? agentKey.strip() : null;
+    }
+
+    private String systemPrompt(AgentRuntimeConfig agentRuntime) {
+        return agentRuntime == null ? null : agentRuntime.systemPrompt();
     }
 
     /**
@@ -717,6 +768,10 @@ public class ChatServiceImpl implements ChatService {
 
     private String defaultString(String value) {
         return value == null ? "" : value;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private record StreamAttemptOutcome(boolean retryRequested) {

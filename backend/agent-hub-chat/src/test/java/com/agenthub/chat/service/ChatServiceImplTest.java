@@ -8,6 +8,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.agenthub.agent.dto.AgentRuntimeConfig;
+import com.agenthub.agent.service.AgentService;
 import com.agenthub.ai.llm.LlmContentPart;
 import com.agenthub.ai.llm.LlmClient;
 import com.agenthub.ai.llm.LlmStreamChunk;
@@ -124,6 +126,87 @@ class ChatServiceImplTest {
         assertThat(llmClient.lastRequest.messages()).hasSize(1);
         assertThat(llmClient.lastRequest.messages().getFirst().content()).isEqualTo("你好，介绍一下自己");
         assertThat(llmClient.lastRequest.reasoningRequested()).isTrue();
+    }
+
+    @Test
+    void shouldInjectAgentSystemPromptAndUseAgentDefaultModelWhenModelNotSelected() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        AgentService agentService = mock(AgentService.class);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.answer("好的"),
+                LlmStreamChunk.done()
+        ));
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                new RecordingSseEventSender(),
+                attachmentService,
+                agentService,
+                contextBuilder(messageMapper, attachmentService, llmClient),
+                protocolType -> llmClient,
+                Runnable::run
+        );
+        when(agentService.requireEnabledRuntimeConfig("official-writing")).thenReturn(new AgentRuntimeConfig(
+                1L,
+                "official-writing",
+                "公文写作 Agent",
+                "你是一个公文写作助手。",
+                10L
+        ));
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.insert(any(ChatConversation.class))).thenAnswer(invocation -> {
+            ChatConversation conversation = invocation.getArgument(0);
+            conversation.setId(100L);
+            return 1;
+        });
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, null, List.of(), List.of(), 1500)).thenReturn(List.of());
+
+        service.stream(7L, null, null, "official-writing", "起草一份会议通知", false, List.of(), List.of());
+
+        verify(modelService).requireAvailableRuntimeConfig(10L);
+        assertThat(llmClient.lastRequest.messages()).hasSize(2);
+        assertThat(llmClient.lastRequest.messages().get(0).role()).isEqualTo("system");
+        assertThat(llmClient.lastRequest.messages().get(0).content()).isEqualTo("你是一个公文写作助手。");
+        assertThat(llmClient.lastRequest.messages().get(1).role()).isEqualTo("user");
+        assertThat(llmClient.lastRequest.messages().get(1).content()).isEqualTo("起草一份会议通知");
+    }
+
+    @Test
+    void shouldRejectDisabledAgentBeforePreparingChatRecords() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        AgentService agentService = mock(AgentService.class);
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                new RecordingSseEventSender(),
+                mock(AttachmentService.class),
+                agentService,
+                contextBuilder(messageMapper, mock(AttachmentService.class), new RecordingLlmClient(List.of())),
+                protocolType -> new RecordingLlmClient(List.of()),
+                Runnable::run
+        );
+        when(agentService.requireEnabledRuntimeConfig("disabled-agent"))
+                .thenThrow(new BusinessException(ErrorCode.BAD_REQUEST, "Agent 不可用"));
+
+        assertThatThrownBy(() -> service.stream(7L, null, null, "disabled-agent", "测试", false, List.of(), List.of()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Agent 不可用")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(modelService, never()).requireDefaultRuntimeConfig();
+        verify(messageMapper, never()).insert(any(ChatMessage.class));
     }
 
     @Test

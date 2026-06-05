@@ -28,6 +28,7 @@
         <module>agent-hub-security</module>
         <module>agent-hub-system</module>
         <module>agent-hub-ai</module>
+        <module>agent-hub-agent</module>
         <module>agent-hub-storage</module>
         <module>agent-hub-sse</module>
         <module>agent-hub-chat</module>

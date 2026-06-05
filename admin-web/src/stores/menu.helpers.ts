@@ -2,7 +2,8 @@ import type { MenuRecord, MenuTreeNode, UserProfile } from '../types/rbac'
 
 const sectionTitleMap: Record<string, string> = {
   system: '系统管理',
-  ai: 'AI 管理'
+  ai: 'AI 管理',
+  agent: 'Agent 管理'
 }
 
 interface SidebarMenuOption {
@@ -126,6 +127,6 @@ export function filterMenusByProfile(records: MenuTreeNode[], profile: UserProfi
     .filter((item) => {
       const granted = !item.permission || !profile || profile.permissions.includes(item.permission)
       const hasChildren = Boolean(item.children?.length)
-      return granted && (!['/system', '/ai'].includes(item.routePath) || hasChildren)
+      return granted && (!['/system', '/ai', '/agent'].includes(item.routePath) || hasChildren)
     })
 }

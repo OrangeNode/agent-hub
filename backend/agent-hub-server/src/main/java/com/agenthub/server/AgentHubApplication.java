@@ -13,6 +13,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         "com.agenthub.system.menu.mapper",
         "com.agenthub.ai.provider.mapper",
         "com.agenthub.ai.model.mapper",
+        "com.agenthub.agent.mapper",
         "com.agenthub.chat.conversation.mapper",
         "com.agenthub.chat.message.mapper",
         "com.agenthub.storage.attachment.mapper",

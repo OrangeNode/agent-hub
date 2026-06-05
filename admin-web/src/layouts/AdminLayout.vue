@@ -166,7 +166,7 @@ const breadcrumbs = computed(() => {
     return [{ path: route.path, label: String(route.meta.title ?? '工作台') }]
   }
 
-  const section = route.path.startsWith('/system/') ? [{ path: '/system', label: '系统管理' }] : []
+  const section = resolveBreadcrumbSection(route.path)
   return [...section, { path: current.routePath, label: current.label }]
 })
 
@@ -216,6 +216,19 @@ function findMenuByPath(records: Array<{ routePath: string; key: string; label: 
   }
 
   return null
+}
+
+function resolveBreadcrumbSection(path: string) {
+  if (path.startsWith('/system/')) {
+    return [{ path: '/system', label: '系统管理' }]
+  }
+  if (path.startsWith('/ai/')) {
+    return [{ path: '/ai', label: 'AI 管理' }]
+  }
+  if (path.startsWith('/agent/')) {
+    return [{ path: '/agent', label: 'Agent 管理' }]
+  }
+  return []
 }
 
 function handleSelect(key: string) {

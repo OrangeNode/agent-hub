@@ -56,5 +56,13 @@ export const routeMenuDefinitions: RouteMenuDefinition[] = [
     icon: 'partition',
     permission: 'ai:model:list',
     component: () => import('../views/AiModelsView.vue')
+  },
+  {
+    path: '/agent/list',
+    name: 'agent-list',
+    title: 'Agent 列表',
+    icon: 'robot',
+    permission: 'agent:list',
+    component: () => import('../views/AgentsView.vue')
   }
 ]

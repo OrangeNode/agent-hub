@@ -196,9 +196,9 @@
               </svg>
             </button>
           </n-dropdown>
-          <span v-if="activeAgentName !== '通用 Agent'" class="agent-tag composer-agent">
+          <span v-if="activeAgentKey" class="agent-tag composer-agent">
             {{ activeAgentName }}
-            <button type="button" class="agent-tag-close" @click="activeAgentName = '通用 Agent'">&times;</button>
+            <button type="button" class="agent-tag-close" @click="clearAgent">&times;</button>
           </span>
           <n-input
             v-model:value="prompt"
@@ -379,9 +379,9 @@
                 </svg>
               </button>
             </n-dropdown>
-            <span v-if="activeAgentName !== '通用 Agent'" class="agent-tag composer-agent">
+            <span v-if="activeAgentKey" class="agent-tag composer-agent">
               {{ activeAgentName }}
-              <button type="button" class="agent-tag-close" @click="activeAgentName = '通用 Agent'">&times;</button>
+              <button type="button" class="agent-tag-close" @click="clearAgent">&times;</button>
             </span>
             <n-input
               v-model:value="prompt"
@@ -512,7 +512,13 @@
       </section>
     </n-modal>
 
-    <n-modal v-model:show="thinkingConfigOpen" preset="card" class="thinking-config-modal" title="思考时长">
+    <n-modal
+      v-model:show="thinkingConfigOpen"
+      preset="card"
+      class="thinking-config-modal"
+      title="思考时长"
+      style="width: min(320px, calc(100vw - 32px))"
+    >
       <div class="config-row">
         <span>模型</span>
         <n-select v-model:value="selectedModel" :options="modelOptions" size="small" class="config-select" />
@@ -560,13 +566,20 @@ import {
   confirmImageUpload,
   createImageUploadUrl,
   deleteConversation,
+  fetchAvailableAgents,
   fetchAvailableModels,
   fetchConversationMessages,
   fetchConversations,
   openChatStream,
   renameConversation
 } from '../api/chat'
-import type { AvailableModelRecord, ChatAttachmentRecord, ChatMessageRecord, ConversationRecord } from '../api/chat'
+import type {
+  AvailableAgentRecord,
+  AvailableModelRecord,
+  ChatAttachmentRecord,
+  ChatMessageRecord,
+  ConversationRecord
+} from '../api/chat'
 import { useAuthStore } from '../stores/auth'
 import { renderAssistantMarkdown } from './message-render.helpers'
 import { buildReasoningStatusText } from './reasoning-timer.helpers'
@@ -637,6 +650,7 @@ const deletingConversation = ref(false)
 const sidebarCollapsed = ref(false)
 const activeConversationId = ref<number | null>(null)
 const activeAgentName = ref('通用 Agent')
+const activeAgentKey = ref<string | null>(null)
 const thinkingMode = ref<ThinkingMode>('instant')
 const openConversationMenuId = ref<number | null>(null)
 const conversationMenuPosition = ref({ top: 0, left: 0 })
@@ -698,12 +712,7 @@ const activeMenuConversation = computed(() =>
   conversations.value.find((item) => item.id === openConversationMenuId.value) ?? null
 )
 
-const agentOptions: AgentOption[] = [
-  { key: 'document-review', name: '文档审核 Agent', shortName: '审', description: '等保、密评、报告材料审查' },
-  { key: 'official-writing', name: '公文写作 Agent', shortName: '文', description: '通知、请示、汇报材料起草' },
-  { key: 'data-analysis', name: '数据分析 Agent', shortName: '数', description: '表格分析、指标解释、结论提炼' },
-  { key: 'project-plan', name: '项目方案 Agent', shortName: '案', description: '技术方案、架构设计、实施计划' }
-]
+const agentOptions = ref<AgentOption[]>([])
 
 const conversations = ref<ConversationItem[]>([])
 
@@ -823,6 +832,23 @@ async function loadModels() {
       ?? null
   } catch (error) {
     message.warning(error instanceof Error ? error.message : '加载模型列表失败，将使用默认模型')
+  }
+}
+
+async function loadAgents() {
+  try {
+    agentOptions.value = (await fetchAvailableAgents()).map(toAgentOption)
+  } catch (error) {
+    message.warning(error instanceof Error ? error.message : '加载 Agent 列表失败')
+  }
+}
+
+function toAgentOption(item: AvailableAgentRecord): AgentOption {
+  return {
+    key: item.agentKey,
+    name: item.name,
+    shortName: item.shortName || item.name.slice(0, 1),
+    description: item.description || '可配置 Agent'
   }
 }
 
@@ -969,9 +995,15 @@ async function confirmDeleteConversation() {
 }
 
 function selectAgent(agent: AgentOption) {
+  activeAgentKey.value = agent.key
   activeAgentName.value = agent.name
   agentMenuOpen.value = false
   createConversation()
+}
+
+function clearAgent() {
+  activeAgentKey.value = null
+  activeAgentName.value = '通用 Agent'
 }
 
 function handleUploadMenuSelect(key: string | number) {
@@ -1371,7 +1403,7 @@ function handleSend() {
       token: authStore.token,
       conversationId: conversationId > 0 ? conversationId : null,
       modelId: selectedModel.value,
-      agentKey: agentOptions.some((agent) => agent.name === activeAgentName.value) ? activeAgentName.value : null,
+      agentKey: activeAgentKey.value,
       thinkingEnabled: currentThinkingEnabled,
       attachmentIds: currentAttachmentIds,
       reuseAttachmentIds: currentReuseAttachmentIds
@@ -1466,6 +1498,7 @@ onBeforeUnmount(() => {
 })
 
 onMounted(() => {
+  void loadAgents()
   void loadModels()
   void loadConversations()
 })
@@ -2449,7 +2482,8 @@ svg {
 }
 
 .thinking-config-modal {
-  width: min(360px, calc(100vw - 32px));
+  width: min(320px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
 }
 
 .delete-conversation-modal {

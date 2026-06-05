@@ -147,12 +147,15 @@ public class ChatServiceImpl implements ChatService {
     ) {
         String normalizedPrompt = normalizePrompt(prompt);
         requireChatInput(normalizedPrompt, attachmentIds, reuseAttachmentIds);
-        AgentRuntimeConfig agentRuntime = resolveAgentRuntime(agentKey);
+        ChatConversation existingConversation = conversationId == null ? null : requireActiveConversation(userId, conversationId);
+        String effectiveAgentKey = resolveEffectiveAgentKey(existingConversation, agentKey);
+        AgentRuntimeConfig agentRuntime = resolveAgentRuntime(effectiveAgentKey);
+        effectiveAgentKey = agentRuntime == null ? effectiveAgentKey : agentRuntime.agentKey();
         AiModelRuntimeConfig runtimeConfig = requireRuntimeConfig(modelId, agentRuntime);
         ChatPreparation preparation = prepareChat(
                 userId,
-                conversationId,
-                resolvedAgentKey(agentKey, agentRuntime),
+                existingConversation,
+                effectiveAgentKey,
                 normalizedPrompt,
                 runtimeConfig,
                 agentRuntime,
@@ -182,7 +185,7 @@ public class ChatServiceImpl implements ChatService {
 
     private ChatPreparation prepareChat(
             Long userId,
-            Long conversationId,
+            ChatConversation existingConversation,
             String agentKey,
             String normalizedPrompt,
             AiModelRuntimeConfig runtimeConfig,
@@ -190,11 +193,11 @@ public class ChatServiceImpl implements ChatService {
             List<Long> attachmentIds,
             List<Long> reuseAttachmentIds
     ) {
-        ChatConversation conversation = resolveConversation(userId, conversationId, agentKey, runtimeConfig, normalizedPrompt);
+        ChatConversation conversation = resolveConversation(userId, existingConversation, agentKey, runtimeConfig, normalizedPrompt);
         int imageTokenEstimate = runtimeConfig.imageTokenEstimate() == null
                 ? DEFAULT_IMAGE_TOKEN_ESTIMATE
                 : runtimeConfig.imageTokenEstimate();
-        Long resolvedConversationId = conversationId == null ? null : conversation.getId();
+        Long resolvedConversationId = existingConversation == null ? null : conversation.getId();
         List<AttachmentReference> images = attachmentService.resolveImagesForChat(
                 userId,
                 resolvedConversationId,
@@ -209,7 +212,7 @@ public class ChatServiceImpl implements ChatService {
                 images, systemPrompt(agentRuntime));
         return new ChatPreparation(
                 userId,
-                conversationId == null,
+                existingConversation == null,
                 conversation,
                 normalizedPrompt,
                 runtimeConfig,
@@ -366,13 +369,6 @@ public class ChatServiceImpl implements ChatService {
         return agentService.requireEnabledRuntimeConfig(agentKey.strip());
     }
 
-    private String resolvedAgentKey(String agentKey, AgentRuntimeConfig agentRuntime) {
-        if (agentRuntime != null) {
-            return agentRuntime.agentKey();
-        }
-        return hasText(agentKey) ? agentKey.strip() : null;
-    }
-
     private String systemPrompt(AgentRuntimeConfig agentRuntime) {
         return agentRuntime == null ? null : agentRuntime.systemPrompt();
     }
@@ -382,15 +378,38 @@ public class ChatServiceImpl implements ChatService {
      */
     private ChatConversation resolveConversation(
             Long userId,
-            Long conversationId,
+            ChatConversation existingConversation,
             String agentKey,
             AiModelRuntimeConfig runtimeConfig,
             String prompt
     ) {
-        if (conversationId == null) {
+        if (existingConversation == null) {
             return createConversation(userId, agentKey, runtimeConfig, prompt);
         }
-        return requireActiveConversation(userId, conversationId);
+        return existingConversation;
+    }
+
+    private String resolveEffectiveAgentKey(ChatConversation existingConversation, String requestedAgentKey) {
+        String normalizedRequestedAgentKey = normalizeAgentKey(requestedAgentKey);
+        if (existingConversation == null) {
+            return normalizedRequestedAgentKey;
+        }
+
+        String boundAgentKey = normalizeAgentKey(existingConversation.getAgentKey());
+        if (!hasText(normalizedRequestedAgentKey)) {
+            return boundAgentKey;
+        }
+        if (!hasText(boundAgentKey)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "已有会话不能切换 Agent");
+        }
+        if (!boundAgentKey.equals(normalizedRequestedAgentKey)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "会话已绑定其他 Agent");
+        }
+        return boundAgentKey;
+    }
+
+    private String normalizeAgentKey(String agentKey) {
+        return hasText(agentKey) ? agentKey.strip() : null;
     }
 
     private ChatConversation createConversation(

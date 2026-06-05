@@ -198,7 +198,7 @@
           </n-dropdown>
           <span v-if="activeAgentKey" class="agent-tag composer-agent">
             {{ activeAgentName }}
-            <button type="button" class="agent-tag-close" @click="clearAgent">&times;</button>
+            <button v-if="!activeAgentLocked" type="button" class="agent-tag-close" @click="clearAgent">&times;</button>
           </span>
           <n-input
             v-model:value="prompt"
@@ -381,7 +381,7 @@
             </n-dropdown>
             <span v-if="activeAgentKey" class="agent-tag composer-agent">
               {{ activeAgentName }}
-              <button type="button" class="agent-tag-close" @click="clearAgent">&times;</button>
+              <button v-if="!activeAgentLocked" type="button" class="agent-tag-close" @click="clearAgent">&times;</button>
             </span>
             <n-input
               v-model:value="prompt"
@@ -585,16 +585,16 @@ import { renderAssistantMarkdown } from './message-render.helpers'
 import { buildReasoningStatusText } from './reasoning-timer.helpers'
 import { validateImageCount, validateImageFile } from './chat-attachments.helpers'
 import { updatePendingImageByLocalId } from './chat-pending-images.helpers'
+import {
+  canClearAgentSelection,
+  mapConversationRecord,
+  resolveAgentSelectionForConversation
+} from './chat-agent.helpers'
+import type { ConversationItem } from './chat-agent.helpers'
 import ThinkingModeSelect from './ThinkingModeSelect.vue'
 
 type ChatRole = 'user' | 'assistant'
 type ThinkingMode = 'instant' | 'thinking'
-
-interface ConversationItem {
-  id: number
-  title: string
-  updatedAt: string
-}
 
 interface ChatMessageItem {
   id: number
@@ -711,6 +711,9 @@ const firstReasoningModel = computed(() => availableModels.value.find((item) => 
 const activeMenuConversation = computed(() =>
   conversations.value.find((item) => item.id === openConversationMenuId.value) ?? null
 )
+const activeConversation = computed(() =>
+  conversations.value.find((item) => item.id === activeConversationId.value) ?? null
+)
 
 const agentOptions = ref<AgentOption[]>([])
 
@@ -726,6 +729,12 @@ const todos = [
 
 const currentMessages = computed(() =>
   activeConversationId.value ? messageMap.value[activeConversationId.value] ?? [] : []
+)
+const activeAgentLocked = computed(() =>
+  !canClearAgentSelection({
+    activeConversation: activeConversation.value,
+    messageCount: currentMessages.value.length
+  })
 )
 const hasMessages = computed(() => currentMessages.value.length > 0)
 const userInitial = computed(() => (authStore.displayName || '用户').trim().slice(0, 1).toUpperCase())
@@ -769,11 +778,7 @@ const historyImageReuseDisabledReason = computed(() => {
 })
 
 function mapConversation(item: ConversationRecord): ConversationItem {
-  return {
-    id: item.conversationId,
-    title: item.title,
-    updatedAt: '最近'
-  }
+  return mapConversationRecord(item)
 }
 
 function mapMessage(item: ChatMessageRecord): ChatMessageItem {
@@ -805,9 +810,13 @@ async function loadConversations() {
   try {
     const data = await fetchConversations()
     conversations.value = data.map(mapConversation)
+    if (activeConversationId.value) {
+      syncActiveAgentFromConversation()
+    }
 
     if (!activeConversationId.value && conversations.value.length) {
       activeConversationId.value = conversations.value[0].id
+      syncActiveAgentFromConversation(conversations.value[0])
       await loadMessages(conversations.value[0].id)
     }
   } catch (error) {
@@ -838,6 +847,7 @@ async function loadModels() {
 async function loadAgents() {
   try {
     agentOptions.value = (await fetchAvailableAgents()).map(toAgentOption)
+    syncActiveAgentFromConversation()
   } catch (error) {
     message.warning(error instanceof Error ? error.message : '加载 Agent 列表失败')
   }
@@ -879,6 +889,7 @@ async function switchConversation(conversationId: number) {
   prompt.value = ''
   clearPendingImages()
   clearSelectedReuseAttachments()
+  syncActiveAgentFromConversation()
   await loadMessages(conversationId)
 }
 
@@ -981,7 +992,10 @@ async function confirmDeleteConversation() {
       clearPendingImages()
       activeConversationId.value = conversations.value[0]?.id ?? null
       if (activeConversationId.value) {
+        syncActiveAgentFromConversation()
         await loadMessages(activeConversationId.value)
+      } else {
+        syncActiveAgentFromConversation(null)
       }
     }
     message.success('已删除')
@@ -1002,8 +1016,23 @@ function selectAgent(agent: AgentOption) {
 }
 
 function clearAgent() {
+  if (activeAgentLocked.value) {
+    message.warning('已有聊天记录的 Agent 会话不能移除 Agent')
+    return
+  }
+
   activeAgentKey.value = null
   activeAgentName.value = '通用 Agent'
+}
+
+function syncActiveAgentFromConversation(conversation: ConversationItem | null = activeConversation.value) {
+  const selection = resolveAgentSelectionForConversation({
+    conversation,
+    agents: agentOptions.value,
+    fallbackName: '通用 Agent'
+  })
+  activeAgentKey.value = selection.key
+  activeAgentName.value = selection.name
 }
 
 function handleUploadMenuSelect(key: string | number) {
@@ -1341,7 +1370,8 @@ function handleSend() {
     conversations.value.unshift({
       id: nextId,
       title: '新聊天',
-      updatedAt: '刚刚'
+      updatedAt: '刚刚',
+      agentKey: activeAgentKey.value
     })
     messageMap.value[nextId] = []
     activeConversationId.value = nextId
@@ -1418,7 +1448,7 @@ function handleSend() {
         }
 
         conversations.value = [
-          { id: data.conversationId, title: data.title, updatedAt: '刚刚' },
+          { id: data.conversationId, title: data.title, updatedAt: '刚刚', agentKey: activeAgentKey.value },
           ...conversations.value.filter((item) => item.id !== data.conversationId && item.id !== previousId)
         ]
       },

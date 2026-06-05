@@ -56,6 +56,86 @@ class AiChatMigrationSmokeTest {
     }
 
     @Test
+    void shouldAllowDeletingAiConfigWhileKeepingChatHistory() {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+
+        jdbcTemplate.update("""
+                INSERT INTO ai_provider (id, code, name, provider_type, protocol_type, base_url, auth_type)
+                VALUES (10001, 'delete-model-provider', '删除模型供应商', 'LLM', 'OPENAI_COMPATIBLE', 'https://api.example.com', 'BEARER')
+                """);
+        jdbcTemplate.update("""
+                INSERT INTO ai_model (id, provider_id, model_code, display_name, capability_type)
+                VALUES (10002, 10001, 'legacy-model', 'Legacy Model', 'CHAT')
+                """);
+        jdbcTemplate.update("""
+                INSERT INTO chat_conversation (id, user_id, title, model_id, provider_id)
+                VALUES (10003, 1, '删除模型历史', 10002, 10001)
+                """);
+        jdbcTemplate.update("""
+                INSERT INTO chat_message (id, conversation_id, user_id, role, content, model_id, provider_id)
+                VALUES (10004, 10003, 1, 'ASSISTANT', '历史回复', 10002, 10001)
+                """);
+
+        jdbcTemplate.update("DELETE FROM ai_model WHERE id = 10002");
+
+        Map<String, Object> conversationAfterModelDelete = jdbcTemplate.queryForMap("""
+                SELECT model_id, provider_id
+                FROM chat_conversation
+                WHERE id = 10003
+                """);
+        Map<String, Object> messageAfterModelDelete = jdbcTemplate.queryForMap("""
+                SELECT model_id, provider_id
+                FROM chat_message
+                WHERE id = 10004
+                """);
+
+        assertThat(conversationAfterModelDelete.get("model_id")).isNull();
+        assertThat(conversationAfterModelDelete.get("provider_id")).isEqualTo(10001L);
+        assertThat(messageAfterModelDelete.get("model_id")).isNull();
+        assertThat(messageAfterModelDelete.get("provider_id")).isEqualTo(10001L);
+
+        jdbcTemplate.update("""
+                INSERT INTO ai_provider (id, code, name, provider_type, protocol_type, base_url, auth_type)
+                VALUES (10011, 'delete-provider', '删除供应商', 'LLM', 'OPENAI_COMPATIBLE', 'https://api.example.com', 'BEARER')
+                """);
+        jdbcTemplate.update("""
+                INSERT INTO ai_model (id, provider_id, model_code, display_name, capability_type)
+                VALUES (10012, 10011, 'provider-model', 'Provider Model', 'CHAT')
+                """);
+        jdbcTemplate.update("""
+                INSERT INTO chat_conversation (id, user_id, title, model_id, provider_id)
+                VALUES (10013, 1, '删除供应商历史', 10012, 10011)
+                """);
+        jdbcTemplate.update("""
+                INSERT INTO chat_message (id, conversation_id, user_id, role, content, model_id, provider_id)
+                VALUES (10014, 10013, 1, 'ASSISTANT', '历史回复', 10012, 10011)
+                """);
+
+        jdbcTemplate.update("DELETE FROM ai_provider WHERE id = 10011");
+
+        Integer modelCount = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM ai_model WHERE id = 10012",
+                Integer.class
+        );
+        Map<String, Object> conversationAfterProviderDelete = jdbcTemplate.queryForMap("""
+                SELECT model_id, provider_id
+                FROM chat_conversation
+                WHERE id = 10013
+                """);
+        Map<String, Object> messageAfterProviderDelete = jdbcTemplate.queryForMap("""
+                SELECT model_id, provider_id
+                FROM chat_message
+                WHERE id = 10014
+                """);
+
+        assertThat(modelCount).isZero();
+        assertThat(conversationAfterProviderDelete.get("model_id")).isNull();
+        assertThat(conversationAfterProviderDelete.get("provider_id")).isNull();
+        assertThat(messageAfterProviderDelete.get("model_id")).isNull();
+        assertThat(messageAfterProviderDelete.get("provider_id")).isNull();
+    }
+
+    @Test
     void shouldInitializeAiMenusAndBindAdminRole() {
         JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
 
@@ -178,5 +258,44 @@ class AiChatMigrationSmokeTest {
         assertThat(scriptContent).doesNotContain("WHERE parent.name = 'ai'");
         assertThat(scriptContent).doesNotContain("JOIN sys_menu sm ON sm.name IN");
         assertThat(scriptContent).contains("parent.parent_id = 0");
+    }
+
+    @Test
+    void shouldKeepExistingVersionThreeMigrationAndMoveDeleteConstraintChangeToVersionFour() throws IOException {
+        var historicalVersionThreeUrl = AiChatMigrationSmokeTest.class
+                .getResource("/db/migration/V3__init_multimodal_image_summary.sql");
+        var conflictingVersionThreeUrl = AiChatMigrationSmokeTest.class
+                .getResource("/db/migration/V3__relax_ai_config_delete_constraints.sql");
+        var deleteConstraintMigrationUrl = AiChatMigrationSmokeTest.class
+                .getResource("/db/migration/V4__relax_ai_config_delete_constraints.sql");
+        var contextIndexMigrationUrl = AiChatMigrationSmokeTest.class
+                .getResource("/db/migration/V5__add_chat_message_context_index.sql");
+
+        assertThat(historicalVersionThreeUrl).isNotNull();
+        assertThat(conflictingVersionThreeUrl).isNull();
+        assertThat(deleteConstraintMigrationUrl).isNotNull();
+        assertThat(contextIndexMigrationUrl).isNotNull();
+
+        String scriptContent;
+        try (var inputStream = deleteConstraintMigrationUrl.openStream()) {
+            scriptContent = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+        }
+
+        String historicalVersionThreeContent;
+        try (var inputStream = historicalVersionThreeUrl.openStream()) {
+            historicalVersionThreeContent = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+        }
+
+        assertThat(historicalVersionThreeContent)
+                .doesNotContain("idx_chat_message_conversation_user_role_created_id");
+        assertThat(scriptContent).doesNotContain("idx_chat_message_conversation_user_role_created_id");
+        assertThat(scriptContent).contains("ON DELETE CASCADE");
+        assertThat(scriptContent).contains("ON DELETE SET NULL");
+
+        String contextIndexContent;
+        try (var inputStream = contextIndexMigrationUrl.openStream()) {
+            contextIndexContent = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        assertThat(contextIndexContent).contains("idx_chat_message_conversation_user_role_created_id");
     }
 }

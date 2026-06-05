@@ -514,25 +514,39 @@
 
     <n-modal
       v-model:show="thinkingConfigOpen"
-      preset="card"
       class="thinking-config-modal"
-      title="思考时长"
-      style="width: min(320px, calc(100vw - 32px))"
+      to="body"
+      transform-origin="center"
     >
-      <div class="config-row">
-        <span>模型</span>
-        <n-select v-model:value="selectedModel" :options="modelOptions" size="small" class="config-select" />
-      </div>
-      <div class="config-divider" />
-      <button type="button" class="mode-option" :class="{ active: thinkingMode === 'instant' }" @click="selectThinkingMode('instant')">
-        <strong>Instant</strong>
-        <span>适用于日常聊天</span>
-      </button>
-      <button type="button" class="mode-option" :class="{ active: thinkingMode === 'thinking' }" @click="selectThinkingMode('thinking')">
-        <strong>Thinking</strong>
-        <span>适用于解答复杂问题</span>
-      </button>
-      <p>思考越深入，回答越详尽，但生成时间也会相应增加。</p>
+      <section class="thinking-config-dialog" role="dialog" aria-modal="true" aria-labelledby="thinking-config-title">
+        <header class="thinking-config-header">
+          <h3 id="thinking-config-title">思考时长</h3>
+          <button type="button" class="thinking-config-close" aria-label="关闭思考时长配置" @click="thinkingConfigOpen = false">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </header>
+        <div class="config-row">
+          <span>模型</span>
+          <n-select
+            v-model:value="selectedModel"
+            :options="modelOptions"
+            :bordered="false"
+            size="small"
+            class="config-select"
+          />
+        </div>
+        <div class="config-divider" />
+        <button type="button" class="mode-option" :class="{ active: thinkingMode === 'instant' }" @click="selectThinkingMode('instant')">
+          <strong>Instant</strong>
+          <span>适用于日常聊天</span>
+        </button>
+        <button type="button" class="mode-option" :class="{ active: thinkingMode === 'thinking' }" @click="selectThinkingMode('thinking')">
+          <strong>Thinking</strong>
+          <span>适用于解答复杂问题</span>
+        </button>
+      </section>
     </n-modal>
   </div>
 </template>
@@ -2511,11 +2525,6 @@ svg {
   background: #fbfbfb;
 }
 
-.thinking-config-modal {
-  width: min(320px, calc(100vw - 32px));
-  max-width: calc(100vw - 32px);
-}
-
 .delete-conversation-modal {
   display: grid;
   width: min(320px, calc(100vw - 32px));
@@ -2525,10 +2534,6 @@ svg {
   margin: auto;
   overflow: hidden;
   box-shadow: 0 18px 46px rgba(15, 23, 42, 0.16);
-}
-
-.thinking-config-modal :deep(.n-card-header) {
-  padding: 18px 18px 8px;
 }
 
 .delete-modal-header {
@@ -2542,10 +2547,63 @@ svg {
   font-weight: 600;
 }
 
-.thinking-config-modal :deep(.n-card__content) {
+.thinking-config-dialog {
   display: grid;
-  gap: 10px;
-  padding: 12px 18px 18px;
+  width: min(450px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  padding: 16px;
+  border: 1px solid #d9d9d9;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.16);
+}
+
+.thinking-config-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.thinking-config-header h3 {
+  margin: 0;
+  color: #111827;
+  font-size: 19px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.thinking-config-close {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #111827;
+  cursor: pointer;
+}
+
+.thinking-config-close:hover {
+  background: #f3f4f6;
+}
+
+.thinking-config-close:focus-visible {
+  outline: 2px solid #d1d5db;
+  outline-offset: 2px;
+}
+
+.thinking-config-close svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
 }
 
 .delete-modal-body {
@@ -2580,6 +2638,25 @@ svg {
 
 .config-select {
   width: 150px;
+  --n-height: 30px;
+}
+
+.config-select :deep(.n-base-selection) {
+  justify-content: flex-end;
+}
+
+.config-select :deep(.n-base-selection-label) {
+  padding-right: 0;
+  background: transparent;
+}
+
+.config-select :deep(.n-base-selection-input) {
+  text-align: right;
+}
+
+.config-select :deep(.n-base-selection__border),
+.config-select :deep(.n-base-selection__state-border) {
+  display: none;
 }
 
 .config-divider {
@@ -2590,9 +2667,14 @@ svg {
 .mode-option {
   position: relative;
   display: grid;
-  gap: 3px;
-  padding: 8px 34px 8px 0;
+  gap: 4px;
+  padding: 12px 34px 12px 0;
+  border-radius: 8px;
   text-align: left;
+}
+
+.mode-option:hover {
+  background: #f7f7f8;
 }
 
 .mode-option strong {
@@ -2601,8 +2683,7 @@ svg {
   font-weight: 500;
 }
 
-.mode-option span,
-.thinking-config-modal p {
+.mode-option span {
   margin: 0;
   color: #8a8f98;
   font-size: 13px;

@@ -8,14 +8,24 @@
     </button>
     <div class="thinking-menu">
       <span class="thinking-latest">最新 · {{ modelLabel }}</span>
-      <button type="button" :class="{ active: mode === 'instant' }" @click="selectMode('instant')">
+      <button
+        type="button"
+        :class="{ active: mode === 'instant' }"
+        data-mode-option="instant"
+        @click="selectMode('instant')"
+      >
         Instant
       </button>
-      <button type="button" :class="{ active: mode === 'thinking' }" @click="selectMode('thinking')">
+      <button
+        type="button"
+        :class="{ active: mode === 'thinking' }"
+        data-mode-option="thinking"
+        @click="selectMode('thinking')"
+      >
         Thinking
       </button>
       <hr />
-      <button type="button" @click="openConfig">配置...</button>
+      <button type="button" class="thinking-config-trigger" @click="openConfig">配置...</button>
     </div>
   </div>
 </template>
@@ -107,8 +117,7 @@ function openConfig() {
   transition: opacity 0.14s ease, transform 0.14s ease;
 }
 
-.thinking-menu-wrap.open .thinking-menu,
-.thinking-menu-wrap:focus-within .thinking-menu {
+.thinking-menu-wrap.open .thinking-menu {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);

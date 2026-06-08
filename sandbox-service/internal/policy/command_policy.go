@@ -104,7 +104,7 @@ func isForbiddenCommandChar(r rune) bool {
 
 func hasDangerousPath(value string) bool {
 	cleanedValue := cleanSlash(strings.Trim(value, `"'`))
-	if hasDotDotPathSegment(cleanedValue) {
+	if hasRelativeTraversalPath(cleanedValue) {
 		return true
 	}
 	for i, r := range cleanedValue {
@@ -117,6 +117,24 @@ func hasDangerousPath(value string) bool {
 		if isForbiddenAbsolutePath(cleanedValue[i:]) {
 			return true
 		}
+	}
+	return false
+}
+
+func hasRelativeTraversalPath(value string) bool {
+	if hasDotDotPathSegment(value) {
+		return true
+	}
+	for i, r := range value {
+		if r != '=' && r != ':' {
+			continue
+		}
+		if i+1 < len(value) && hasDotDotPathSegment(value[i+1:]) {
+			return true
+		}
+	}
+	if len(value) > 2 && value[0] == '-' && isAsciiLetter(value[1]) {
+		return hasDotDotPathSegment(value[2:])
 	}
 	return false
 }

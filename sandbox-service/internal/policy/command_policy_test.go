@@ -4,7 +4,14 @@ import "testing"
 
 func TestValidateCommandAllowsCommonCommands(t *testing.T) {
 	policy := NewCommandPolicy(200, 60)
-	for _, command := range []string{"python3 script.py", "ls /workspace", "cat /workspace/output/a.txt"} {
+	for _, command := range []string{
+		"python3 script.py",
+		"ls /workspace",
+		"cat /workspace/output/a.txt",
+		"sed -f/workspace/scripts/filter.sed /workspace/input.txt",
+		"grep -f/workspace/patterns /workspace/input.txt",
+		"npm --prefix=/workspace/app install",
+	} {
 		req := CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30}
 		if err := policy.Validate(req); err != nil {
 			t.Fatalf("Validate(%q) error = %v", command, err)
@@ -97,6 +104,10 @@ func TestValidateCommandRejectsRelativePathTraversal(t *testing.T) {
 		"find ..",
 		"cp ../etc/passwd /workspace/x",
 		"cat subdir/../../etc/passwd",
+		"sed -f../etc/passwd",
+		"grep -f../patterns",
+		"npm --prefix=../out install",
+		"grep -f=../x",
 	} {
 		err := policy.Validate(CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30})
 		if err == nil {

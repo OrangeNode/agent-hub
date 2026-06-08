@@ -155,6 +155,49 @@ func TestSessionManagerRefreshPreventsIdleReap(t *testing.T) {
 	}
 }
 
+func TestSessionManagerActiveUsePreventsIdleReap(t *testing.T) {
+	baseTime := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+	now := baseTime
+	vm := &fakeVM{id: "vm-1"}
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{vm}}, 1, 10*time.Millisecond)
+	manager.setClockForTest(func() time.Time {
+		return now
+	})
+
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	now = baseTime.Add(9 * time.Millisecond)
+	active, ok := manager.BeginUse(session.ID)
+	if !ok {
+		t.Fatal("expected BeginUse() to find session")
+	}
+	if !active.LastActiveAt.Equal(now) {
+		t.Fatalf("active LastActiveAt = %s", active.LastActiveAt)
+	}
+
+	if err := manager.ReapIdle(baseTime.Add(time.Second)); err != nil {
+		t.Fatalf("ReapIdle() error = %v", err)
+	}
+
+	if !manager.HasSession(session.ID) {
+		t.Fatal("expected active session to remain")
+	}
+	if vm.StopCount() != 0 {
+		t.Fatalf("stops = %d", vm.StopCount())
+	}
+
+	now = baseTime.Add(time.Second)
+	manager.EndUse(session.ID)
+	if err := manager.ReapIdle(now.Add(9 * time.Millisecond)); err != nil {
+		t.Fatalf("ReapIdle(after end) error = %v", err)
+	}
+	if !manager.HasSession(session.ID) {
+		t.Fatal("expected recently ended session to remain")
+	}
+}
+
 func TestSessionManagerStopsDuplicateVMWhenConcurrentCreateWins(t *testing.T) {
 	factory := newBlockingFirstFactory()
 	manager := NewSessionManager(factory, 2, 5*time.Minute)

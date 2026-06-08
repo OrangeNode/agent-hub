@@ -173,12 +173,6 @@ func (s *apiServer) handleExecStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessionID := r.PathValue("sessionId")
-	session, ok := s.manager.Get(sessionID)
-	if !ok {
-		sse.WriteEvent(w, "error", map[string]string{"message": "沙箱会话不存在"})
-		return
-	}
-
 	var req execRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		sse.WriteEvent(w, "error", map[string]string{"message": "请求体不是有效的 JSON"})
@@ -198,6 +192,13 @@ func (s *apiServer) handleExecStream(w http.ResponseWriter, r *http.Request) {
 		sse.WriteEvent(w, "error", map[string]string{"message": err.Error()})
 		return
 	}
+
+	session, ok := s.manager.BeginUse(sessionID)
+	if !ok {
+		sse.WriteEvent(w, "error", map[string]string{"message": "沙箱会话不存在"})
+		return
+	}
+	defer s.manager.EndUse(sessionID)
 
 	completedOK, err := s.proxyExecStream(r, w, session, req)
 	if err != nil {
@@ -359,6 +360,9 @@ func (s *apiServer) syncArtifacts(r *http.Request, w http.ResponseWriter, sessio
 		if err != nil {
 			return err
 		}
+		if err := verifySyncedArtifactSHA256(change, content); err != nil {
+			return err
+		}
 		if err := s.uploader.Upload(objectstore.UploadRequest{
 			Context:     r.Context(),
 			Bucket:      change.Bucket,
@@ -373,6 +377,15 @@ func (s *apiServer) syncArtifacts(r *http.Request, w http.ResponseWriter, sessio
 			return err
 		}
 		sse.WriteEvent(w, "artifact_synced", change)
+	}
+	return nil
+}
+
+func verifySyncedArtifactSHA256(artifact SyncedArtifact, content []byte) error {
+	actual := sha256.Sum256(content)
+	actualHex := fmt.Sprintf("%x", actual)
+	if !strings.EqualFold(strings.TrimSpace(artifact.SHA256), actualHex) {
+		return fmt.Errorf("产物 %s 在同步期间发生变化，请重试", artifact.RelativePath)
 	}
 	return nil
 }

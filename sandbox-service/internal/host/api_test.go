@@ -106,6 +106,7 @@ func TestCreateSessionReturnsCapacityError(t *testing.T) {
 
 func TestExecStreamProxiesGuestSSEAndSyncsArtifacts(t *testing.T) {
 	guestCalled := false
+	artifactSHA := sha256Hex("ok")
 	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/exec/stream":
@@ -118,7 +119,7 @@ func TestExecStreamProxiesGuestSSEAndSyncsArtifacts(t *testing.T) {
 		case "/artifacts":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"artifacts": []map[string]any{
-					{"relativePath": "reports/out.txt", "sha256": "sha-1", "size": 2},
+					{"relativePath": "reports/out.txt", "sha256": artifactSHA, "size": 2},
 				},
 			})
 		case "/files/content":
@@ -161,7 +162,7 @@ func TestExecStreamProxiesGuestSSEAndSyncsArtifacts(t *testing.T) {
 	if len(uploader.uploads) != 1 {
 		t.Fatalf("uploads = %d, want 1", len(uploader.uploads))
 	}
-	if uploader.uploads[0].Bucket != "bucket" || uploader.uploads[0].Key != "sandbox-artifacts/conversation-1/sha-1/reports/out.txt" {
+	if uploader.uploads[0].Bucket != "bucket" || uploader.uploads[0].Key != "sandbox-artifacts/conversation-1/"+artifactSHA+"/reports/out.txt" {
 		t.Fatalf("upload target = %#v", uploader.uploads[0])
 	}
 	if uploader.uploads[0].Content != "ok" {
@@ -170,6 +171,7 @@ func TestExecStreamProxiesGuestSSEAndSyncsArtifacts(t *testing.T) {
 }
 
 func TestExecStreamRetriesArtifactUploadUntilMarkedSynced(t *testing.T) {
+	artifactSHA := sha256Hex("ok")
 	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/exec/stream":
@@ -179,7 +181,7 @@ func TestExecStreamRetriesArtifactUploadUntilMarkedSynced(t *testing.T) {
 		case "/artifacts":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"artifacts": []map[string]any{
-					{"relativePath": "reports/out.txt", "sha256": "sha-1", "size": 2},
+					{"relativePath": "reports/out.txt", "sha256": artifactSHA, "size": 2},
 				},
 			})
 		case "/files/content":
@@ -220,6 +222,45 @@ func TestExecStreamRetriesArtifactUploadUntilMarkedSynced(t *testing.T) {
 	}
 	if uploader.Attempts() != 2 {
 		t.Fatalf("third attempts = %d, want 2", uploader.Attempts())
+	}
+}
+
+func TestExecStreamRejectsArtifactChangedDuringSync(t *testing.T) {
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/exec/stream":
+			w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+			_, _ = w.Write([]byte("event: completed\n"))
+			_, _ = w.Write([]byte(`data: {"exitCode":0}` + "\n\n"))
+		case "/artifacts":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"artifacts": []map[string]any{
+					{"relativePath": "reports/out.txt", "sha256": sha256Hex("old"), "size": 3},
+				},
+			})
+		case "/files/content":
+			_ = json.NewEncoder(w).Encode(map[string]any{"content": "new"})
+		default:
+			t.Fatalf("unexpected guest path %s", r.URL.Path)
+		}
+	}))
+	defer guest.Close()
+
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	uploader := &recordingUploader{}
+	router := NewRouterWithManager(manager, WithUploader(uploader), WithArtifactSyncer(NewArtifactSyncer("bucket")))
+
+	rec := execStream(t, router, session.ID)
+
+	if !strings.Contains(rec.Body.String(), "产物同步失败") {
+		t.Fatalf("response = %s", rec.Body.String())
+	}
+	if len(uploader.uploads) != 0 {
+		t.Fatalf("uploads = %d, want 0", len(uploader.uploads))
 	}
 }
 
@@ -543,6 +584,11 @@ func postJSON(t *testing.T, router http.Handler, path string, body string) *http
 		t.Fatalf("POST %s status = %d, body = %s", path, rec.Code, rec.Body.String())
 	}
 	return rec
+}
+
+func sha256Hex(content string) string {
+	sum := sha256.Sum256([]byte(content))
+	return fmt.Sprintf("%x", sum)
 }
 
 type recordingUploader struct {

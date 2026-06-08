@@ -33,6 +33,7 @@ type SessionManager struct {
 	mu             sync.Mutex
 	sessions       map[string]*Session
 	byConversation map[string]string
+	activeUses     map[string]int
 	nextID         int
 	starting       int
 	clock          func() time.Time
@@ -48,6 +49,7 @@ func NewSessionManager(factory VMFactory, maxActive int, idleTimeout time.Durati
 		idleTimeout:    idleTimeout,
 		sessions:       make(map[string]*Session),
 		byConversation: make(map[string]string),
+		activeUses:     make(map[string]int),
 		nextID:         1,
 		clock:          time.Now,
 	}
@@ -106,10 +108,14 @@ func (m *SessionManager) ReapIdle(now time.Time) error {
 	m.mu.Lock()
 	var idle []VM
 	for id, session := range m.sessions {
+		if m.activeUses[id] > 0 {
+			continue
+		}
 		if now.Sub(session.LastActiveAt) >= m.idleTimeout {
 			idle = append(idle, session.VM)
 			delete(m.sessions, id)
 			delete(m.byConversation, session.ConversationID)
+			delete(m.activeUses, id)
 		}
 	}
 	m.mu.Unlock()
@@ -131,6 +137,30 @@ func (m *SessionManager) Get(sessionID string) (Session, bool) {
 		return Session{}, false
 	}
 	return *session, true
+}
+
+func (m *SessionManager) BeginUse(sessionID string) (Session, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, ok := m.sessions[sessionID]
+	if !ok {
+		return Session{}, false
+	}
+	m.activeUses[sessionID]++
+	return m.touchLocked(session), true
+}
+
+func (m *SessionManager) EndUse(sessionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.activeUses[sessionID] > 1 {
+		m.activeUses[sessionID]--
+		return
+	}
+	delete(m.activeUses, sessionID)
+	if session, ok := m.sessions[sessionID]; ok {
+		_ = m.touchLocked(session)
+	}
 }
 
 func (m *SessionManager) HasSession(id string) bool {

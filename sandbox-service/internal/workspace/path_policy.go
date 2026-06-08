@@ -6,6 +6,7 @@ import (
 	"strings"
 )
 
+// PathPolicy 只校验 guest 可见路径的词法边界，不用于 host 文件系统防逃逸。
 type PathPolicy struct {
 	root string
 }
@@ -30,7 +31,7 @@ func (p PathPolicy) ResolveInput(input string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !strings.HasPrefix(resolved, p.root+"/input/") {
+	if resolved != p.root+"/input" && !strings.HasPrefix(resolved, p.root+"/input/") {
 		return "", errors.New("上传文件只能写入 /workspace/input")
 	}
 	return resolved, nil

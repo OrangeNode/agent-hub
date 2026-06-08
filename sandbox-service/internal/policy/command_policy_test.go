@@ -4,9 +4,11 @@ import "testing"
 
 func TestValidateCommandAllowsCommonCommands(t *testing.T) {
 	policy := NewCommandPolicy(200, 60)
-	req := CommandRequest{Command: "python3 main.py", WorkingDir: "/workspace", TimeoutSeconds: 30}
-	if err := policy.Validate(req); err != nil {
-		t.Fatalf("Validate() error = %v", err)
+	for _, command := range []string{"python3 script.py", "ls /workspace", "cat /workspace/output/a.txt"} {
+		req := CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30}
+		if err := policy.Validate(req); err != nil {
+			t.Fatalf("Validate(%q) error = %v", command, err)
+		}
 	}
 }
 
@@ -40,7 +42,7 @@ func TestValidateCommandRejectsTimeoutOverLimit(t *testing.T) {
 
 func TestValidateCommandRejectsDangerousKeywords(t *testing.T) {
 	policy := NewCommandPolicy(200, 60)
-	for _, command := range []string{"sudo whoami", "systemctl restart ssh", "mount /dev/sda /tmp/x"} {
+	for _, command := range []string{"sudo whoami", "systemctl restart ssh", "mount /dev/sda /tmp/x", "s'u'do whoami", "sys''ctl -a"} {
 		err := policy.Validate(CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30})
 		if err == nil {
 			t.Fatalf("expected %q to be rejected", command)
@@ -60,11 +62,19 @@ func TestValidateCommandRejectsDangerousKeywordsWithShellSeparators(t *testing.T
 
 func TestValidateCommandRejectsDangerousPaths(t *testing.T) {
 	policy := NewCommandPolicy(200, 60)
-	for _, command := range []string{"rm -rf /", "cat /etc/passwd", "ls /proc"} {
+	for _, command := range []string{"rm -rf /", "cat /etc/passwd", `cat \etc\passwd`, "cat /e'tc'/passwd", "ls /proc"} {
 		err := policy.Validate(CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30})
 		if err == nil {
 			t.Fatalf("expected %q to be rejected", command)
 		}
+	}
+}
+
+func TestValidateCommandRejectsUnknownCommand(t *testing.T) {
+	policy := NewCommandPolicy(200, 60)
+	err := policy.Validate(CommandRequest{Command: "curl https://example.com", WorkingDir: "/workspace", TimeoutSeconds: 30})
+	if err == nil {
+		t.Fatal("expected command outside allowlist to be rejected")
 	}
 }
 

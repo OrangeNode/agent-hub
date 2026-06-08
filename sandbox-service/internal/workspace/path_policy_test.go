@@ -13,10 +13,45 @@ func TestResolveAllowsWorkspacePath(t *testing.T) {
 	}
 }
 
+func TestResolveEmptyPathUsesWorkspaceRoot(t *testing.T) {
+	p := NewPathPolicy("/workspace")
+	path, err := p.Resolve("")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if path != "/workspace" {
+		t.Fatalf("path = %q", path)
+	}
+}
+
+func TestResolveNormalizesBackslash(t *testing.T) {
+	p := NewPathPolicy("/workspace")
+	path, err := p.Resolve(`\workspace\input\data.csv`)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if path != "/workspace/input/data.csv" {
+		t.Fatalf("path = %q", path)
+	}
+}
+
 func TestResolveRejectsTraversal(t *testing.T) {
 	p := NewPathPolicy("/workspace")
 	if _, err := p.Resolve("/workspace/../etc/passwd"); err == nil {
 		t.Fatal("expected traversal to be rejected")
+	}
+}
+
+func TestResolveInputAllowsInputDirectory(t *testing.T) {
+	p := NewPathPolicy("/workspace")
+	for _, target := range []string{"/workspace/input", "/workspace/input/data.csv"} {
+		path, err := p.ResolveInput(target)
+		if err != nil {
+			t.Fatalf("ResolveInput(%q) error = %v", target, err)
+		}
+		if path != target {
+			t.Fatalf("path = %q", path)
+		}
 	}
 }
 

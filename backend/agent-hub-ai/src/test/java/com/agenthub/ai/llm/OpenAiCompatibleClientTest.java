@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.agenthub.ai.llm.openai.OpenAiCompatibleClient;
+import com.agenthub.ai.llm.tool.LlmToolCall;
+import com.agenthub.ai.llm.tool.LlmToolDefinition;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayOutputStream;
@@ -15,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Flow;
 import java.util.stream.Stream;
@@ -136,6 +139,39 @@ class OpenAiCompatibleClientTest {
     }
 
     @Test
+    void shouldParseOpenAiToolCallDelta() {
+        List<LlmStreamChunk> chunks = client.parseDataLine("""
+                {"choices":[{"delta":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"exec","arguments":"{\\"command\\":\\"python3 main.py\\"}"}}]}}]}
+                """);
+
+        assertThat(chunks).hasSize(1);
+        assertThat(chunks.getFirst().type()).isEqualTo(LlmStreamChunkType.TOOL_CALL);
+        assertThat(chunks.getFirst().toolCall().id()).isEqualTo("call_1");
+        assertThat(chunks.getFirst().toolCall().name()).isEqualTo("exec");
+        assertThat(chunks.getFirst().toolCall().arguments()).containsEntry("command", "python3 main.py");
+    }
+
+    @Test
+    void shouldAssembleSplitOpenAiToolCallArgumentsFromStream() {
+        CapturingOpenAiClient capturingClient = new CapturingOpenAiClient(
+                Stream.of(
+                        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"exec\",\"arguments\":\"{\\\"command\\\"\"}}]}}]}",
+                        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\":\\\"python3 \"}}]}}]}",
+                        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"main.py\\\"}\"}}]}}]}",
+                        "data: [DONE]"));
+        List<LlmStreamChunk> chunks = new ArrayList<>();
+
+        capturingClient.stream(request("https://api.openai.com/v1"), chunks::add);
+
+        assertThat(chunks).containsExactly(
+                LlmStreamChunk.toolCall(new LlmToolCall(
+                        "call_1",
+                        "exec",
+                        Map.of("command", "python3 main.py"))),
+                LlmStreamChunk.done());
+    }
+
+    @Test
     void shouldSetRequestTimeoutForStreamingCall() {
         CapturingOpenAiClient capturingClient = new CapturingOpenAiClient();
 
@@ -213,6 +249,58 @@ class OpenAiCompatibleClientTest {
         String bodyText = readBody(capturingClient.capturedRequest);
         assertThat(bodyText).contains("\"content\":\"你好\"");
         assertThat(bodyText).doesNotContain("\"content\":[");
+    }
+
+    @Test
+    void shouldSerializeToolDefinitionsWhenPresent() throws Exception {
+        CapturingOpenAiClient capturingClient = new CapturingOpenAiClient();
+        LlmToolDefinition tool = new LlmToolDefinition(
+                "exec",
+                "执行命令",
+                Map.of("type", "object", "properties", Map.of("command", Map.of("type", "string")))
+        );
+        LlmStreamRequest request = new LlmStreamRequest(
+                "http://localhost:3000/v1",
+                "test-api-key",
+                null,
+                "test-model",
+                List.of(new LlmMessage("user", "运行脚本")),
+                null,
+                false,
+                List.of(tool));
+
+        capturingClient.stream(request, ignored -> {
+        });
+
+        JsonNode body = OBJECT_MAPPER.readTree(readBody(capturingClient.capturedRequest));
+        assertThat(body.path("tool_choice").asText()).isEqualTo("auto");
+        JsonNode function = body.path("tools").get(0).path("function");
+        assertThat(function.path("name").asText()).isEqualTo("exec");
+        assertThat(function.path("parameters").path("properties").path("command").path("type").asText())
+                .isEqualTo("string");
+    }
+
+    @Test
+    void shouldSerializeToolResultMessage() throws Exception {
+        CapturingOpenAiClient capturingClient = new CapturingOpenAiClient();
+        LlmStreamRequest request = new LlmStreamRequest(
+                "http://localhost:3000/v1",
+                "test-api-key",
+                null,
+                "test-model",
+                List.of(LlmMessage.tool("call_1", "exec", "执行完成")),
+                null,
+                false);
+
+        capturingClient.stream(request, ignored -> {
+        });
+
+        JsonNode message = OBJECT_MAPPER.readTree(readBody(capturingClient.capturedRequest))
+                .path("messages")
+                .get(0);
+        assertThat(message.path("role").asText()).isEqualTo("tool");
+        assertThat(message.path("tool_call_id").asText()).isEqualTo("call_1");
+        assertThat(message.path("content").asText()).isEqualTo("执行完成");
     }
 
     @Test

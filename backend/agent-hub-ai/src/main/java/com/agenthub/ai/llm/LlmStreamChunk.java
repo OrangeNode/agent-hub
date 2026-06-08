@@ -1,6 +1,12 @@
 package com.agenthub.ai.llm;
 
-public record LlmStreamChunk(LlmStreamChunkType type, String content, String errorMessage) {
+import com.agenthub.ai.llm.tool.LlmToolCall;
+
+public record LlmStreamChunk(LlmStreamChunkType type, String content, String errorMessage, LlmToolCall toolCall) {
+
+    public LlmStreamChunk(LlmStreamChunkType type, String content, String errorMessage) {
+        this(type, content, errorMessage, null);
+    }
 
     public static LlmStreamChunk answer(String content) {
         return new LlmStreamChunk(LlmStreamChunkType.ANSWER_DELTA, content, null);
@@ -16,5 +22,9 @@ public record LlmStreamChunk(LlmStreamChunkType type, String content, String err
 
     public static LlmStreamChunk error(String errorMessage) {
         return new LlmStreamChunk(LlmStreamChunkType.ERROR, null, errorMessage);
+    }
+
+    public static LlmStreamChunk toolCall(LlmToolCall toolCall) {
+        return new LlmStreamChunk(LlmStreamChunkType.TOOL_CALL, null, null, toolCall);
     }
 }

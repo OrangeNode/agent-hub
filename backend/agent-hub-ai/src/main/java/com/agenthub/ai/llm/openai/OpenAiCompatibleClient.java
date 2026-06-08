@@ -5,6 +5,9 @@ import com.agenthub.ai.llm.LlmContentPart;
 import com.agenthub.ai.llm.LlmMessage;
 import com.agenthub.ai.llm.LlmStreamChunk;
 import com.agenthub.ai.llm.LlmStreamRequest;
+import com.agenthub.ai.llm.tool.LlmToolCall;
+import com.agenthub.ai.llm.tool.LlmToolDefinition;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -17,6 +20,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -52,10 +56,11 @@ public class OpenAiCompatibleClient implements LlmClient {
                 return;
             }
             ThinkTagSplitter thinkTagSplitter = new ThinkTagSplitter();
+            ToolCallAccumulator toolCallAccumulator = new ToolCallAccumulator();
             try (Stream<String> lines = response.body()) {
                 lines.filter(line -> line.startsWith("data:"))
                         .map(line -> line.substring("data:".length()).trim())
-                        .flatMap(payload -> parseDataLine(payload).stream())
+                        .flatMap(payload -> parseDataLine(payload, toolCallAccumulator).stream())
                         .forEach(chunk -> emitChunk(chunk, thinkTagSplitter, chunkConsumer));
                 thinkTagSplitter.flush(chunkConsumer);
             }
@@ -81,7 +86,7 @@ public class OpenAiCompatibleClient implements LlmClient {
                 thinkTagSplitter.flush(chunkConsumer);
                 chunkConsumer.accept(chunk);
             }
-            case REASONING_DELTA, USAGE -> chunkConsumer.accept(chunk);
+            case REASONING_DELTA, TOOL_CALL, USAGE -> chunkConsumer.accept(chunk);
         }
     }
 
@@ -89,11 +94,17 @@ public class OpenAiCompatibleClient implements LlmClient {
      * 解析单行 data 负载，兼容不同 OpenAI-like 服务的推理字段。
      */
     public List<LlmStreamChunk> parseDataLine(String payload) {
+        return parseDataLine(payload, new ToolCallAccumulator());
+    }
+
+    private List<LlmStreamChunk> parseDataLine(String payload, ToolCallAccumulator toolCallAccumulator) {
         if (payload == null || payload.isBlank()) {
             return List.of();
         }
         if ("[DONE]".equals(payload.trim())) {
-            return List.of(LlmStreamChunk.done());
+            List<LlmStreamChunk> chunks = new ArrayList<>(toolCallAccumulator.flush());
+            chunks.add(LlmStreamChunk.done());
+            return chunks;
         }
         try {
             JsonNode root = OBJECT_MAPPER.readTree(payload);
@@ -102,6 +113,7 @@ public class OpenAiCompatibleClient implements LlmClient {
             JsonNode message = choice.path("message");
 
             List<LlmStreamChunk> chunks = new ArrayList<>();
+            addToolCallChunks(chunks, delta.path("tool_calls"), toolCallAccumulator);
             addTextChunk(chunks, firstText(delta.path("reasoning"),
                     delta.path("reasoning_content"),
                     message.path("reasoning"),
@@ -145,6 +157,10 @@ public class OpenAiCompatibleClient implements LlmClient {
         }
         body.put("enable_thinking", request.reasoningRequested());
         body.put("chat_template_kwargs", Map.of("enable_thinking", request.reasoningRequested()));
+        if (request.tools() != null && !request.tools().isEmpty()) {
+            body.put("tools", request.tools().stream().map(this::toOpenAiTool).toList());
+            body.put("tool_choice", "auto");
+        }
         return body;
     }
 
@@ -169,9 +185,23 @@ public class OpenAiCompatibleClient implements LlmClient {
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("role", message.role());
                     item.put("content", message.hasParts() ? toContentParts(message.parts()) : message.content());
+                    if ("tool".equals(message.role())) {
+                        item.put("tool_call_id", message.toolCallId());
+                    }
                     return item;
                 })
                 .toList();
+    }
+
+    private Map<String, Object> toOpenAiTool(LlmToolDefinition tool) {
+        return Map.of(
+                "type", "function",
+                "function", Map.of(
+                        "name", tool.name(),
+                        "description", tool.description(),
+                        "parameters", tool.parameters()
+                )
+        );
     }
 
     private List<Map<String, Object>> toContentParts(List<LlmContentPart> parts) {
@@ -194,6 +224,48 @@ public class OpenAiCompatibleClient implements LlmClient {
             return;
         }
         chunks.add(reasoning ? LlmStreamChunk.reasoning(node.asText()) : LlmStreamChunk.answer(node.asText()));
+    }
+
+    private void addToolCallChunks(
+            List<LlmStreamChunk> chunks,
+            JsonNode toolCalls,
+            ToolCallAccumulator toolCallAccumulator
+    ) {
+        if (toolCalls == null || !toolCalls.isArray()) {
+            return;
+        }
+        for (JsonNode toolCall : toolCalls) {
+            JsonNode function = toolCall.path("function");
+            String name = function.path("name").asText(null);
+            if (toolCall.has("index")) {
+                toolCallAccumulator.accept(toolCall).ifPresent(chunks::add);
+                continue;
+            }
+            if (name == null || name.isBlank()) {
+                continue;
+            }
+            chunks.add(LlmStreamChunk.toolCall(new LlmToolCall(
+                    toolCall.path("id").asText(null),
+                    name,
+                    parseArguments(function.path("arguments").asText(""))
+            )));
+        }
+    }
+
+    private Map<String, Object> parseArguments(String arguments) {
+        return parseArgumentsIfComplete(arguments).orElseGet(Map::of);
+    }
+
+    private Optional<Map<String, Object>> parseArgumentsIfComplete(String arguments) {
+        if (arguments == null || arguments.isBlank()) {
+            return Optional.of(Map.of());
+        }
+        try {
+            return Optional.of(OBJECT_MAPPER.readValue(arguments, new TypeReference<>() {
+            }));
+        } catch (Exception exception) {
+            return Optional.empty();
+        }
     }
 
     private JsonNode firstText(JsonNode... nodes) {
@@ -225,6 +297,79 @@ public class OpenAiCompatibleClient implements LlmClient {
 
     private String defaultString(String value) {
         return value == null ? "" : value;
+    }
+
+    private String textOrNull(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        String text = node.asText();
+        return text == null || text.isBlank() ? null : text;
+    }
+
+    private class ToolCallAccumulator {
+
+        private final Map<String, PendingToolCall> pendingToolCalls = new LinkedHashMap<>();
+
+        private Optional<LlmStreamChunk> accept(JsonNode toolCall) {
+            JsonNode function = toolCall.path("function");
+            String key = toolCall.path("index").asText();
+            PendingToolCall pendingToolCall = pendingToolCalls.computeIfAbsent(key, ignored -> new PendingToolCall());
+            pendingToolCall.append(
+                    textOrNull(toolCall.path("id")),
+                    textOrNull(function.path("name")),
+                    function.has("arguments") ? function.path("arguments").asText("") : null
+            );
+
+            if (pendingToolCall.name == null || !pendingToolCall.hasArguments || pendingToolCall.arguments.isEmpty()) {
+                return Optional.empty();
+            }
+            Optional<Map<String, Object>> arguments = parseArgumentsIfComplete(pendingToolCall.arguments.toString());
+            if (arguments.isEmpty()) {
+                return Optional.empty();
+            }
+            pendingToolCalls.remove(key);
+            return Optional.of(LlmStreamChunk.toolCall(new LlmToolCall(
+                    pendingToolCall.id,
+                    pendingToolCall.name,
+                    arguments.get()
+            )));
+        }
+
+        private List<LlmStreamChunk> flush() {
+            List<LlmStreamChunk> chunks = new ArrayList<>();
+            pendingToolCalls.values().stream()
+                    .filter(pendingToolCall -> pendingToolCall.name != null)
+                    .map(pendingToolCall -> LlmStreamChunk.toolCall(new LlmToolCall(
+                            pendingToolCall.id,
+                            pendingToolCall.name,
+                            parseArguments(pendingToolCall.arguments.toString())
+                    )))
+                    .forEach(chunks::add);
+            pendingToolCalls.clear();
+            return chunks;
+        }
+    }
+
+    private static class PendingToolCall {
+
+        private String id;
+        private String name;
+        private final StringBuilder arguments = new StringBuilder();
+        private boolean hasArguments;
+
+        private void append(String id, String name, String arguments) {
+            if (id != null) {
+                this.id = id;
+            }
+            if (name != null) {
+                this.name = name;
+            }
+            if (arguments != null) {
+                this.hasArguments = true;
+                this.arguments.append(arguments);
+            }
+        }
     }
 
     private static class ThinkTagSplitter {

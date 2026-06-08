@@ -106,6 +106,21 @@ func TestLoadUsesOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsValidCsvCIDRs(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("SANDBOX_INTERNAL_TOKEN", "secret")
+	t.Setenv("SANDBOX_NETWORK_ALLOW_CIDRS", "10.0.0.0/8, ::1/128")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if !reflect.DeepEqual(cfg.NetworkAllowCIDRs, []string{"10.0.0.0/8", "::1/128"}) {
+		t.Fatalf("NetworkAllowCIDRs = %#v", cfg.NetworkAllowCIDRs)
+	}
+}
+
 func TestLoadRejectsInvalidIntWithVariableName(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("SANDBOX_INTERNAL_TOKEN", "secret")
@@ -116,6 +131,73 @@ func TestLoadRejectsInvalidIntWithVariableName(t *testing.T) {
 		t.Fatal("expected error for invalid int")
 	}
 	if !strings.Contains(err.Error(), "SANDBOX_VM_CPU 配置无效:") {
+		t.Fatalf("error = %q", err.Error())
+	}
+}
+
+func TestLoadRejectsNonPositiveIntsWithVariableName(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+	}{
+		{name: "SANDBOX_VM_CPU", value: "0"},
+		{name: "SANDBOX_VM_MEMORY_MB", value: "-1"},
+		{name: "SANDBOX_VM_DISK_GB", value: "0"},
+		{name: "SANDBOX_WARM_POOL_SIZE", value: "-1"},
+		{name: "SANDBOX_MAX_ACTIVE_SESSIONS", value: "0"},
+		{name: "SANDBOX_STDOUT_MAX_BYTES", value: "-1"},
+		{name: "SANDBOX_STDERR_MAX_BYTES", value: "0"},
+		{name: "SANDBOX_EXEC_TIMEOUT_SECONDS", value: "-1"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			clearConfigEnv(t)
+			t.Setenv("SANDBOX_INTERNAL_TOKEN", "secret")
+			t.Setenv(tt.name, tt.value)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatal("expected error for non-positive int")
+			}
+			expected := tt.name + " 配置必须大于 0"
+			if err.Error() != expected {
+				t.Fatalf("error = %q, want %q", err.Error(), expected)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsNonPositiveIdleTimeoutWithVariableName(t *testing.T) {
+	cases := []string{"0s", "-1s"}
+
+	for _, value := range cases {
+		t.Run(value, func(t *testing.T) {
+			clearConfigEnv(t)
+			t.Setenv("SANDBOX_INTERNAL_TOKEN", "secret")
+			t.Setenv("SANDBOX_IDLE_TIMEOUT", value)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatal("expected error for non-positive duration")
+			}
+			if err.Error() != "SANDBOX_IDLE_TIMEOUT 配置必须大于 0" {
+				t.Fatalf("error = %q", err.Error())
+			}
+		})
+	}
+}
+
+func TestLoadRejectsMalformedCIDRWithVariableName(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("SANDBOX_INTERNAL_TOKEN", "secret")
+	t.Setenv("SANDBOX_NETWORK_ALLOW_CIDRS", "127.0.0.1/32,invalid")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for malformed CIDR")
+	}
+	if !strings.Contains(err.Error(), "SANDBOX_NETWORK_ALLOW_CIDRS 配置无效:") {
 		t.Fatalf("error = %q", err.Error())
 	}
 }

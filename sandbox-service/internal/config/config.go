@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -35,43 +36,47 @@ func Load() (Config, error) {
 		return Config{}, errors.New("SANDBOX_INTERNAL_TOKEN 不能为空")
 	}
 
-	vmCpu, err := intEnv("SANDBOX_VM_CPU", 1)
+	vmCpu, err := positiveIntEnv("SANDBOX_VM_CPU", 1)
 	if err != nil {
 		return Config{}, err
 	}
-	vmMemoryMB, err := intEnv("SANDBOX_VM_MEMORY_MB", 1024)
+	vmMemoryMB, err := positiveIntEnv("SANDBOX_VM_MEMORY_MB", 1024)
 	if err != nil {
 		return Config{}, err
 	}
-	vmDiskGB, err := intEnv("SANDBOX_VM_DISK_GB", 5)
+	vmDiskGB, err := positiveIntEnv("SANDBOX_VM_DISK_GB", 5)
 	if err != nil {
 		return Config{}, err
 	}
-	warmPoolSize, err := intEnv("SANDBOX_WARM_POOL_SIZE", 2)
+	warmPoolSize, err := positiveIntEnv("SANDBOX_WARM_POOL_SIZE", 2)
 	if err != nil {
 		return Config{}, err
 	}
-	maxActiveSessions, err := intEnv("SANDBOX_MAX_ACTIVE_SESSIONS", 5)
+	maxActiveSessions, err := positiveIntEnv("SANDBOX_MAX_ACTIVE_SESSIONS", 5)
 	if err != nil {
 		return Config{}, err
 	}
-	stdoutMaxBytes, err := intEnv("SANDBOX_STDOUT_MAX_BYTES", 1048576)
+	stdoutMaxBytes, err := positiveIntEnv("SANDBOX_STDOUT_MAX_BYTES", 1048576)
 	if err != nil {
 		return Config{}, err
 	}
-	stderrMaxBytes, err := intEnv("SANDBOX_STDERR_MAX_BYTES", 1048576)
+	stderrMaxBytes, err := positiveIntEnv("SANDBOX_STDERR_MAX_BYTES", 1048576)
 	if err != nil {
 		return Config{}, err
 	}
-	idleTimeout, err := durationEnv("SANDBOX_IDLE_TIMEOUT", 5*time.Minute)
+	idleTimeout, err := positiveDurationEnv("SANDBOX_IDLE_TIMEOUT", 5*time.Minute)
 	if err != nil {
 		return Config{}, err
 	}
-	execTimeoutSeconds, err := intEnv("SANDBOX_EXEC_TIMEOUT_SECONDS", 60)
+	execTimeoutSeconds, err := positiveIntEnv("SANDBOX_EXEC_TIMEOUT_SECONDS", 60)
 	if err != nil {
 		return Config{}, err
 	}
 	objectSecure, err := boolEnv("SANDBOX_OBJECT_SECURE", false)
+	if err != nil {
+		return Config{}, err
+	}
+	networkAllowCIDRs, err := cidrListEnv("SANDBOX_NETWORK_ALLOW_CIDRS", []string{"127.0.0.1/32"})
 	if err != nil {
 		return Config{}, err
 	}
@@ -93,7 +98,7 @@ func Load() (Config, error) {
 		ObjectSecretKey:   stringEnv("SANDBOX_OBJECT_SECRET_KEY", "agenthub123"),
 		ObjectBucket:      stringEnv("SANDBOX_OBJECT_BUCKET", "agent-hub-sandbox-artifacts"),
 		ObjectSecure:      objectSecure,
-		NetworkAllowCIDRs: csvEnv("SANDBOX_NETWORK_ALLOW_CIDRS", []string{"127.0.0.1/32"}),
+		NetworkAllowCIDRs: networkAllowCIDRs,
 	}, nil
 }
 
@@ -115,6 +120,17 @@ func intEnv(name string, defaultValue int) (int, error) {
 		return 0, fmt.Errorf("%s 配置无效: %w", name, err)
 	}
 	return parsed, nil
+}
+
+func positiveIntEnv(name string, defaultValue int) (int, error) {
+	value, err := intEnv(name, defaultValue)
+	if err != nil {
+		return 0, err
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("%s 配置必须大于 0", name)
+	}
+	return value, nil
 }
 
 func boolEnv(name string, defaultValue bool) (bool, error) {
@@ -141,6 +157,17 @@ func durationEnv(name string, defaultValue time.Duration) (time.Duration, error)
 	return parsed, nil
 }
 
+func positiveDurationEnv(name string, defaultValue time.Duration) (time.Duration, error) {
+	value, err := durationEnv(name, defaultValue)
+	if err != nil {
+		return 0, err
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("%s 配置必须大于 0", name)
+	}
+	return value, nil
+}
+
 func csvEnv(name string, defaultValue []string) []string {
 	value := strings.TrimSpace(os.Getenv(name))
 	if value == "" {
@@ -159,4 +186,14 @@ func csvEnv(name string, defaultValue []string) []string {
 		return defaultValue
 	}
 	return result
+}
+
+func cidrListEnv(name string, defaultValue []string) ([]string, error) {
+	values := csvEnv(name, defaultValue)
+	for _, value := range values {
+		if _, err := netip.ParsePrefix(value); err != nil {
+			return nil, fmt.Errorf("%s 配置无效: %w", name, err)
+		}
+	}
+	return values, nil
 }

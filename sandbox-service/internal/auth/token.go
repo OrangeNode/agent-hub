@@ -22,7 +22,7 @@ func RequireToken(token string) func(http.Handler) http.Handler {
 
 func parseBearerToken(header string) (string, bool) {
 	scheme, value, ok := strings.Cut(strings.TrimSpace(header), " ")
-	if !ok || scheme != "Bearer" {
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
 		return "", false
 	}
 

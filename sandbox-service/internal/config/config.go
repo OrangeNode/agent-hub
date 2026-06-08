@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -109,7 +110,11 @@ func intEnv(name string, defaultValue int) (int, error) {
 	if value == "" {
 		return defaultValue, nil
 	}
-	return strconv.Atoi(value)
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s 配置无效: %w", name, err)
+	}
+	return parsed, nil
 }
 
 func boolEnv(name string, defaultValue bool) (bool, error) {
@@ -117,7 +122,11 @@ func boolEnv(name string, defaultValue bool) (bool, error) {
 	if value == "" {
 		return defaultValue, nil
 	}
-	return strconv.ParseBool(value)
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return false, fmt.Errorf("%s 配置无效: %w", name, err)
+	}
+	return parsed, nil
 }
 
 func durationEnv(name string, defaultValue time.Duration) (time.Duration, error) {
@@ -125,7 +134,11 @@ func durationEnv(name string, defaultValue time.Duration) (time.Duration, error)
 	if value == "" {
 		return defaultValue, nil
 	}
-	return time.ParseDuration(value)
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s 配置无效: %w", name, err)
+	}
+	return parsed, nil
 }
 
 func csvEnv(name string, defaultValue []string) []string {

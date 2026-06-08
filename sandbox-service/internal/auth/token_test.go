@@ -3,6 +3,7 @@ package auth
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -33,5 +34,44 @@ func TestRequireTokenRejectsMissingToken(t *testing.T) {
 
 	if res.Code != http.StatusUnauthorized {
 		t.Fatalf("code = %d", res.Code)
+	}
+	if !strings.Contains(res.Body.String(), "未授权") {
+		t.Fatalf("body = %q", res.Body.String())
+	}
+}
+
+func TestRequireTokenRejectsWrongToken(t *testing.T) {
+	handler := RequireToken("secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not run")
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.Header.Set("Authorization", "Bearer wrong")
+	res := httptest.NewRecorder()
+
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("code = %d", res.Code)
+	}
+	if !strings.Contains(res.Body.String(), "未授权") {
+		t.Fatalf("body = %q", res.Body.String())
+	}
+}
+
+func TestRequireTokenRejectsMalformedAuthorization(t *testing.T) {
+	handler := RequireToken("secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not run")
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.Header.Set("Authorization", "Basic secret")
+	res := httptest.NewRecorder()
+
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("code = %d", res.Code)
+	}
+	if !strings.Contains(res.Body.String(), "未授权") {
+		t.Fatalf("body = %q", res.Body.String())
 	}
 }

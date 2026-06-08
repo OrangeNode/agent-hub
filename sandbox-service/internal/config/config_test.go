@@ -1,11 +1,14 @@
 package config
 
 import (
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestLoadUsesDefaults(t *testing.T) {
+	clearConfigEnv(t)
 	t.Setenv("SANDBOX_INTERNAL_TOKEN", "secret")
 	cfg, err := Load()
 	if err != nil {
@@ -26,12 +29,120 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.InternalToken != "secret" {
 		t.Fatalf("InternalToken = %q", cfg.InternalToken)
 	}
+	if cfg.VMCpu != 1 {
+		t.Fatalf("VMCpu = %d", cfg.VMCpu)
+	}
+	if cfg.VMMemoryMB != 1024 {
+		t.Fatalf("VMMemoryMB = %d", cfg.VMMemoryMB)
+	}
+	if cfg.VMDiskGB != 5 {
+		t.Fatalf("VMDiskGB = %d", cfg.VMDiskGB)
+	}
+	if cfg.ExecTimeout != 60*time.Second {
+		t.Fatalf("ExecTimeout = %s", cfg.ExecTimeout)
+	}
+	if cfg.StdoutMaxBytes != 1048576 {
+		t.Fatalf("StdoutMaxBytes = %d", cfg.StdoutMaxBytes)
+	}
+	if cfg.StderrMaxBytes != 1048576 {
+		t.Fatalf("StderrMaxBytes = %d", cfg.StderrMaxBytes)
+	}
+	if cfg.ObjectEndpoint != "127.0.0.1:9000" {
+		t.Fatalf("ObjectEndpoint = %q", cfg.ObjectEndpoint)
+	}
+	if cfg.ObjectAccessKey != "agenthub" {
+		t.Fatalf("ObjectAccessKey = %q", cfg.ObjectAccessKey)
+	}
+	if cfg.ObjectSecretKey != "agenthub123" {
+		t.Fatalf("ObjectSecretKey = %q", cfg.ObjectSecretKey)
+	}
+	if cfg.ObjectBucket != "agent-hub-sandbox-artifacts" {
+		t.Fatalf("ObjectBucket = %q", cfg.ObjectBucket)
+	}
+	if cfg.ObjectSecure {
+		t.Fatal("ObjectSecure = true")
+	}
+	if !reflect.DeepEqual(cfg.NetworkAllowCIDRs, []string{"127.0.0.1/32"}) {
+		t.Fatalf("NetworkAllowCIDRs = %#v", cfg.NetworkAllowCIDRs)
+	}
 }
 
 func TestLoadRejectsBlankToken(t *testing.T) {
+	clearConfigEnv(t)
 	t.Setenv("SANDBOX_INTERNAL_TOKEN", "")
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected error for blank token")
+	}
+	if err.Error() != "SANDBOX_INTERNAL_TOKEN 不能为空" {
+		t.Fatalf("error = %q", err.Error())
+	}
+}
+
+func TestLoadUsesOverrides(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("SANDBOX_INTERNAL_TOKEN", "secret")
+	t.Setenv("SANDBOX_OBJECT_SECURE", "true")
+	t.Setenv("SANDBOX_NETWORK_ALLOW_CIDRS", "10.0.0.0/8, 192.168.0.0/16")
+	t.Setenv("SANDBOX_IDLE_TIMEOUT", "30s")
+	t.Setenv("SANDBOX_EXEC_TIMEOUT_SECONDS", "15")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if !cfg.ObjectSecure {
+		t.Fatal("ObjectSecure = false")
+	}
+	if !reflect.DeepEqual(cfg.NetworkAllowCIDRs, []string{"10.0.0.0/8", "192.168.0.0/16"}) {
+		t.Fatalf("NetworkAllowCIDRs = %#v", cfg.NetworkAllowCIDRs)
+	}
+	if cfg.IdleTimeout != 30*time.Second {
+		t.Fatalf("IdleTimeout = %s", cfg.IdleTimeout)
+	}
+	if cfg.ExecTimeout != 15*time.Second {
+		t.Fatalf("ExecTimeout = %s", cfg.ExecTimeout)
+	}
+}
+
+func TestLoadRejectsInvalidIntWithVariableName(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("SANDBOX_INTERNAL_TOKEN", "secret")
+	t.Setenv("SANDBOX_VM_CPU", "invalid")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for invalid int")
+	}
+	if !strings.Contains(err.Error(), "SANDBOX_VM_CPU 配置无效:") {
+		t.Fatalf("error = %q", err.Error())
+	}
+}
+
+func clearConfigEnv(t *testing.T) {
+	t.Helper()
+
+	names := []string{
+		"SANDBOX_LISTEN_ADDR",
+		"SANDBOX_WARM_POOL_SIZE",
+		"SANDBOX_MAX_ACTIVE_SESSIONS",
+		"SANDBOX_IDLE_TIMEOUT",
+		"SANDBOX_VM_CPU",
+		"SANDBOX_VM_MEMORY_MB",
+		"SANDBOX_VM_DISK_GB",
+		"SANDBOX_EXEC_TIMEOUT_SECONDS",
+		"SANDBOX_STDOUT_MAX_BYTES",
+		"SANDBOX_STDERR_MAX_BYTES",
+		"SANDBOX_OBJECT_ENDPOINT",
+		"SANDBOX_OBJECT_ACCESS_KEY",
+		"SANDBOX_OBJECT_SECRET_KEY",
+		"SANDBOX_OBJECT_BUCKET",
+		"SANDBOX_OBJECT_SECURE",
+		"SANDBOX_NETWORK_ALLOW_CIDRS",
+		"SANDBOX_INTERNAL_TOKEN",
+	}
+	for _, name := range names {
+		t.Setenv(name, "")
 	}
 }

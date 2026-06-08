@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestArtifactSyncerDiffCreatesAndVersionsChangedArtifacts(t *testing.T) {
+func TestArtifactSyncerDiffPlansChangesAndMarkSyncedAdvancesState(t *testing.T) {
 	syncer := NewArtifactSyncer("bucket")
 	first, err := syncer.Diff("conversation-1", []Artifact{
 		{RelativePath: "reports/result.txt", SHA256: "sha-1", Size: 12},
@@ -28,8 +28,24 @@ func TestArtifactSyncerDiffCreatesAndVersionsChangedArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Diff(second) error = %v", err)
 	}
-	if len(second) != 0 {
-		t.Fatalf("unchanged artifacts should not repeat, got %d", len(second))
+	if len(second) != 1 {
+		t.Fatalf("uncommitted artifact should repeat, got %d", len(second))
+	}
+	if second[0].Version != 1 {
+		t.Fatalf("uncommitted version = %d, want 1", second[0].Version)
+	}
+
+	if err := syncer.MarkSynced("conversation-1", first[0]); err != nil {
+		t.Fatalf("MarkSynced() error = %v", err)
+	}
+	afterMark, err := syncer.Diff("conversation-1", []Artifact{
+		{RelativePath: "reports/result.txt", SHA256: "sha-1", Size: 12},
+	})
+	if err != nil {
+		t.Fatalf("Diff(afterMark) error = %v", err)
+	}
+	if len(afterMark) != 0 {
+		t.Fatalf("synced artifacts should not repeat, got %d", len(afterMark))
 	}
 
 	third, err := syncer.Diff("conversation-1", []Artifact{

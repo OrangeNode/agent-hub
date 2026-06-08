@@ -45,14 +45,31 @@ func (s *FilesystemStore) Upload(req UploadRequest) error {
 	if err := os.MkdirAll(filepath.Dir(objectPath), 0o755); err != nil {
 		return fmt.Errorf("创建本地对象目录失败: %w", err)
 	}
-	file, err := os.Create(objectPath)
+	tmpFile, err := os.CreateTemp(filepath.Dir(objectPath), ".upload-*")
 	if err != nil {
-		return fmt.Errorf("创建本地对象文件失败: %w", err)
+		return fmt.Errorf("创建本地对象临时文件失败: %w", err)
 	}
-	defer file.Close()
-	if _, err := io.Copy(file, req.Body); err != nil {
-		return fmt.Errorf("写入本地对象文件失败: %w", err)
+	tmpPath := tmpFile.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := io.Copy(tmpFile, req.Body); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("写入本地对象临时文件失败: %w", err)
 	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("关闭本地对象临时文件失败: %w", err)
+	}
+	if err := os.Remove(objectPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("替换本地对象文件失败: %w", err)
+	}
+	if err := os.Rename(tmpPath, objectPath); err != nil {
+		return fmt.Errorf("提交本地对象文件失败: %w", err)
+	}
+	committed = true
 	return nil
 }
 

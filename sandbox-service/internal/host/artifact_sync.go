@@ -52,6 +52,14 @@ func (s *ArtifactSyncer) Bucket() string {
 }
 
 func (s *ArtifactSyncer) Diff(conversationID string, artifacts []Artifact) ([]SyncedArtifact, error) {
+	return s.Plan(conversationID, artifacts)
+}
+
+func (s *ArtifactSyncer) Pending(conversationID string, artifacts []Artifact) ([]SyncedArtifact, error) {
+	return s.Plan(conversationID, artifacts)
+}
+
+func (s *ArtifactSyncer) Plan(conversationID string, artifacts []Artifact) ([]SyncedArtifact, error) {
 	if s == nil {
 		return nil, errors.New("产物同步器未初始化")
 	}
@@ -64,11 +72,6 @@ func (s *ArtifactSyncer) Diff(conversationID string, artifacts []Artifact) ([]Sy
 	defer s.mu.Unlock()
 
 	byPath := s.versions[conversationID]
-	if byPath == nil {
-		byPath = make(map[string]artifactVersion)
-		s.versions[conversationID] = byPath
-	}
-
 	changes := make([]SyncedArtifact, 0)
 	for _, artifact := range artifacts {
 		relativePath, err := CleanArtifactRelativePath(artifact.RelativePath)
@@ -84,7 +87,6 @@ func (s *ArtifactSyncer) Diff(conversationID string, artifacts []Artifact) ([]Sy
 			continue
 		}
 		version := current.version + 1
-		byPath[relativePath] = artifactVersion{sha: sha, version: version}
 		artifact.RelativePath = relativePath
 		artifact.SHA256 = sha
 		changes = append(changes, SyncedArtifact{
@@ -95,6 +97,38 @@ func (s *ArtifactSyncer) Diff(conversationID string, artifacts []Artifact) ([]Sy
 		})
 	}
 	return changes, nil
+}
+
+func (s *ArtifactSyncer) MarkSynced(conversationID string, artifact SyncedArtifact) error {
+	if s == nil {
+		return errors.New("产物同步器未初始化")
+	}
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		return errors.New("conversationId 不能为空")
+	}
+	relativePath, err := CleanArtifactRelativePath(artifact.RelativePath)
+	if err != nil {
+		return err
+	}
+	sha := strings.TrimSpace(artifact.SHA256)
+	if sha == "" {
+		return errors.New("产物 sha256 不能为空")
+	}
+	version := artifact.Version
+	if version <= 0 {
+		version = 1
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	byPath := s.versions[conversationID]
+	if byPath == nil {
+		byPath = make(map[string]artifactVersion)
+		s.versions[conversationID] = byPath
+	}
+	byPath[relativePath] = artifactVersion{sha: sha, version: version}
+	return nil
 }
 
 func CleanArtifactRelativePath(value string) (string, error) {

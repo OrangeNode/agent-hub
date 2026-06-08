@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -124,6 +125,9 @@ func TestExecStreamProxiesGuestSSEAndSyncsArtifacts(t *testing.T) {
 			if r.URL.Query().Get("path") != "/workspace/artifacts/reports/out.txt" {
 				t.Fatalf("file path = %q", r.URL.Query().Get("path"))
 			}
+			if r.URL.Query().Get("maxBytes") != fmt.Sprint(maxArtifactBytes+1) {
+				t.Fatalf("maxBytes = %q", r.URL.Query().Get("maxBytes"))
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"content": "ok", "truncated": false})
 		default:
 			t.Fatalf("unexpected guest path %s", r.URL.Path)
@@ -162,6 +166,219 @@ func TestExecStreamProxiesGuestSSEAndSyncsArtifacts(t *testing.T) {
 	}
 	if uploader.uploads[0].Content != "ok" {
 		t.Fatalf("uploaded content = %q", uploader.uploads[0].Content)
+	}
+}
+
+func TestExecStreamRetriesArtifactUploadUntilMarkedSynced(t *testing.T) {
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/exec/stream":
+			w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+			_, _ = w.Write([]byte("event: completed\n"))
+			_, _ = w.Write([]byte(`data: {"exitCode":0}` + "\n\n"))
+		case "/artifacts":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"artifacts": []map[string]any{
+					{"relativePath": "reports/out.txt", "sha256": "sha-1", "size": 2},
+				},
+			})
+		case "/files/content":
+			_ = json.NewEncoder(w).Encode(map[string]any{"content": "ok", "truncated": false})
+		default:
+			t.Fatalf("unexpected guest path %s", r.URL.Path)
+		}
+	}))
+	defer guest.Close()
+
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	uploader := &recordingUploader{failuresRemaining: 1}
+	router := NewRouterWithManager(manager, WithUploader(uploader), WithArtifactSyncer(NewArtifactSyncer("bucket")))
+
+	first := execStream(t, router, session.ID)
+	if !strings.Contains(first.Body.String(), "产物同步失败") {
+		t.Fatalf("first response = %s", first.Body.String())
+	}
+	if uploader.Attempts() != 1 {
+		t.Fatalf("first attempts = %d, want 1", uploader.Attempts())
+	}
+
+	second := execStream(t, router, session.ID)
+	if !strings.Contains(second.Body.String(), "event: artifact_synced") {
+		t.Fatalf("second response = %s", second.Body.String())
+	}
+	if uploader.Attempts() != 2 {
+		t.Fatalf("second attempts = %d, want 2", uploader.Attempts())
+	}
+
+	third := execStream(t, router, session.ID)
+	if strings.Contains(third.Body.String(), "event: artifact_synced") {
+		t.Fatalf("third response should not sync unchanged artifact: %s", third.Body.String())
+	}
+	if uploader.Attempts() != 2 {
+		t.Fatalf("third attempts = %d, want 2", uploader.Attempts())
+	}
+}
+
+func TestExecStreamDoesNotSyncArtifactsWhenGuestDoesNotCompleteSuccessfully(t *testing.T) {
+	cases := []struct {
+		name string
+		sse  string
+	}{
+		{
+			name: "guest error",
+			sse:  "event: error\n" + `data: {"message":"failed"}` + "\n\n",
+		},
+		{
+			name: "non zero completed",
+			sse:  "event: completed\n" + `data: {"exitCode":1}` + "\n\n",
+		},
+		{
+			name: "timed out completed",
+			sse:  "event: completed\n" + `data: {"exitCode":0,"timedOut":true}` + "\n\n",
+		},
+		{
+			name: "completed with error",
+			sse:  "event: completed\n" + `data: {"exitCode":0,"error":"boom"}` + "\n\n",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			artifactCalled := false
+			guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/exec/stream":
+					w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+					_, _ = w.Write([]byte(tc.sse))
+				case "/artifacts", "/files/content":
+					artifactCalled = true
+				default:
+					t.Fatalf("unexpected guest path %s", r.URL.Path)
+				}
+			}))
+			defer guest.Close()
+
+			manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
+			session, err := manager.GetOrCreate("conversation-1")
+			if err != nil {
+				t.Fatalf("GetOrCreate() error = %v", err)
+			}
+			uploader := &recordingUploader{}
+			router := NewRouterWithManager(manager, WithUploader(uploader), WithArtifactSyncer(NewArtifactSyncer("bucket")))
+
+			rec := execStream(t, router, session.ID)
+
+			if artifactCalled {
+				t.Fatalf("artifact endpoints should not be called, response = %s", rec.Body.String())
+			}
+			if len(uploader.uploads) != 0 {
+				t.Fatalf("uploads = %d, want 0", len(uploader.uploads))
+			}
+			if !strings.Contains(rec.Body.String(), strings.TrimSpace(tc.sse)) {
+				t.Fatalf("expected guest event to be forwarded, got %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestProxyExecStreamFlushesStdoutBeforeCompleted(t *testing.T) {
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		_, _ = w.Write([]byte("event: stdout_delta\n"))
+		_, _ = w.Write([]byte(`data: {"content":"ok"}` + "\n\n"))
+		_, _ = w.Write([]byte("event: completed\n"))
+		_, _ = w.Write([]byte(`data: {"exitCode":0}` + "\n\n"))
+	}))
+	defer guest.Close()
+
+	server := &apiServer{client: guest.Client()}
+	rec := &flushRecorder{header: http.Header{}}
+	req := httptest.NewRequest(http.MethodPost, "/exec", nil)
+
+	completedOK, err := server.proxyExecStream(req, rec, Session{AgentURL: guest.URL}, execRequest{
+		Command:        "echo ok",
+		WorkingDir:     "/workspace",
+		TimeoutSeconds: 5,
+	})
+
+	if err != nil {
+		t.Fatalf("proxyExecStream() error = %v", err)
+	}
+	if !completedOK {
+		t.Fatal("completedOK = false, want true")
+	}
+	if len(rec.flushes) == 0 {
+		t.Fatal("expected at least one flush")
+	}
+	if !strings.Contains(rec.flushes[0], "event: stdout_delta") {
+		t.Fatalf("first flush = %q", rec.flushes[0])
+	}
+	if strings.Contains(rec.flushes[0], "event: completed") {
+		t.Fatalf("stdout should flush before completed, first flush = %q", rec.flushes[0])
+	}
+}
+
+func TestExecStreamProxyErrorDoesNotExposeGuestURL(t *testing.T) {
+	agentURL := "http://guest.internal:7070"
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: agentURL}}}, 1, 5*time.Minute)
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	client := &http.Client{Transport: failingRoundTripper{}}
+	router := NewRouterWithManager(manager, WithHTTPClient(client), WithUploader(&recordingUploader{}))
+
+	rec := execStream(t, router, session.ID)
+	body := rec.Body.String()
+
+	if !strings.Contains(body, "沙箱命令执行代理失败") {
+		t.Fatalf("body = %s", body)
+	}
+	if strings.Contains(body, agentURL) || strings.Contains(body, "guest.internal") {
+		t.Fatalf("response exposes guest URL: %s", body)
+	}
+}
+
+func TestExecStreamRejectsTruncatedArtifactContent(t *testing.T) {
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/exec/stream":
+			w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+			_, _ = w.Write([]byte("event: completed\n"))
+			_, _ = w.Write([]byte(`data: {"exitCode":0}` + "\n\n"))
+		case "/artifacts":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"artifacts": []map[string]any{
+					{"relativePath": "reports/out.txt", "sha256": "sha-1", "size": maxArtifactBytes + 1},
+				},
+			})
+		case "/files/content":
+			_ = json.NewEncoder(w).Encode(map[string]any{"content": "partial", "truncated": true})
+		default:
+			t.Fatalf("unexpected guest path %s", r.URL.Path)
+		}
+	}))
+	defer guest.Close()
+
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	uploader := &recordingUploader{}
+	router := NewRouterWithManager(manager, WithUploader(uploader), WithArtifactSyncer(NewArtifactSyncer("bucket")))
+
+	rec := execStream(t, router, session.ID)
+
+	if !strings.Contains(rec.Body.String(), "产物同步失败") {
+		t.Fatalf("response = %s", rec.Body.String())
+	}
+	if len(uploader.uploads) != 0 {
+		t.Fatalf("uploads = %d, want 0", len(uploader.uploads))
 	}
 }
 
@@ -280,6 +497,43 @@ func TestCreateSessionRejectsRestoreArtifactWithMismatchedSHA256(t *testing.T) {
 	}
 }
 
+func TestCreateSessionRejectsOversizedRestoreArtifact(t *testing.T) {
+	guestCalled := false
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		guestCalled = true
+	}))
+	defer guest.Close()
+
+	downloader := &recordingDownloader{content: strings.Repeat("a", maxArtifactBytes+1)}
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
+	body := bytes.NewBufferString(
+		`{"conversationId":"conversation-1","artifacts":[{"relativePath":"reports/out.txt","storageBucket":"bucket-a","storageKey":"objects/out.txt"}]}`,
+	)
+	req := httptest.NewRequest(http.MethodPost, "/internal/sandbox/sessions", body)
+	rec := httptest.NewRecorder()
+
+	NewRouterWithManager(manager, WithDownloader(downloader)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if guestCalled {
+		t.Fatal("guest should not be called when restore artifact is too large")
+	}
+	if !strings.Contains(rec.Body.String(), "恢复产物超过大小上限") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func execStream(t *testing.T, router http.Handler, sessionID string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := bytes.NewBufferString(`{"command":"cat reports/out.txt","workingDir":"/workspace","timeoutSeconds":5}`)
+	req := httptest.NewRequest(http.MethodPost, "/internal/sandbox/sessions/"+sessionID+"/exec/stream", body)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return rec
+}
+
 func postJSON(t *testing.T, router http.Handler, path string, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
@@ -292,7 +546,9 @@ func postJSON(t *testing.T, router http.Handler, path string, body string) *http
 }
 
 type recordingUploader struct {
-	uploads []uploadRecord
+	uploads           []uploadRecord
+	failuresRemaining int
+	attempts          int
 }
 
 type uploadRecord struct {
@@ -302,6 +558,11 @@ type uploadRecord struct {
 }
 
 func (u *recordingUploader) Upload(req objectstore.UploadRequest) error {
+	u.attempts++
+	if u.failuresRemaining > 0 {
+		u.failuresRemaining--
+		return errors.New("upload failed")
+	}
 	data, err := io.ReadAll(req.Body)
 	if err != nil {
 		return err
@@ -312,6 +573,10 @@ func (u *recordingUploader) Upload(req objectstore.UploadRequest) error {
 		Content: string(data),
 	})
 	return nil
+}
+
+func (u *recordingUploader) Attempts() int {
+	return u.attempts
 }
 
 type recordingDownloader struct {
@@ -328,4 +593,33 @@ func (d *recordingDownloader) Download(req objectstore.DownloadRequest) (io.Read
 		content = "content"
 	}
 	return io.NopCloser(strings.NewReader(content)), nil
+}
+
+type flushRecorder struct {
+	header  http.Header
+	body    bytes.Buffer
+	flushes []string
+	status  int
+}
+
+func (r *flushRecorder) Header() http.Header {
+	return r.header
+}
+
+func (r *flushRecorder) Write(data []byte) (int, error) {
+	return r.body.Write(data)
+}
+
+func (r *flushRecorder) WriteHeader(status int) {
+	r.status = status
+}
+
+func (r *flushRecorder) Flush() {
+	r.flushes = append(r.flushes, r.body.String())
+}
+
+type failingRoundTripper struct{}
+
+func (f failingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return nil, fmt.Errorf("connect %s failed", req.URL.String())
 }

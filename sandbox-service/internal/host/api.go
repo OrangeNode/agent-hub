@@ -1,6 +1,7 @@
 package host
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"agent-hub/sandbox-service/internal/objectstore"
@@ -19,6 +21,12 @@ import (
 const (
 	defaultArtifactPath = "/workspace/artifacts"
 	defaultContentType  = "application/octet-stream"
+	maxArtifactBytes    = 10 * 1024 * 1024
+)
+
+const (
+	proxyExecStreamClientMessage = "沙箱命令执行代理失败"
+	syncArtifactsClientMessage   = "产物同步失败"
 )
 
 type apiServer struct {
@@ -139,7 +147,7 @@ func (s *apiServer) handleCreateSession(w http.ResponseWriter, r *http.Request) 
 	session, err := s.manager.GetOrCreate(req.ConversationID)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if strings.Contains(err.Error(), "达到上限") {
+		if strings.Contains(err.Error(), "达到上限") || strings.Contains(err.Error(), "上限") {
 			status = http.StatusServiceUnavailable
 		}
 		writeError(w, status, err.Error())
@@ -191,41 +199,147 @@ func (s *apiServer) handleExecStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.proxyExecStream(r, w, session, req); err != nil {
-		sse.WriteEvent(w, "error", map[string]string{"message": err.Error()})
+	completedOK, err := s.proxyExecStream(r, w, session, req)
+	if err != nil {
+		sse.WriteEvent(w, "error", map[string]string{"message": proxyExecStreamClientMessage})
+		return
+	}
+	if !completedOK {
 		return
 	}
 	if err := s.syncArtifacts(r, w, session); err != nil {
-		sse.WriteEvent(w, "error", map[string]string{"message": err.Error()})
+		sse.WriteEvent(w, "error", map[string]string{"message": syncArtifactsClientMessage})
 		return
 	}
 }
 
-func (s *apiServer) proxyExecStream(r *http.Request, w http.ResponseWriter, session Session, req execRequest) error {
+func (s *apiServer) proxyExecStream(r *http.Request, w http.ResponseWriter, session Session, req execRequest) (bool, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
-		return fmt.Errorf("编码命令请求失败: %w", err)
+		return false, errors.New(proxyExecStreamClientMessage)
 	}
 	guestReq, err := http.NewRequestWithContext(r.Context(), http.MethodPost, joinAgentURL(session.AgentURL, "/exec/stream"), bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("创建 guest-agent 请求失败: %w", err)
+		return false, errors.New(proxyExecStreamClientMessage)
 	}
 	guestReq.Header.Set("Content-Type", "application/json; charset=utf-8")
-	resp, err := s.client.Do(guestReq)
+	client := s.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(guestReq)
 	if err != nil {
-		return fmt.Errorf("请求 guest-agent 执行命令失败: %w", err)
+		return false, errors.New(proxyExecStreamClientMessage)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("guest-agent 执行命令返回异常状态: %d", resp.StatusCode)
+		return false, errors.New(proxyExecStreamClientMessage)
 	}
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		return fmt.Errorf("转发 guest-agent SSE 失败: %w", err)
+	completedOK, err := forwardGuestSSE(resp.Body, w)
+	if err != nil {
+		return false, errors.New(proxyExecStreamClientMessage)
 	}
-	if flusher, ok := w.(http.Flusher); ok {
-		flusher.Flush()
+	return completedOK, nil
+}
+
+func forwardGuestSSE(body io.Reader, w http.ResponseWriter) (bool, error) {
+	reader := bufio.NewReader(body)
+	state := proxySSEState{}
+	for {
+		line, readErr := reader.ReadString('\n')
+		if len(line) > 0 {
+			if _, err := io.WriteString(w, line); err != nil {
+				return false, err
+			}
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			state.consume(line)
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			return false, readErr
+		}
 	}
-	return nil
+	state.finish()
+	return state.completedOK, nil
+}
+
+type proxySSEState struct {
+	event       string
+	dataLines   []string
+	hasFrame    bool
+	completedOK bool
+}
+
+func (s *proxySSEState) consume(line string) {
+	line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+	if line == "" {
+		s.finish()
+		return
+	}
+	s.hasFrame = true
+	if strings.HasPrefix(line, "event:") {
+		s.event = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		return
+	}
+	if strings.HasPrefix(line, "data:") {
+		value := strings.TrimPrefix(line, "data:")
+		if strings.HasPrefix(value, " ") {
+			value = strings.TrimPrefix(value, " ")
+		}
+		s.dataLines = append(s.dataLines, value)
+	}
+}
+
+func (s *proxySSEState) finish() {
+	if !s.hasFrame {
+		return
+	}
+	if s.event == "completed" {
+		s.completedOK = completedDataAllowsArtifactSync(strings.Join(s.dataLines, "\n"))
+	}
+	s.event = ""
+	s.dataLines = nil
+	s.hasFrame = false
+}
+
+func completedDataAllowsArtifactSync(data string) bool {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		return false
+	}
+	var exitCode int
+	if raw, ok := payload["exitCode"]; !ok || json.Unmarshal(raw, &exitCode) != nil {
+		return false
+	}
+	if exitCode != 0 {
+		return false
+	}
+	if raw, ok := payload["timedOut"]; ok {
+		var timedOut bool
+		if json.Unmarshal(raw, &timedOut) == nil && timedOut {
+			return false
+		}
+	}
+	if raw, ok := payload["error"]; ok && !emptyCompletedError(raw) {
+		return false
+	}
+	return true
+}
+
+func emptyCompletedError(raw json.RawMessage) bool {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return true
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil && strings.TrimSpace(text) == "" {
+		return true
+	}
+	return false
 }
 
 func (s *apiServer) syncArtifacts(r *http.Request, w http.ResponseWriter, session Session) error {
@@ -255,6 +369,9 @@ func (s *apiServer) syncArtifacts(r *http.Request, w http.ResponseWriter, sessio
 		}); err != nil {
 			return fmt.Errorf("上传产物失败: %w", err)
 		}
+		if err := s.syncer.MarkSynced(session.ConversationID, change); err != nil {
+			return err
+		}
 		sse.WriteEvent(w, "artifact_synced", change)
 	}
 	return nil
@@ -273,7 +390,11 @@ func (s *apiServer) fetchArtifacts(r *http.Request, session Session) ([]Artifact
 	if err != nil {
 		return nil, fmt.Errorf("创建产物扫描请求失败: %w", err)
 	}
-	resp, err := s.client.Do(req)
+	client := s.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("请求 guest-agent 产物列表失败: %w", err)
 	}
@@ -302,13 +423,17 @@ func (s *apiServer) readGuestArtifact(r *http.Request, session Session, relative
 	}
 	query := parsed.Query()
 	query.Set("path", defaultArtifactPath+"/"+relativePath)
-	query.Set("maxBytes", "0")
+	query.Set("maxBytes", strconv.Itoa(maxArtifactBytes+1))
 	parsed.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, parsed.String(), nil)
 	if err != nil {
 		return nil, fmt.Errorf("创建产物读取请求失败: %w", err)
 	}
-	resp, err := s.client.Do(req)
+	client := s.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("请求 guest-agent 产物内容失败: %w", err)
 	}
@@ -323,8 +448,8 @@ func (s *apiServer) readGuestArtifact(r *http.Request, session Session, relative
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return nil, fmt.Errorf("解析产物内容失败: %w", err)
 	}
-	if body.Truncated {
-		return nil, errors.New("产物内容被截断，无法同步")
+	if body.Truncated || len([]byte(body.Content)) > maxArtifactBytes {
+		return nil, errors.New("产物超过大小上限，无法同步")
 	}
 	return []byte(body.Content), nil
 }
@@ -358,13 +483,16 @@ func (s *apiServer) restoreArtifacts(r *http.Request, session Session, artifacts
 		if err != nil {
 			return fmt.Errorf("下载恢复产物失败: %w", err)
 		}
-		data, readErr := io.ReadAll(content)
+		data, readErr := io.ReadAll(io.LimitReader(content, int64(maxArtifactBytes)+1))
 		closeErr := content.Close()
 		if readErr != nil {
 			return fmt.Errorf("读取恢复产物失败: %w", readErr)
 		}
 		if closeErr != nil {
 			return fmt.Errorf("关闭恢复产物失败: %w", closeErr)
+		}
+		if len(data) > maxArtifactBytes {
+			return errors.New("恢复产物超过大小上限（10MiB）")
 		}
 		if err := verifyRestoreArtifactSHA256(relativePath, artifact.Sha256, data); err != nil {
 			return err
@@ -412,12 +540,16 @@ func (s *apiServer) writeGuestFile(r *http.Request, session Session, guestPath s
 	}
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, joinAgentURL(session.AgentURL, "/files/content"), bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("创建恢复产物写入请求失败: %w", err)
+		return errors.New("创建沙箱恢复产物写入请求失败")
 	}
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
-	resp, err := s.client.Do(req)
+	client := s.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("写入 guest-agent 产物失败: %w", err)
+		return errors.New("写入沙箱恢复产物失败")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

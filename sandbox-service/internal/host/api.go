@@ -16,6 +16,7 @@ import (
 	"agent-hub/sandbox-service/internal/objectstore"
 	"agent-hub/sandbox-service/internal/policy"
 	"agent-hub/sandbox-service/internal/sse"
+	"agent-hub/sandbox-service/internal/workspace"
 )
 
 const (
@@ -36,6 +37,7 @@ type apiServer struct {
 	downloader objectstore.Downloader
 	syncer     *ArtifactSyncer
 	policy     policy.CommandPolicy
+	pathPolicy workspace.PathPolicy
 }
 
 type RouterOption func(*apiServer)
@@ -52,6 +54,7 @@ func NewRouterWithManager(manager *SessionManager, options ...RouterOption) http
 		client:  http.DefaultClient,
 		syncer:  NewArtifactSyncer("agent-hub-sandbox-artifacts"),
 		policy:  policy.NewCommandPolicy(8192, 300),
+		pathPolicy: workspace.NewPathPolicy("/workspace"),
 	}
 	for _, option := range options {
 		option(server)
@@ -61,6 +64,9 @@ func NewRouterWithManager(manager *SessionManager, options ...RouterOption) http
 	registerHealth(mux)
 	mux.HandleFunc("POST /internal/sandbox/sessions", server.handleCreateSession)
 	mux.HandleFunc("POST /internal/sandbox/sessions/{sessionId}/exec/stream", server.handleExecStream)
+	mux.HandleFunc("GET /internal/sandbox/sessions/{sessionId}/files", server.handleListFiles)
+	mux.HandleFunc("GET /internal/sandbox/sessions/{sessionId}/files/content", server.handleReadFile)
+	mux.HandleFunc("POST /internal/sandbox/sessions/{sessionId}/files/content", server.handleWriteFile)
 	return mux
 }
 
@@ -212,6 +218,128 @@ func (s *apiServer) handleExecStream(w http.ResponseWriter, r *http.Request) {
 		sse.WriteEvent(w, "error", map[string]string{"message": syncArtifactsClientMessage})
 		return
 	}
+}
+
+func (s *apiServer) handleListFiles(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.beginSessionUse(w, r.PathValue("sessionId"))
+	if !ok {
+		return
+	}
+	defer s.manager.EndUse(session.ID)
+	resolvedPath, err := s.pathPolicy.Resolve(r.URL.Query().Get("path"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	targetURL := joinAgentURL(session.AgentURL, "/files")
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "沙箱文件代理失败")
+		return
+	}
+	query := parsed.Query()
+	query.Set("path", resolvedPath)
+	query.Set("recursive", r.URL.Query().Get("recursive"))
+	parsed.RawQuery = query.Encode()
+	s.proxyJSON(w, r, http.MethodGet, parsed.String(), nil)
+}
+
+func (s *apiServer) handleReadFile(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.beginSessionUse(w, r.PathValue("sessionId"))
+	if !ok {
+		return
+	}
+	defer s.manager.EndUse(session.ID)
+	resolvedPath, err := s.pathPolicy.Resolve(r.URL.Query().Get("path"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	maxBytes, err := strconv.Atoi(defaultString(r.URL.Query().Get("maxBytes"), "1048576"))
+	if err != nil || maxBytes <= 0 || maxBytes > maxArtifactBytes {
+		writeError(w, http.StatusBadRequest, "maxBytes 参数不正确")
+		return
+	}
+	targetURL := joinAgentURL(session.AgentURL, "/files/content")
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "沙箱文件代理失败")
+		return
+	}
+	query := parsed.Query()
+	query.Set("path", resolvedPath)
+	query.Set("maxBytes", strconv.Itoa(maxBytes))
+	parsed.RawQuery = query.Encode()
+	s.proxyJSON(w, r, http.MethodGet, parsed.String(), nil)
+}
+
+func (s *apiServer) handleWriteFile(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.beginSessionUse(w, r.PathValue("sessionId"))
+	if !ok {
+		return
+	}
+	defer s.manager.EndUse(session.ID)
+	var req struct {
+		Path       string `json:"path"`
+		Content    string `json:"content"`
+		AppendMode bool   `json:"appendMode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "请求体不是有效的 JSON")
+		return
+	}
+	resolvedPath, err := s.pathPolicy.Resolve(req.Path)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	body, err := json.Marshal(map[string]any{
+		"path":       resolvedPath,
+		"content":    req.Content,
+		"appendMode": req.AppendMode,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "沙箱文件代理失败")
+		return
+	}
+	s.proxyJSON(w, r, http.MethodPost, joinAgentURL(session.AgentURL, "/files/content"), bytes.NewReader(body))
+}
+
+func (s *apiServer) beginSessionUse(w http.ResponseWriter, sessionID string) (Session, bool) {
+	if s.manager == nil {
+		writeError(w, http.StatusServiceUnavailable, "沙箱会话管理器未初始化")
+		return Session{}, false
+	}
+	session, ok := s.manager.BeginUse(sessionID)
+	if !ok {
+		writeError(w, http.StatusNotFound, "沙箱会话不存在")
+		return Session{}, false
+	}
+	return session, true
+}
+
+func (s *apiServer) proxyJSON(w http.ResponseWriter, r *http.Request, method string, targetURL string, body io.Reader) {
+	req, err := http.NewRequestWithContext(r.Context(), method, targetURL, body)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "沙箱文件代理失败")
+		return
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	}
+	client := s.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "沙箱文件代理失败")
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func (s *apiServer) proxyExecStream(r *http.Request, w http.ResponseWriter, session Session, req execRequest) (bool, error) {
@@ -583,4 +711,11 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func defaultString(value string, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }

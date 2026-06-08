@@ -448,6 +448,104 @@ func TestExecStreamRejectsDangerousCommandWithoutCallingGuest(t *testing.T) {
 	}
 }
 
+func TestListFilesProxiesWorkspacePathToGuest(t *testing.T) {
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/files" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("path") != "/workspace/input" {
+			t.Fatalf("path = %q", r.URL.Query().Get("path"))
+		}
+		if r.URL.Query().Get("recursive") != "true" {
+			t.Fatalf("recursive = %q", r.URL.Query().Get("recursive"))
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"files": []map[string]any{
+				{"name": "data.csv", "path": "/workspace/input/data.csv", "size": 10, "directory": false},
+			},
+		})
+	}))
+	defer guest.Close()
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	router := NewRouterWithManager(manager)
+
+	req := httptest.NewRequest(http.MethodGet, "/internal/sandbox/sessions/"+session.ID+"/files?path=/workspace/input&recursive=true", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "data.csv") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestReadFileRejectsPathEscapeBeforeCallingGuest(t *testing.T) {
+	called := false
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+	}))
+	defer guest.Close()
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	router := NewRouterWithManager(manager)
+
+	req := httptest.NewRequest(http.MethodGet, "/internal/sandbox/sessions/"+session.ID+"/files/content?path=/workspace/../etc/passwd&maxBytes=100", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if called {
+		t.Fatal("guest should not be called")
+	}
+}
+
+func TestWriteFileProxiesAppendModeToGuest(t *testing.T) {
+	var written struct {
+		Path       string `json:"path"`
+		Content    string `json:"content"`
+		AppendMode bool   `json:"appendMode"`
+	}
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/files/content" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&written); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	}))
+	defer guest.Close()
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	router := NewRouterWithManager(manager)
+
+	body := bytes.NewBufferString(`{"path":"/workspace/notes.txt","content":"hello","appendMode":true}`)
+	req := httptest.NewRequest(http.MethodPost, "/internal/sandbox/sessions/"+session.ID+"/files/content", body)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if written.Path != "/workspace/notes.txt" || written.Content != "hello" || !written.AppendMode {
+		t.Fatalf("written = %#v", written)
+	}
+}
+
 func TestCreateSessionRejectsEscapingRestoreArtifact(t *testing.T) {
 	manager := NewSessionManager(&fakeVMFactory{}, 1, 5*time.Minute)
 	body := bytes.NewBufferString(`{"conversationId":"conversation-1","artifacts":[{"relativePath":"../secret.txt","bucket":"bucket","key":"k"}]}`)

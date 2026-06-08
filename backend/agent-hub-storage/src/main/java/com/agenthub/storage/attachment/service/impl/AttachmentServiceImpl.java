@@ -3,6 +3,7 @@ package com.agenthub.storage.attachment.service.impl;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
 import com.agenthub.storage.attachment.dto.AttachmentItem;
+import com.agenthub.storage.attachment.dto.AttachmentImportSource;
 import com.agenthub.storage.attachment.dto.AttachmentReference;
 import com.agenthub.storage.attachment.dto.AttachmentUploadUrl;
 import com.agenthub.storage.attachment.entity.ChatAttachment;
@@ -41,6 +42,7 @@ public class AttachmentServiceImpl implements AttachmentService {
     );
     private static final Set<String> SUPPORTED_EXTENSIONS = Set.of("jpg", "jpeg", "png", "webp", "gif");
     private static final String IMAGE_TYPE = "IMAGE";
+    private static final String FILE_TYPE = "FILE";
     private static final String STATUS_PENDING = "PENDING";
     private static final String STATUS_READY = "READY";
     private static final String UNSUPPORTED_IMAGE_MESSAGE = "仅支持 jpg、jpeg、png、webp、gif 图片";
@@ -50,6 +52,8 @@ public class AttachmentServiceImpl implements AttachmentService {
     private static final String IMAGE_UNAVAILABLE_MESSAGE = "图片不可用";
     private static final String IMAGE_EXPIRED_MESSAGE = "图片已过期";
     private static final String IMAGE_LIMIT_MESSAGE = "单条消息最多上传 8 张图片";
+    private static final String ATTACHMENT_NOT_FOUND_MESSAGE = "附件不存在";
+    private static final String INVALID_FILE_MESSAGE = "文件信息不正确";
     private static final int MAX_CHAT_IMAGES = 8;
     private static final int IMAGE_MAGIC_READ_LENGTH = 16;
 
@@ -72,18 +76,30 @@ public class AttachmentServiceImpl implements AttachmentService {
         String normalizedContentType = contentType == null ? "" : contentType.trim().toLowerCase(Locale.ROOT);
         String fileExt = extractFileExt(filename);
         validateImage(normalizedContentType, fileExt, fileSize);
+        return createUploadUrl(userId, filename, normalizedContentType, fileSize, fileExt, IMAGE_TYPE, "chat-images");
+    }
 
+    @Override
+    public AttachmentUploadUrl createAttachmentUploadUrl(Long userId, String filename, String contentType, long fileSize) {
+        String normalizedContentType = contentType == null ? "" : contentType.trim().toLowerCase(Locale.ROOT);
+        String fileExt = extractFileExt(filename);
+        validateGenericFile(filename, normalizedContentType, fileSize);
+        return createUploadUrl(userId, filename, normalizedContentType, fileSize, fileExt, FILE_TYPE, "chat-files");
+    }
+
+    private AttachmentUploadUrl createUploadUrl(Long userId, String filename, String contentType, long fileSize,
+                                                String fileExt, String attachmentType, String directory) {
         OffsetDateTime now = OffsetDateTime.now();
-        String objectKey = buildObjectKey(userId, fileExt, now);
+        String objectKey = buildObjectKey(userId, directory, fileExt, now);
         ChatAttachment attachment = new ChatAttachment();
         attachment.setUserId(userId);
         attachment.setObjectKey(objectKey);
         attachment.setBucketName(storageProperties.getBucket());
         attachment.setOriginalFilename(filename);
-        attachment.setContentType(normalizedContentType);
+        attachment.setContentType(contentType);
         attachment.setFileSize(fileSize);
         attachment.setFileExt(fileExt);
-        attachment.setAttachmentType(IMAGE_TYPE);
+        attachment.setAttachmentType(attachmentType);
         attachment.setStatus(STATUS_PENDING);
         attachment.setExpiresAt(now.plusDays(storageProperties.getImageExpireDays()));
         attachment.setCreatedAt(now);
@@ -91,12 +107,12 @@ public class AttachmentServiceImpl implements AttachmentService {
         chatAttachmentMapper.insert(attachment);
 
         Duration ttl = Duration.ofMinutes(storageProperties.getPresignedUploadTtlMinutes());
-        String uploadUrl = objectStorageClient.presignPut(objectKey, normalizedContentType, ttl);
+        String uploadUrl = objectStorageClient.presignPut(objectKey, contentType, ttl);
         return new AttachmentUploadUrl(
                 attachment.getId(),
                 uploadUrl,
                 "PUT",
-                Map.of("Content-Type", normalizedContentType),
+                Map.of("Content-Type", contentType),
                 now.plus(ttl)
         );
     }
@@ -118,18 +134,22 @@ public class AttachmentServiceImpl implements AttachmentService {
         if (metadata.size() != attachment.getFileSize() || !attachment.getContentType().equals(metadata.contentType())) {
             throw uploadFailedException();
         }
-        if (!contentTypeMatchesExtension(attachment.getContentType(), attachment.getFileExt())) {
-            throw uploadFailedException();
-        }
+        if (IMAGE_TYPE.equals(attachment.getAttachmentType())) {
+            if (!contentTypeMatchesExtension(attachment.getContentType(), attachment.getFileExt())) {
+                throw uploadFailedException();
+            }
 
-        byte[] firstBytes;
-        try {
-            firstBytes = objectStorageClient.readFirstBytes(attachment.getObjectKey(), IMAGE_MAGIC_READ_LENGTH);
-        } catch (BusinessException exception) {
-            throwStorageInternalOrUploadFailed(exception);
-            return;
-        }
-        if (!hasValidImageMagic(attachment.getContentType(), attachment.getFileExt(), firstBytes)) {
+            byte[] firstBytes;
+            try {
+                firstBytes = objectStorageClient.readFirstBytes(attachment.getObjectKey(), IMAGE_MAGIC_READ_LENGTH);
+            } catch (BusinessException exception) {
+                throwStorageInternalOrUploadFailed(exception);
+                return;
+            }
+            if (!hasValidImageMagic(attachment.getContentType(), attachment.getFileExt(), firstBytes)) {
+                throw uploadFailedException();
+            }
+        } else if (!FILE_TYPE.equals(attachment.getAttachmentType())) {
             throw uploadFailedException();
         }
 
@@ -140,6 +160,26 @@ public class AttachmentServiceImpl implements AttachmentService {
         updatedAttachment.setConfirmedAt(now);
         updatedAttachment.setUpdatedAt(now);
         chatAttachmentMapper.updateById(updatedAttachment);
+    }
+
+    @Override
+    public AttachmentImportSource requireImportSource(Long userId, Long attachmentId) {
+        ChatAttachment attachment = chatAttachmentMapper.selectById(attachmentId);
+        if (attachment == null
+                || !userId.equals(attachment.getUserId())
+                || !STATUS_READY.equals(attachment.getStatus())
+                || isExpired(attachment)) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, ATTACHMENT_NOT_FOUND_MESSAGE);
+        }
+        String downloadUrl = objectStorageClient.presignGet(attachment.getObjectKey(), Duration.ofMinutes(10));
+        return new AttachmentImportSource(
+                attachment.getId(),
+                attachment.getOriginalFilename(),
+                attachment.getContentType(),
+                attachment.getFileSize(),
+                downloadUrl,
+                attachment.getObjectKey()
+        );
     }
 
     @Override
@@ -225,6 +265,12 @@ public class AttachmentServiceImpl implements AttachmentService {
         }
         if (fileSize > MAX_IMAGE_SIZE) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, IMAGE_TOO_LARGE_MESSAGE);
+        }
+    }
+
+    private void validateGenericFile(String filename, String contentType, long fileSize) {
+        if (filename == null || filename.isBlank() || contentType == null || contentType.isBlank() || fileSize <= 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, INVALID_FILE_MESSAGE);
         }
     }
 
@@ -406,9 +452,10 @@ public class AttachmentServiceImpl implements AttachmentService {
         return filename.substring(lastDotIndex + 1).toLowerCase(Locale.ROOT);
     }
 
-    private String buildObjectKey(Long userId, String fileExt, OffsetDateTime now) {
-        return "users/" + userId + "/chat-images/" + now.format(DateTimeFormatter.BASIC_ISO_DATE)
-                + "/" + UUID.randomUUID() + "." + fileExt;
+    private String buildObjectKey(Long userId, String directory, String fileExt, OffsetDateTime now) {
+        String suffix = fileExt == null || fileExt.isBlank() ? "" : "." + fileExt;
+        return "users/" + userId + "/" + directory + "/" + now.format(DateTimeFormatter.BASIC_ISO_DATE)
+                + "/" + UUID.randomUUID() + suffix;
     }
 
     private boolean contentTypeMatchesExtension(String contentType, String fileExt) {

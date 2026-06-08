@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
+import com.agenthub.storage.attachment.dto.AttachmentImportSource;
 import com.agenthub.storage.attachment.dto.AttachmentReference;
 import com.agenthub.storage.attachment.dto.AttachmentUploadUrl;
 import com.agenthub.storage.attachment.entity.ChatAttachment;
@@ -68,6 +69,40 @@ class AttachmentServiceImplTest {
     }
 
     @Test
+    void shouldCreatePendingGenericAttachmentUploadUrl() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        StorageProperties properties = storageProperties();
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, properties);
+        ArgumentCaptor<ChatAttachment> attachmentCaptor = ArgumentCaptor.forClass(ChatAttachment.class);
+        OffsetDateTime before = OffsetDateTime.now();
+        when(objectStorageClient.presignPut(any(), eq("text/csv"), eq(Duration.ofMinutes(10))))
+                .thenReturn("http://127.0.0.1:9000/agent-hub-chat-images/upload-file");
+        when(mapper.insert(attachmentCaptor.capture())).thenAnswer(invocation -> {
+            attachmentCaptor.getValue().setId(101L);
+            return 1;
+        });
+
+        AttachmentUploadUrl uploadUrl = service.createAttachmentUploadUrl(7L, "data.csv", "text/csv", 1024);
+
+        ChatAttachment attachment = attachmentCaptor.getValue();
+        assertThat(attachment.getUserId()).isEqualTo(7L);
+        assertThat(attachment.getStatus()).isEqualTo("PENDING");
+        assertThat(attachment.getAttachmentType()).isEqualTo("FILE");
+        assertThat(attachment.getBucketName()).isEqualTo("agent-hub-chat-images");
+        assertThat(attachment.getObjectKey()).startsWith("users/7/chat-files/");
+        assertThat(attachment.getOriginalFilename()).isEqualTo("data.csv");
+        assertThat(attachment.getContentType()).isEqualTo("text/csv");
+        assertThat(attachment.getFileSize()).isEqualTo(1024L);
+        assertThat(attachment.getFileExt()).isEqualTo("csv");
+        assertThat(uploadUrl.attachmentId()).isEqualTo(101L);
+        assertThat(uploadUrl.uploadUrl()).isEqualTo("http://127.0.0.1:9000/agent-hub-chat-images/upload-file");
+        assertThat(uploadUrl.method()).isEqualTo("PUT");
+        assertThat(uploadUrl.headers()).containsEntry("Content-Type", "text/csv");
+        assertThat(uploadUrl.expiresAt()).isBetween(before.plusMinutes(10), OffsetDateTime.now().plusMinutes(10));
+    }
+
+    @Test
     void shouldRejectUnsupportedContentType() {
         AttachmentServiceImpl service = new AttachmentServiceImpl(
                 mock(ChatAttachmentMapper.class),
@@ -118,6 +153,44 @@ class AttachmentServiceImplTest {
         assertThat(updatedAttachment.getStatus()).isEqualTo("READY");
         assertThat(updatedAttachment.getConfirmedAt()).isNotNull();
         assertThat(updatedAttachment.getUpdatedAt()).isNotNull();
+    }
+
+    @Test
+    void shouldConfirmPendingGenericAttachmentWithoutImageMagicCheck() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        ChatAttachment pendingAttachment = pendingFileAttachment();
+        when(mapper.selectById(101L)).thenReturn(pendingAttachment);
+        when(objectStorageClient.stat("users/7/chat-files/20260604/data.csv"))
+                .thenReturn(new ObjectMetadata(1024, "text/csv"));
+        ArgumentCaptor<ChatAttachment> attachmentCaptor = ArgumentCaptor.forClass(ChatAttachment.class);
+
+        service.confirmUpload(7L, 101L);
+
+        verify(objectStorageClient, never()).readFirstBytes(any(), org.mockito.ArgumentMatchers.anyInt());
+        verify(mapper).updateById(attachmentCaptor.capture());
+        assertThat(attachmentCaptor.getValue().getStatus()).isEqualTo("READY");
+        assertThat(attachmentCaptor.getValue().getConfirmedAt()).isNotNull();
+    }
+
+    @Test
+    void shouldRejectPendingAttachmentWithUnknownType() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        ChatAttachment pendingAttachment = pendingFileAttachment();
+        pendingAttachment.setAttachmentType("UNKNOWN");
+        when(mapper.selectById(101L)).thenReturn(pendingAttachment);
+        when(objectStorageClient.stat("users/7/chat-files/20260604/data.csv"))
+                .thenReturn(new ObjectMetadata(1024, "text/csv"));
+
+        assertThatThrownBy(() -> service.confirmUpload(7L, 101L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("图片上传失败，请重试")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(mapper, never()).updateById(any(ChatAttachment.class));
     }
 
     @Test
@@ -362,6 +435,41 @@ class AttachmentServiceImplTest {
         assertThat(items.get(1).message()).isEqualTo("图片已过期");
     }
 
+    @Test
+    void shouldResolveAttachmentImportSourceForOwner() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        ChatAttachment attachment = readyFileAttachment(10L, 7L);
+        when(mapper.selectById(10L)).thenReturn(attachment);
+        when(objectStorageClient.presignGet("users/7/chat-files/20260604/data.csv", Duration.ofMinutes(10)))
+                .thenReturn("http://minio-internal/data.csv");
+
+        AttachmentImportSource source = service.requireImportSource(7L, 10L);
+
+        assertThat(source.attachmentId()).isEqualTo(10L);
+        assertThat(source.filename()).isEqualTo("data.csv");
+        assertThat(source.contentType()).isEqualTo("text/csv");
+        assertThat(source.fileSize()).isEqualTo(1024L);
+        assertThat(source.downloadUrl()).isEqualTo("http://minio-internal/data.csv");
+        assertThat(source.objectKey()).isEqualTo("users/7/chat-files/20260604/data.csv");
+    }
+
+    @Test
+    void shouldRejectAttachmentImportSourceForNonOwner() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        when(mapper.selectById(10L)).thenReturn(readyFileAttachment(10L, 8L));
+
+        assertThatThrownBy(() -> service.requireImportSource(7L, 10L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("附件不存在")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.NOT_FOUND);
+        verify(objectStorageClient, never()).presignGet(any(), any());
+    }
+
     private StorageProperties storageProperties() {
         StorageProperties properties = new StorageProperties();
         properties.setBucket("agent-hub-chat-images");
@@ -380,6 +488,35 @@ class AttachmentServiceImplTest {
         attachment.setContentType("image/png");
         attachment.setFileSize(1024L);
         attachment.setFileExt("png");
+        attachment.setAttachmentType("IMAGE");
+        return attachment;
+    }
+
+    private ChatAttachment pendingFileAttachment() {
+        ChatAttachment attachment = new ChatAttachment();
+        attachment.setId(101L);
+        attachment.setUserId(7L);
+        attachment.setStatus("PENDING");
+        attachment.setObjectKey("users/7/chat-files/20260604/data.csv");
+        attachment.setContentType("text/csv");
+        attachment.setFileSize(1024L);
+        attachment.setFileExt("csv");
+        attachment.setAttachmentType("FILE");
+        return attachment;
+    }
+
+    private ChatAttachment readyFileAttachment(Long id, Long userId) {
+        ChatAttachment attachment = new ChatAttachment();
+        attachment.setId(id);
+        attachment.setUserId(userId);
+        attachment.setStatus("READY");
+        attachment.setObjectKey("users/7/chat-files/20260604/data.csv");
+        attachment.setOriginalFilename("data.csv");
+        attachment.setContentType("text/csv");
+        attachment.setFileSize(1024L);
+        attachment.setFileExt("csv");
+        attachment.setAttachmentType("FILE");
+        attachment.setExpiresAt(OffsetDateTime.now().plusDays(1));
         return attachment;
     }
 

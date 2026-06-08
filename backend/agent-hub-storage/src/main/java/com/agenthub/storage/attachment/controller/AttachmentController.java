@@ -37,6 +37,20 @@ public class AttachmentController {
         ));
     }
 
+    @PostMapping("/upload-url")
+    public ApiResponse<AttachmentUploadUrl> createAttachmentUploadUrl(
+            Authentication authentication,
+            @Valid @RequestBody CreateImageUploadUrlRequest request
+    ) {
+        LoginUser loginUser = (LoginUser) authentication.getPrincipal();
+        return ApiResponse.success(attachmentService.createAttachmentUploadUrl(
+                loginUser.userId(),
+                request.filename(),
+                request.contentType(),
+                request.fileSize()
+        ));
+    }
+
     @PostMapping("/{attachmentId}/confirm")
     public ApiResponse<Void> confirmUpload(Authentication authentication, @PathVariable Long attachmentId) {
         LoginUser loginUser = (LoginUser) authentication.getPrincipal();

@@ -48,7 +48,7 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	warmPoolSize, err := positiveIntEnv("SANDBOX_WARM_POOL_SIZE", 2)
+	warmPoolSize, err := positiveIntEnv("SANDBOX_WARM_POOL_SIZE", 5)
 	if err != nil {
 		return Config{}, err
 	}

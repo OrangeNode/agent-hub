@@ -17,7 +17,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.ListenAddr != ":8090" {
 		t.Fatalf("ListenAddr = %q", cfg.ListenAddr)
 	}
-	if cfg.WarmPoolSize != 2 {
+	if cfg.WarmPoolSize != 5 {
 		t.Fatalf("WarmPoolSize = %d", cfg.WarmPoolSize)
 	}
 	if cfg.MaxActiveSessions != 5 {

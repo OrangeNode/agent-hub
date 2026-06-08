@@ -4,6 +4,9 @@ import com.agenthub.ai.llm.LlmClient;
 import com.agenthub.ai.llm.LlmMessage;
 import com.agenthub.ai.llm.LlmStreamChunk;
 import com.agenthub.ai.llm.LlmStreamRequest;
+import com.agenthub.ai.llm.tool.LlmToolCall;
+import com.agenthub.ai.llm.tool.LlmToolDefinition;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
@@ -11,6 +14,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -71,11 +75,17 @@ public class AnthropicMessagesClient implements LlmClient {
      * 将 Anthropic SSE 事件转换为统一 chunk。
      */
     public List<LlmStreamChunk> parseEvent(String eventName, String payload) {
+        return parseEvent(eventName, payload, new ToolUseAccumulator());
+    }
+
+    private List<LlmStreamChunk> parseEvent(String eventName, String payload, ToolUseAccumulator toolUseAccumulator) {
         if (eventName == null || eventName.isBlank()) {
             return List.of();
         }
         if ("message_stop".equals(eventName)) {
-            return List.of(LlmStreamChunk.done());
+            List<LlmStreamChunk> chunks = new ArrayList<>(toolUseAccumulator.flush());
+            chunks.add(LlmStreamChunk.done());
+            return chunks;
         }
         if (payload == null || payload.isBlank()) {
             return List.of();
@@ -85,6 +95,12 @@ public class AnthropicMessagesClient implements LlmClient {
             if ("error".equals(eventName)) {
                 String message = root.path("error").path("message").asText("Anthropic Messages 流式请求失败");
                 return List.of(LlmStreamChunk.error(message));
+            }
+            if ("content_block_start".equals(eventName)) {
+                return toolUseAccumulator.start(root);
+            }
+            if ("content_block_stop".equals(eventName)) {
+                return toolUseAccumulator.stop(root);
             }
             if (!"content_block_delta".equals(eventName)) {
                 return List.of();
@@ -98,6 +114,10 @@ public class AnthropicMessagesClient implements LlmClient {
             if ("thinking_delta".equals(type)) {
                 String thinking = delta.path("thinking").asText(delta.path("text").asText());
                 return thinking.isEmpty() ? List.of() : List.of(LlmStreamChunk.reasoning(thinking));
+            }
+            if ("input_json_delta".equals(type)) {
+                toolUseAccumulator.append(root);
+                return List.of();
             }
             return List.of();
         } catch (Exception e) {
@@ -114,6 +134,7 @@ public class AnthropicMessagesClient implements LlmClient {
      */
     private void consumeSse(Stream<String> lines, Consumer<LlmStreamChunk> chunkConsumer) {
         String eventName = null;
+        ToolUseAccumulator toolUseAccumulator = new ToolUseAccumulator();
         try (Stream<String> closeableLines = lines) {
             Iterator<String> iterator = closeableLines.iterator();
             while (iterator.hasNext()) {
@@ -128,7 +149,7 @@ public class AnthropicMessagesClient implements LlmClient {
                 }
                 if (line.startsWith("data:")) {
                     String payload = line.substring("data:".length()).trim();
-                    for (LlmStreamChunk chunk : parseEvent(eventName, payload)) {
+                    for (LlmStreamChunk chunk : parseEvent(eventName, payload, toolUseAccumulator)) {
                         chunkConsumer.accept(chunk);
                     }
                 }
@@ -160,6 +181,9 @@ public class AnthropicMessagesClient implements LlmClient {
         if (request.reasoningRequested()) {
             body.put("thinking", thinkingConfig(maxTokens));
         }
+        if (request.tools() != null && !request.tools().isEmpty()) {
+            body.put("tools", request.tools().stream().map(this::toAnthropicTool).toList());
+        }
 
         String system = systemPrompt(request.messages());
         if (system != null) {
@@ -178,19 +202,36 @@ public class AnthropicMessagesClient implements LlmClient {
         return thinking;
     }
 
-    private List<Map<String, String>> toMessages(List<LlmMessage> messages) {
+    private List<Map<String, Object>> toMessages(List<LlmMessage> messages) {
         if (messages == null) {
             return List.of();
         }
         return messages.stream()
                 .filter(message -> !"system".equals(message.role()))
                 .map(message -> {
-                    Map<String, String> item = new LinkedHashMap<>();
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    if ("tool".equals(message.role())) {
+                        item.put("role", "user");
+                        item.put("content", List.of(Map.of(
+                                "type", "tool_result",
+                                "tool_use_id", message.toolCallId(),
+                                "content", message.content()
+                        )));
+                        return item;
+                    }
                     item.put("role", message.role());
                     item.put("content", message.content());
                     return item;
                 })
                 .toList();
+    }
+
+    private Map<String, Object> toAnthropicTool(LlmToolDefinition tool) {
+        return Map.of(
+                "name", tool.name(),
+                "description", tool.description(),
+                "input_schema", tool.parameters()
+        );
     }
 
     /**
@@ -232,5 +273,90 @@ public class AnthropicMessagesClient implements LlmClient {
             throw new IllegalArgumentException("Anthropic Messages baseUrl 不能为空");
         }
         return baseUrl.replaceAll("/+$", "");
+    }
+
+    private Map<String, Object> toMap(JsonNode node) {
+        if (node == null || !node.isObject() || node.isEmpty()) {
+            return Map.of();
+        }
+        return OBJECT_MAPPER.convertValue(node, new TypeReference<Map<String, Object>>() {
+        });
+    }
+
+    private Map<String, Object> parseJsonObject(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return OBJECT_MAPPER.readValue(json, new TypeReference<>() {
+            });
+        } catch (Exception exception) {
+            return Map.of();
+        }
+    }
+
+    private class ToolUseAccumulator {
+
+        private final Map<String, PendingToolUse> pendingToolUses = new LinkedHashMap<>();
+
+        private List<LlmStreamChunk> start(JsonNode root) {
+            JsonNode contentBlock = root.path("content_block");
+            if (!"tool_use".equals(contentBlock.path("type").asText())) {
+                return List.of();
+            }
+            String index = root.path("index").asText();
+            PendingToolUse pendingToolUse = pendingToolUses.computeIfAbsent(index, ignored -> new PendingToolUse());
+            pendingToolUse.id = contentBlock.path("id").asText(null);
+            pendingToolUse.name = contentBlock.path("name").asText(null);
+            pendingToolUse.input = toMap(contentBlock.path("input"));
+            if (!pendingToolUse.input.isEmpty()) {
+                pendingToolUses.remove(index);
+                return List.of(toolCall(pendingToolUse));
+            }
+            return List.of();
+        }
+
+        private void append(JsonNode root) {
+            String index = root.path("index").asText();
+            PendingToolUse pendingToolUse = pendingToolUses.computeIfAbsent(index, ignored -> new PendingToolUse());
+            pendingToolUse.partialJson.append(root.path("delta").path("partial_json").asText(""));
+        }
+
+        private List<LlmStreamChunk> stop(JsonNode root) {
+            String index = root.path("index").asText();
+            PendingToolUse pendingToolUse = pendingToolUses.remove(index);
+            if (pendingToolUse == null || pendingToolUse.name == null || pendingToolUse.name.isBlank()) {
+                return List.of();
+            }
+            return List.of(toolCall(pendingToolUse));
+        }
+
+        private List<LlmStreamChunk> flush() {
+            List<LlmStreamChunk> chunks = pendingToolUses.values().stream()
+                    .filter(pendingToolUse -> pendingToolUse.name != null && !pendingToolUse.name.isBlank())
+                    .map(this::toolCall)
+                    .toList();
+            pendingToolUses.clear();
+            return chunks;
+        }
+
+        private LlmStreamChunk toolCall(PendingToolUse pendingToolUse) {
+            Map<String, Object> arguments = pendingToolUse.partialJson.isEmpty()
+                    ? pendingToolUse.input
+                    : parseJsonObject(pendingToolUse.partialJson.toString());
+            return LlmStreamChunk.toolCall(new LlmToolCall(
+                    pendingToolUse.id,
+                    pendingToolUse.name,
+                    arguments
+            ));
+        }
+    }
+
+    private static class PendingToolUse {
+
+        private String id;
+        private String name;
+        private Map<String, Object> input = Map.of();
+        private final StringBuilder partialJson = new StringBuilder();
     }
 }

@@ -3,6 +3,8 @@ package com.agenthub.ai.llm;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.agenthub.ai.llm.anthropic.AnthropicMessagesClient;
+import com.agenthub.ai.llm.tool.LlmToolCall;
+import com.agenthub.ai.llm.tool.LlmToolDefinition;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayOutputStream;
@@ -12,6 +14,7 @@ import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Flow;
 import java.util.stream.Stream;
@@ -55,6 +58,50 @@ class AnthropicMessagesClientTest {
                 "{\"error\":{\"message\":\"失败\"}}");
 
         assertThat(chunks).containsExactly(LlmStreamChunk.error("失败"));
+    }
+
+    @Test
+    void shouldParseToolUseStartWithInput() {
+        List<LlmStreamChunk> chunks = client.parseEvent(
+                "content_block_start",
+                """
+                        {"index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"exec","input":{"command":"pwd"}}}
+                        """);
+
+        assertThat(chunks).containsExactly(LlmStreamChunk.toolCall(new LlmToolCall(
+                "toolu_1",
+                "exec",
+                Map.of("command", "pwd"))));
+    }
+
+    @Test
+    void shouldAssembleToolUseInputJsonDeltaFromStream() {
+        CapturingAnthropicClient capturingClient = new CapturingAnthropicClient(
+                Stream.of(
+                        "event: content_block_start",
+                        "data: {\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"exec\",\"input\":{}}}",
+                        "",
+                        "event: content_block_delta",
+                        "data: {\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\"\"}}",
+                        "",
+                        "event: content_block_delta",
+                        "data: {\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\":\\\"python3 main.py\\\"}\"}}",
+                        "",
+                        "event: content_block_stop",
+                        "data: {\"index\":0}",
+                        "",
+                        "event: message_stop",
+                        "data: {}"));
+        List<LlmStreamChunk> chunks = new java.util.ArrayList<>();
+
+        capturingClient.stream(request("https://api.anthropic.com/v1", null), chunks::add);
+
+        assertThat(chunks).containsExactly(
+                LlmStreamChunk.toolCall(new LlmToolCall(
+                        "toolu_1",
+                        "exec",
+                        Map.of("command", "python3 main.py"))),
+                LlmStreamChunk.done());
     }
 
     @Test
@@ -158,6 +205,60 @@ class AnthropicMessagesClientTest {
         assertThat(chunks.get(0).errorMessage()).contains("Anthropic Messages 暂不支持 URL 图片输入");
     }
 
+    @Test
+    void shouldSerializeToolDefinitionsWhenPresent() throws Exception {
+        CapturingAnthropicClient capturingClient = new CapturingAnthropicClient();
+        LlmToolDefinition tool = new LlmToolDefinition(
+                "exec",
+                "鎵ц鍛戒护",
+                Map.of("type", "object", "properties", Map.of("command", Map.of("type", "string")))
+        );
+        LlmStreamRequest request = new LlmStreamRequest(
+                "https://api.anthropic.com",
+                "test-api-key",
+                null,
+                "test-model",
+                List.of(new LlmMessage("user", "杩愯鑴氭湰")),
+                1024,
+                false,
+                List.of(tool));
+
+        capturingClient.stream(request, ignored -> {
+        });
+
+        JsonNode toolNode = OBJECT_MAPPER.readTree(readBody(capturingClient.capturedRequest))
+                .path("tools")
+                .get(0);
+        assertThat(toolNode.path("name").asText()).isEqualTo("exec");
+        assertThat(toolNode.path("input_schema").path("properties").path("command").path("type").asText())
+                .isEqualTo("string");
+    }
+
+    @Test
+    void shouldSerializeToolResultMessage() throws Exception {
+        CapturingAnthropicClient capturingClient = new CapturingAnthropicClient();
+        LlmStreamRequest request = new LlmStreamRequest(
+                "https://api.anthropic.com",
+                "test-api-key",
+                null,
+                "test-model",
+                List.of(LlmMessage.tool("toolu_1", "exec", "鎵ц瀹屾垚")),
+                1024,
+                false);
+
+        capturingClient.stream(request, ignored -> {
+        });
+
+        JsonNode message = OBJECT_MAPPER.readTree(readBody(capturingClient.capturedRequest))
+                .path("messages")
+                .get(0);
+        assertThat(message.path("role").asText()).isEqualTo("user");
+        JsonNode block = message.path("content").get(0);
+        assertThat(block.path("type").asText()).isEqualTo("tool_result");
+        assertThat(block.path("tool_use_id").asText()).isEqualTo("toolu_1");
+        assertThat(block.path("content").asText()).isEqualTo("鎵ц瀹屾垚");
+    }
+
     private LlmStreamRequest request(String baseUrl, Integer maxOutputTokens) {
         return new LlmStreamRequest(
                 baseUrl,
@@ -177,12 +278,21 @@ class AnthropicMessagesClientTest {
 
     private static class CapturingAnthropicClient extends AnthropicMessagesClient {
 
+        private final Stream<String> responseLines;
         private HttpRequest capturedRequest;
+
+        private CapturingAnthropicClient() {
+            this(Stream.of("event: message_stop", "data: {}"));
+        }
+
+        private CapturingAnthropicClient(Stream<String> responseLines) {
+            this.responseLines = responseLines;
+        }
 
         @Override
         protected HttpResponse<Stream<String>> send(HttpRequest request) throws IOException, InterruptedException {
             this.capturedRequest = request;
-            return new TestStreamResponse(Stream.of("event: message_stop", "data: {}"));
+            return new TestStreamResponse(responseLines);
         }
     }
 

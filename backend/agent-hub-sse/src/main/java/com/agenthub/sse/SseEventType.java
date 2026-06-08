@@ -5,6 +5,9 @@ public enum SseEventType {
     MESSAGE("message"),
     REASONING_DELTA("reasoning_delta"),
     ANSWER_DELTA("answer_delta"),
+    TOOL_CALL("tool_call"),
+    TOOL_OUTPUT("tool_output"),
+    TOOL_RESULT("tool_result"),
     MESSAGE_COMPLETED("message_completed"),
     ERROR("error"),
     DONE("done");

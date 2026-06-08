@@ -13,6 +13,7 @@ import com.agenthub.agent.service.AgentService;
 import com.agenthub.ai.llm.LlmContentPart;
 import com.agenthub.ai.llm.LlmClient;
 import com.agenthub.ai.llm.LlmStreamChunk;
+import com.agenthub.ai.llm.tool.LlmToolCall;
 import com.agenthub.ai.model.dto.AiModelRuntimeConfig;
 import com.agenthub.ai.model.service.AiModelService;
 import com.agenthub.chat.context.ConversationContextBuilder;
@@ -29,6 +30,9 @@ import com.agenthub.common.exception.BusinessException;
 import com.agenthub.sse.SseEventData;
 import com.agenthub.sse.SseEventSender;
 import com.agenthub.sse.SseEventType;
+import com.agenthub.sandbox.client.dto.SandboxEvent;
+import com.agenthub.sandbox.service.SandboxSessionService;
+import com.agenthub.sandbox.service.SandboxToolService;
 import com.agenthub.storage.attachment.dto.AttachmentItem;
 import com.agenthub.storage.attachment.dto.AttachmentReference;
 import com.agenthub.storage.attachment.service.AttachmentService;
@@ -613,6 +617,77 @@ class ChatServiceImplTest {
         assertThat(sender.eventTypes()).containsExactly(
                 SseEventType.CONVERSATION,
                 SseEventType.MESSAGE,
+                SseEventType.ANSWER_DELTA,
+                SseEventType.MESSAGE_COMPLETED,
+                SseEventType.DONE
+        );
+    }
+
+    @Test
+    void shouldExecuteSandboxToolCallAndContinueLlmLoop() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        SandboxSessionService sandboxSessionService = mock(SandboxSessionService.class);
+        SandboxToolService sandboxToolService = mock(SandboxToolService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        RetryingLlmClient llmClient = new RetryingLlmClient(List.of(
+                List.of(LlmStreamChunk.toolCall(new LlmToolCall(
+                        "call_1",
+                        "exec",
+                        java.util.Map.of("command", "python3 main.py")
+                )), LlmStreamChunk.done()),
+                List.of(LlmStreamChunk.answer("运行完成"), LlmStreamChunk.done())
+        ));
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                sender,
+                mock(AttachmentService.class),
+                null,
+                contextBuilder(messageMapper, mock(AttachmentService.class), llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                sandboxSessionService,
+                sandboxToolService
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(sandboxSessionService.ensureSession(7L, 100L)).thenReturn("sbx_1");
+        org.mockito.Mockito.doAnswer(invocation -> {
+            java.util.function.Consumer<SandboxEvent> consumer = invocation.getArgument(6);
+            consumer.accept(new SandboxEvent("stdout_delta", "exec_1", "ok", null, null, null, null, null, false));
+            consumer.accept(new SandboxEvent("completed", "exec_1", null, 0, 100L, null, null, null, false));
+            return null;
+        }).when(sandboxToolService).exec(any(), any(), any(), any(), any(), org.mockito.ArgumentMatchers.anyInt(), any());
+
+        service.stream(7L, 100L, 10L, null, "运行脚本", false, List.of(), List.of());
+
+        assertThat(llmClient.requests).hasSize(2);
+        assertThat(llmClient.requests.getFirst().tools()).extracting("name").contains("exec", "read_file", "write_file");
+        assertThat(llmClient.requests.get(1).messages()).anySatisfy(message -> {
+            assertThat(message.role()).isEqualTo("tool");
+            assertThat(message.toolCallId()).isEqualTo("call_1");
+            assertThat(message.content()).contains("ok");
+        });
+        verify(sandboxSessionService).ensureSession(7L, 100L);
+        verify(sandboxToolService).exec(
+                org.mockito.ArgumentMatchers.eq(7L),
+                org.mockito.ArgumentMatchers.eq(100L),
+                org.mockito.ArgumentMatchers.eq("sbx_1"),
+                org.mockito.ArgumentMatchers.eq("python3 main.py"),
+                org.mockito.ArgumentMatchers.eq("/workspace"),
+                org.mockito.ArgumentMatchers.eq(60),
+                org.mockito.ArgumentMatchers.any()
+        );
+        assertThat(sender.eventTypes()).contains(
+                SseEventType.TOOL_CALL,
+                SseEventType.TOOL_OUTPUT,
+                SseEventType.TOOL_RESULT,
                 SseEventType.ANSWER_DELTA,
                 SseEventType.MESSAGE_COMPLETED,
                 SseEventType.DONE

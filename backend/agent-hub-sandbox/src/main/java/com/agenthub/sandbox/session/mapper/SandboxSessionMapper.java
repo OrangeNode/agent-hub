@@ -16,4 +16,15 @@ public interface SandboxSessionMapper extends BaseMapper<SandboxSession> {
             limit 1
             """)
     SandboxSession selectBySandboxSessionId(@Param("sandboxSessionId") String sandboxSessionId);
+
+    @Select("""
+            select *
+            from sandbox_session
+            where user_id = #{userId}
+              and conversation_id = #{conversationId}
+              and status in ('READY', 'RUNNING')
+            order by last_active_at desc, id desc
+            limit 1
+            """)
+    SandboxSession selectActiveByConversation(@Param("userId") Long userId, @Param("conversationId") Long conversationId);
 }

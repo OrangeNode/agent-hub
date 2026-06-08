@@ -219,11 +219,25 @@ public class AnthropicMessagesClient implements LlmClient {
                         )));
                         return item;
                     }
+                    if (message.hasToolCalls()) {
+                        item.put("role", "assistant");
+                        item.put("content", message.toolCalls().stream().map(this::toAnthropicToolUse).toList());
+                        return item;
+                    }
                     item.put("role", message.role());
                     item.put("content", message.content());
                     return item;
                 })
                 .toList();
+    }
+
+    private Map<String, Object> toAnthropicToolUse(LlmToolCall toolCall) {
+        return Map.of(
+                "type", "tool_use",
+                "id", toolCall.id(),
+                "name", toolCall.name(),
+                "input", toolCall.arguments() == null ? Map.of() : toolCall.arguments()
+        );
     }
 
     private Map<String, Object> toAnthropicTool(LlmToolDefinition tool) {

@@ -304,6 +304,35 @@ class OpenAiCompatibleClientTest {
     }
 
     @Test
+    void shouldSerializeAssistantToolCallMessage() throws Exception {
+        CapturingOpenAiClient capturingClient = new CapturingOpenAiClient();
+        LlmStreamRequest request = new LlmStreamRequest(
+                "http://localhost:3000/v1",
+                "test-api-key",
+                null,
+                "test-model",
+                List.of(LlmMessage.assistantToolCalls(List.of(new LlmToolCall(
+                        "call_1",
+                        "exec",
+                        Map.of("command", "python3 main.py")
+                )))),
+                null,
+                false);
+
+        capturingClient.stream(request, ignored -> {
+        });
+
+        JsonNode toolCall = OBJECT_MAPPER.readTree(readBody(capturingClient.capturedRequest))
+                .path("messages")
+                .get(0)
+                .path("tool_calls")
+                .get(0);
+        assertThat(toolCall.path("id").asText()).isEqualTo("call_1");
+        assertThat(toolCall.path("function").path("name").asText()).isEqualTo("exec");
+        assertThat(toolCall.path("function").path("arguments").asText()).contains("python3 main.py");
+    }
+
+    @Test
     void shouldParseSplitThinkTagFromStreamingContent() {
         CapturingOpenAiClient capturingClient = new CapturingOpenAiClient(
                 Stream.of(

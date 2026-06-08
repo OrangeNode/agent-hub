@@ -20,6 +20,8 @@ import com.agenthub.sandbox.policy.CommandPolicy;
 import com.agenthub.sandbox.service.impl.SandboxToolServiceImpl;
 import com.agenthub.sandbox.session.entity.SandboxSession;
 import com.agenthub.sandbox.session.mapper.SandboxSessionMapper;
+import com.agenthub.storage.attachment.dto.AttachmentImportSource;
+import com.agenthub.storage.attachment.service.AttachmentService;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -249,6 +251,34 @@ class SandboxToolServiceImplTest {
         ArgumentCaptor<SandboxExecution> updateCaptor = ArgumentCaptor.forClass(SandboxExecution.class);
         verify(executionMapper, org.mockito.Mockito.atLeastOnce()).updateById(updateCaptor.capture());
         assertThat(updateCaptor.getAllValues().getLast().getStatus()).isEqualTo("COMPLETED");
+    }
+
+    @Test
+    void shouldUploadAttachmentContentIntoWorkspace() {
+        SandboxClient client = mock(SandboxClient.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        SandboxSessionMapper sessionMapper = mock(SandboxSessionMapper.class);
+        when(sessionMapper.selectBySandboxSessionId("sbx_1")).thenReturn(session(55L));
+        when(attachmentService.requireImportSource(7L, 10L)).thenReturn(new AttachmentImportSource(
+                10L,
+                "input.txt",
+                "text/plain",
+                5L,
+                "data:text/plain;base64,aGVsbG8=",
+                "users/7/chat-files/input.txt"
+        ));
+        SandboxToolServiceImpl service = new SandboxToolServiceImpl(
+                client,
+                new CommandPolicy(200, 60),
+                sessionMapper,
+                mock(SandboxExecutionMapper.class),
+                mock(SandboxArtifactMapper.class),
+                attachmentService
+        );
+
+        service.uploadFile(7L, 100L, "sbx_1", 10L, "/workspace/input.txt");
+
+        verify(client).writeFile("sbx_1", "/workspace/input.txt", "hello", false);
     }
 
     private SandboxToolServiceImpl service(SandboxClient client, SandboxExecutionMapper executionMapper) {

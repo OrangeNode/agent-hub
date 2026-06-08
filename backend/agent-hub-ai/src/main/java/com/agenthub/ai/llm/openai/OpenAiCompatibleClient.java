@@ -185,12 +185,26 @@ public class OpenAiCompatibleClient implements LlmClient {
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("role", message.role());
                     item.put("content", message.hasParts() ? toContentParts(message.parts()) : message.content());
+                    if (message.hasToolCalls()) {
+                        item.put("tool_calls", message.toolCalls().stream().map(this::toOpenAiToolCall).toList());
+                    }
                     if ("tool".equals(message.role())) {
                         item.put("tool_call_id", message.toolCallId());
                     }
                     return item;
                 })
                 .toList();
+    }
+
+    private Map<String, Object> toOpenAiToolCall(LlmToolCall toolCall) {
+        return Map.of(
+                "id", toolCall.id(),
+                "type", "function",
+                "function", Map.of(
+                        "name", toolCall.name(),
+                        "arguments", writeJson(toolCall.arguments())
+                )
+        );
     }
 
     private Map<String, Object> toOpenAiTool(LlmToolDefinition tool) {
@@ -202,6 +216,14 @@ public class OpenAiCompatibleClient implements LlmClient {
                         "parameters", tool.parameters()
                 )
         );
+    }
+
+    private String writeJson(Map<String, Object> value) {
+        try {
+            return OBJECT_MAPPER.writeValueAsString(value == null ? Map.of() : value);
+        } catch (Exception exception) {
+            return "{}";
+        }
     }
 
     private List<Map<String, Object>> toContentParts(List<LlmContentPart> parts) {

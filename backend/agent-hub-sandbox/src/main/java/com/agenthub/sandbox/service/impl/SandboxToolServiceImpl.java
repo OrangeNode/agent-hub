@@ -16,12 +16,22 @@ import com.agenthub.sandbox.service.SandboxToolService;
 import com.agenthub.sandbox.session.entity.SandboxSession;
 import com.agenthub.sandbox.session.mapper.SandboxSessionMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.agenthub.storage.attachment.dto.AttachmentImportSource;
+import com.agenthub.storage.attachment.service.AttachmentService;
+import java.net.URI;
+import java.net.URLDecoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -39,6 +49,8 @@ public class SandboxToolServiceImpl implements SandboxToolService {
     private final SandboxSessionMapper sessionMapper;
     private final SandboxExecutionMapper executionMapper;
     private final SandboxArtifactMapper artifactMapper;
+    private final AttachmentService attachmentService;
+    private final HttpClient httpClient;
 
     public SandboxToolServiceImpl(
             SandboxClient client,
@@ -47,11 +59,38 @@ public class SandboxToolServiceImpl implements SandboxToolService {
             SandboxExecutionMapper executionMapper,
             SandboxArtifactMapper artifactMapper
     ) {
+        this(client, commandPolicy, sessionMapper, executionMapper, artifactMapper, null, HttpClient.newHttpClient());
+    }
+
+    @Autowired
+    public SandboxToolServiceImpl(
+            SandboxClient client,
+            CommandPolicy commandPolicy,
+            SandboxSessionMapper sessionMapper,
+            SandboxExecutionMapper executionMapper,
+            SandboxArtifactMapper artifactMapper,
+            AttachmentService attachmentService
+    ) {
+        this(client, commandPolicy, sessionMapper, executionMapper, artifactMapper, attachmentService,
+                HttpClient.newHttpClient());
+    }
+
+    public SandboxToolServiceImpl(
+            SandboxClient client,
+            CommandPolicy commandPolicy,
+            SandboxSessionMapper sessionMapper,
+            SandboxExecutionMapper executionMapper,
+            SandboxArtifactMapper artifactMapper,
+            AttachmentService attachmentService,
+            HttpClient httpClient
+    ) {
         this.client = client;
         this.commandPolicy = commandPolicy;
         this.sessionMapper = sessionMapper;
         this.executionMapper = executionMapper;
         this.artifactMapper = artifactMapper;
+        this.attachmentService = attachmentService;
+        this.httpClient = httpClient;
     }
 
     @Override
@@ -122,11 +161,15 @@ public class SandboxToolServiceImpl implements SandboxToolService {
     @Override
     public void uploadFile(Long userId, Long conversationId, String sandboxSessionId, Long attachmentId, String targetPath) {
         requireOwnedSession(userId, conversationId, sandboxSessionId);
-        commandPolicy.validateWorkspacePath(targetPath, "路径不在允许访问范围内");
+        String normalizedPath = commandPolicy.validateWorkspacePath(targetPath, "附件导入路径不在允许访问范围内");
         if (attachmentId == null) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "attachmentId 不能为空");
         }
-        throw new BusinessException(ErrorCode.INTERNAL_ERROR, "附件导入能力尚未接入");
+        if (attachmentService == null) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "附件导入服务不可用");
+        }
+        AttachmentImportSource source = attachmentService.requireImportSource(userId, attachmentId);
+        client.writeFile(sandboxSessionId, normalizedPath, downloadText(source.downloadUrl()), false);
     }
 
     @Override
@@ -209,6 +252,37 @@ public class SandboxToolServiceImpl implements SandboxToolService {
 
     private void forwardEvent(Consumer<SandboxEvent> eventConsumer, SandboxEvent event) {
         eventConsumer.accept(event);
+    }
+
+    private String downloadText(String downloadUrl) {
+        try {
+            if (downloadUrl != null && downloadUrl.startsWith("data:")) {
+                return readDataUrl(downloadUrl);
+            }
+            HttpRequest request = HttpRequest.newBuilder(URI.create(downloadUrl)).GET().build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "附件下载失败，HTTP 状态码: " + response.statusCode());
+            }
+            return response.body();
+        } catch (BusinessException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "附件下载失败: " + exception.getMessage());
+        }
+    }
+
+    private String readDataUrl(String dataUrl) {
+        int commaIndex = dataUrl.indexOf(',');
+        if (commaIndex < 0) {
+            return "";
+        }
+        String meta = dataUrl.substring(0, commaIndex);
+        String payload = dataUrl.substring(commaIndex + 1);
+        if (meta.contains(";base64")) {
+            return new String(Base64.getDecoder().decode(payload), StandardCharsets.UTF_8);
+        }
+        return URLDecoder.decode(payload, StandardCharsets.UTF_8);
     }
 
     private class ExecutionAccumulator {

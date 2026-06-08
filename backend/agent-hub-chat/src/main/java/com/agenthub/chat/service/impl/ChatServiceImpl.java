@@ -8,6 +8,8 @@ import com.agenthub.ai.llm.LlmMessage;
 import com.agenthub.ai.llm.LlmStreamChunk;
 import com.agenthub.ai.llm.LlmStreamChunkType;
 import com.agenthub.ai.llm.LlmStreamRequest;
+import com.agenthub.ai.llm.tool.LlmToolCall;
+import com.agenthub.ai.llm.tool.LlmToolDefinition;
 import com.agenthub.ai.model.dto.AiModelRuntimeConfig;
 import com.agenthub.ai.model.service.AiModelService;
 import com.agenthub.chat.context.ConversationContext;
@@ -25,12 +27,17 @@ import com.agenthub.common.exception.BusinessException;
 import com.agenthub.sse.SseEventData;
 import com.agenthub.sse.SseEventSender;
 import com.agenthub.sse.SseEventType;
+import com.agenthub.sandbox.client.dto.SandboxEvent;
+import com.agenthub.sandbox.client.dto.SandboxFileItem;
+import com.agenthub.sandbox.service.SandboxSessionService;
+import com.agenthub.sandbox.service.SandboxToolService;
 import com.agenthub.storage.attachment.dto.AttachmentItem;
 import com.agenthub.storage.attachment.dto.AttachmentReference;
 import com.agenthub.storage.attachment.service.AttachmentService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import java.io.IOException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -59,8 +66,41 @@ public class ChatServiceImpl implements ChatService {
     private static final String SSE_CONNECTION_CLOSED = "SSE 连接已断开";
     private static final int TITLE_MAX_OUTPUT_TOKENS = 64;
     private static final int DEFAULT_IMAGE_TOKEN_ESTIMATE = 1500;
+    private static final int TOOL_LOOP_MAX_ROUNDS = 5;
+    private static final int DEFAULT_TOOL_EXEC_TIMEOUT_SECONDS = 60;
+    private static final String DEFAULT_TOOL_WORKING_DIR = "/workspace";
     private static final String CONTEXT_LENGTH_RETRY_FAILED_MESSAGE =
             "模型上下文长度仍然超限，请缩短输入或切换更大上下文模型";
+
+    private static final List<LlmToolDefinition> SANDBOX_TOOLS = List.of(
+            new LlmToolDefinition("exec", "在工作区执行白名单命令",
+                    Map.of("type", "object", "properties", Map.of(
+                            "command", Map.of("type", "string"),
+                            "working_dir", Map.of("type", "string"),
+                            "timeout_seconds", Map.of("type", "integer")
+                    ), "required", List.of("command"))),
+            new LlmToolDefinition("read_file", "读取工作区文件内容",
+                    Map.of("type", "object", "properties", Map.of(
+                            "path", Map.of("type", "string"),
+                            "max_bytes", Map.of("type", "integer")
+                    ), "required", List.of("path"))),
+            new LlmToolDefinition("write_file", "写入工作区文件",
+                    Map.of("type", "object", "properties", Map.of(
+                            "path", Map.of("type", "string"),
+                            "content", Map.of("type", "string"),
+                            "append", Map.of("type", "boolean")
+                    ), "required", List.of("path", "content"))),
+            new LlmToolDefinition("list_files", "列出工作区文件",
+                    Map.of("type", "object", "properties", Map.of(
+                            "path", Map.of("type", "string"),
+                            "recursive", Map.of("type", "boolean")
+                    ))),
+            new LlmToolDefinition("upload_file", "把用户上传文件放入工作区",
+                    Map.of("type", "object", "properties", Map.of(
+                            "attachment_id", Map.of("type", "integer"),
+                            "target_path", Map.of("type", "string")
+                    ), "required", List.of("attachment_id", "target_path")))
+    );
 
     private final ChatConversationMapper conversationMapper;
     private final ChatMessageMapper messageMapper;
@@ -73,6 +113,8 @@ public class ChatServiceImpl implements ChatService {
     private final Function<String, LlmClient> llmClientFactory;
     private final ConversationContextBuilder contextBuilder;
     private final Executor streamExecutor;
+    private final SandboxSessionService sandboxSessionService;
+    private final SandboxToolService sandboxToolService;
 
     @Autowired
     public ChatServiceImpl(
@@ -83,10 +125,13 @@ public class ChatServiceImpl implements ChatService {
             TransactionTemplate transactionTemplate,
             AttachmentService attachmentService,
             AgentService agentService,
-            ConversationContextBuilder contextBuilder
+            ConversationContextBuilder contextBuilder,
+            SandboxSessionService sandboxSessionService,
+            SandboxToolService sandboxToolService
     ) {
         this(conversationMapper, messageMapper, modelService, titleService, transactionTemplate, new SseEventSender(),
-                attachmentService, agentService, contextBuilder, LlmClientFactory::create, defaultStreamExecutor());
+                attachmentService, agentService, contextBuilder, LlmClientFactory::create, defaultStreamExecutor(),
+                sandboxSessionService, sandboxToolService);
     }
 
     public ChatServiceImpl(
@@ -102,7 +147,7 @@ public class ChatServiceImpl implements ChatService {
             Executor streamExecutor
     ) {
         this(conversationMapper, messageMapper, modelService, titleService, transactionTemplate, sseEventSender,
-                attachmentService, null, contextBuilder, llmClientFactory, streamExecutor);
+                attachmentService, null, contextBuilder, llmClientFactory, streamExecutor, null, null);
     }
 
     public ChatServiceImpl(
@@ -118,6 +163,25 @@ public class ChatServiceImpl implements ChatService {
             Function<String, LlmClient> llmClientFactory,
             Executor streamExecutor
     ) {
+        this(conversationMapper, messageMapper, modelService, titleService, transactionTemplate, sseEventSender,
+                attachmentService, agentService, contextBuilder, llmClientFactory, streamExecutor, null, null);
+    }
+
+    public ChatServiceImpl(
+            ChatConversationMapper conversationMapper,
+            ChatMessageMapper messageMapper,
+            AiModelService modelService,
+            ConversationTitleService titleService,
+            TransactionTemplate transactionTemplate,
+            SseEventSender sseEventSender,
+            AttachmentService attachmentService,
+            AgentService agentService,
+            ConversationContextBuilder contextBuilder,
+            Function<String, LlmClient> llmClientFactory,
+            Executor streamExecutor,
+            SandboxSessionService sandboxSessionService,
+            SandboxToolService sandboxToolService
+    ) {
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
         this.modelService = modelService;
@@ -129,6 +193,8 @@ public class ChatServiceImpl implements ChatService {
         this.llmClientFactory = llmClientFactory;
         this.contextBuilder = contextBuilder;
         this.streamExecutor = streamExecutor;
+        this.sandboxSessionService = sandboxSessionService;
+        this.sandboxToolService = sandboxToolService;
     }
 
     /**
@@ -173,7 +239,8 @@ public class ChatServiceImpl implements ChatService {
                 && send(emitter, SseEventType.MESSAGE,
                 new SseEventData.Message(preparedChat.assistantMessage().getId(), ROLE_ASSISTANT));
         if (connected) {
-            streamExecutor.execute(() -> streamLlm(emitter, runtimeConfig, preparedChat.context().messages(),
+            streamExecutor.execute(() -> streamLlm(emitter, preparedChat.conversation().getUserId(),
+                    preparedChat.conversation().getId(), runtimeConfig, preparedChat.context().messages(),
                     preparedChat.assistantMessage(), thinkingEnabled));
         } else {
             // 初始事件发送失败说明客户端已断开，直接标记助手消息失败。
@@ -510,6 +577,8 @@ public class ChatServiceImpl implements ChatService {
      */
     private void streamLlm(
             SseEmitter emitter,
+            Long userId,
+            Long conversationId,
             AiModelRuntimeConfig runtimeConfig,
             List<LlmMessage> messages,
             ChatMessage assistantMessage,
@@ -522,15 +591,34 @@ public class ChatServiceImpl implements ChatService {
         boolean reasoningRequested = thinkingEnabled && runtimeConfig.reasoningSupported();
         try {
             LlmClient client = llmClientFactory.apply(runtimeConfig.protocolType());
-            StreamAttemptOutcome outcome = streamOnce(client, runtimeConfig, messages, reasoningRequested,
-                    emitter, assistantMessage, content, reasoningContent, finished);
-            if (outcome.retryRequested() && !finished.get()) {
-                StreamAttemptOutcome retryOutcome = streamOnce(client, runtimeConfig, compactMessagesForRetry(messages),
-                        reasoningRequested, emitter, assistantMessage, content, reasoningContent, finished);
-                if (retryOutcome.retryRequested() && finished.compareAndSet(false, true)) {
-                    failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent,
-                            CONTEXT_LENGTH_RETRY_FAILED_MESSAGE);
+            List<LlmMessage> loopMessages = new ArrayList<>(messages);
+            for (int round = 0; round < TOOL_LOOP_MAX_ROUNDS && !finished.get(); round++) {
+                StreamAttemptOutcome outcome = streamOnce(client, runtimeConfig, loopMessages, reasoningRequested,
+                        emitter, assistantMessage, content, reasoningContent, finished);
+                if (outcome.retryRequested() && !finished.get()) {
+                    StreamAttemptOutcome retryOutcome = streamOnce(client, runtimeConfig, compactMessagesForRetry(loopMessages),
+                            reasoningRequested, emitter, assistantMessage, content, reasoningContent, finished);
+                    if (retryOutcome.retryRequested() && finished.compareAndSet(false, true)) {
+                        failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent,
+                                CONTEXT_LENGTH_RETRY_FAILED_MESSAGE);
+                    }
+                    outcome = retryOutcome;
                 }
+                if (finished.get() || outcome.toolCalls().isEmpty()) {
+                    return;
+                }
+                if (!toolsAvailable()) {
+                    throw new BusinessException(ErrorCode.INTERNAL_ERROR, "沙箱工具服务不可用");
+                }
+                loopMessages.add(LlmMessage.assistantToolCalls(outcome.toolCalls()));
+                for (LlmToolCall toolCall : outcome.toolCalls()) {
+                    String result = executeToolCall(userId, conversationId, emitter, toolCall);
+                    loopMessages.add(LlmMessage.tool(toolCall.id(), toolCall.name(), result));
+                }
+            }
+            if (finished.compareAndSet(false, true)) {
+                failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent,
+                        "工具调用轮次超过上限");
             }
         } catch (Exception exception) {
             if (isRetryableBeforeDelta(content, reasoningContent) && isContextLengthError(exception.getMessage())) {
@@ -557,7 +645,8 @@ public class ChatServiceImpl implements ChatService {
                 runtimeConfig.modelCode(),
                 messages,
                 runtimeConfig.maxOutputTokens(),
-                reasoningRequested
+                reasoningRequested,
+                toolsAvailable() ? SANDBOX_TOOLS : List.of()
         );
     }
 
@@ -574,8 +663,18 @@ public class ChatServiceImpl implements ChatService {
     ) {
         AtomicBoolean retryRequested = new AtomicBoolean(false);
         AtomicBoolean sawDelta = new AtomicBoolean(false);
+        List<LlmToolCall> toolCalls = new ArrayList<>();
         client.stream(buildRequest(runtimeConfig, messages, reasoningRequested), chunk -> {
             if (retryRequested.get()) {
+                return;
+            }
+            if (chunk.type() == LlmStreamChunkType.TOOL_CALL) {
+                toolCalls.add(chunk.toolCall());
+                send(emitter, SseEventType.TOOL_CALL,
+                        new SseEventData.ToolCall(chunk.toolCall().id(), chunk.toolCall().name()));
+                return;
+            }
+            if (chunk.type() == LlmStreamChunkType.DONE && !toolCalls.isEmpty()) {
                 return;
             }
             if (isDeltaChunk(chunk)) {
@@ -589,7 +688,108 @@ public class ChatServiceImpl implements ChatService {
             }
             handleChunk(emitter, assistantMessage, content, reasoningContent, finished, reasoningRequested, chunk);
         });
-        return new StreamAttemptOutcome(retryRequested.get());
+        return new StreamAttemptOutcome(retryRequested.get(), toolCalls);
+    }
+
+    private boolean toolsAvailable() {
+        return sandboxSessionService != null && sandboxToolService != null;
+    }
+
+    private String executeToolCall(Long userId, Long conversationId, SseEmitter emitter, LlmToolCall toolCall) {
+        String sandboxSessionId = sandboxSessionService.ensureSession(userId, conversationId);
+        String result = switch (toolCall.name()) {
+            case "exec" -> executeCommandTool(userId, conversationId, sandboxSessionId, emitter, toolCall);
+            case "read_file" -> sandboxToolService.readFile(userId, conversationId, sandboxSessionId,
+                    stringArg(toolCall, "path", "/workspace"), intArg(toolCall, "max_bytes", 4096));
+            case "write_file" -> {
+                sandboxToolService.writeFile(userId, conversationId, sandboxSessionId,
+                        stringArg(toolCall, "path", "/workspace/output.txt"),
+                        stringArg(toolCall, "content", ""),
+                        booleanArg(toolCall, "append", false));
+                yield "文件写入完成";
+            }
+            case "list_files" -> formatFiles(sandboxToolService.listFiles(userId, conversationId, sandboxSessionId,
+                    stringArg(toolCall, "path", "/workspace"), booleanArg(toolCall, "recursive", false)));
+            case "upload_file" -> {
+                sandboxToolService.uploadFile(userId, conversationId, sandboxSessionId,
+                        longArg(toolCall, "attachment_id"), stringArg(toolCall, "target_path", "/workspace/upload.bin"));
+                yield "上传文件已放入工作区";
+            }
+            default -> "不支持的工具: " + toolCall.name();
+        };
+        send(emitter, SseEventType.TOOL_RESULT,
+                new SseEventData.ToolResult(toolCall.id(), toolCall.name(), "completed", result));
+        return result;
+    }
+
+    private String executeCommandTool(
+            Long userId,
+            Long conversationId,
+            String sandboxSessionId,
+            SseEmitter emitter,
+            LlmToolCall toolCall
+    ) {
+        StringBuilder stdout = new StringBuilder();
+        StringBuilder stderr = new StringBuilder();
+        sandboxToolService.exec(userId, conversationId, sandboxSessionId,
+                stringArg(toolCall, "command", ""),
+                stringArg(toolCall, "working_dir", DEFAULT_TOOL_WORKING_DIR),
+                intArg(toolCall, "timeout_seconds", DEFAULT_TOOL_EXEC_TIMEOUT_SECONDS),
+                event -> handleSandboxEvent(emitter, toolCall, stdout, stderr, event));
+        return "stdout:\n" + stdout + "\nstderr:\n" + stderr;
+    }
+
+    private void handleSandboxEvent(
+            SseEmitter emitter,
+            LlmToolCall toolCall,
+            StringBuilder stdout,
+            StringBuilder stderr,
+            SandboxEvent event
+    ) {
+        if (event == null) {
+            return;
+        }
+        if ("stdout_delta".equals(event.type())) {
+            stdout.append(defaultString(event.content()));
+            send(emitter, SseEventType.TOOL_OUTPUT,
+                    new SseEventData.ToolOutput(toolCall.id(), "stdout", defaultString(event.content())));
+        } else if ("stderr_delta".equals(event.type())) {
+            stderr.append(defaultString(event.content()));
+            send(emitter, SseEventType.TOOL_OUTPUT,
+                    new SseEventData.ToolOutput(toolCall.id(), "stderr", defaultString(event.content())));
+        }
+    }
+
+    private String formatFiles(List<SandboxFileItem> files) {
+        if (files == null || files.isEmpty()) {
+            return "没有文件";
+        }
+        return files.stream()
+                .map(file -> (file.directory() ? "dir " : "file ") + file.path())
+                .collect(Collectors.joining("\n"));
+    }
+
+    private String stringArg(LlmToolCall toolCall, String name, String defaultValue) {
+        Object value = toolCall.arguments() == null ? null : toolCall.arguments().get(name);
+        return value == null ? defaultValue : String.valueOf(value);
+    }
+
+    private int intArg(LlmToolCall toolCall, String name, int defaultValue) {
+        Object value = toolCall.arguments() == null ? null : toolCall.arguments().get(name);
+        return value instanceof Number number ? number.intValue() : defaultValue;
+    }
+
+    private Long longArg(LlmToolCall toolCall, String name) {
+        Object value = toolCall.arguments() == null ? null : toolCall.arguments().get(name);
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        return value == null ? null : Long.valueOf(String.valueOf(value));
+    }
+
+    private boolean booleanArg(LlmToolCall toolCall, String name, boolean defaultValue) {
+        Object value = toolCall.arguments() == null ? null : toolCall.arguments().get(name);
+        return value instanceof Boolean bool ? bool : defaultValue;
     }
 
     private void retryAfterContextLengthException(
@@ -793,7 +993,7 @@ public class ChatServiceImpl implements ChatService {
         return value != null && !value.isBlank();
     }
 
-    private record StreamAttemptOutcome(boolean retryRequested) {
+    private record StreamAttemptOutcome(boolean retryRequested, List<LlmToolCall> toolCalls) {
     }
 
     private ConversationItem toConversationItem(ChatConversation conversation) {

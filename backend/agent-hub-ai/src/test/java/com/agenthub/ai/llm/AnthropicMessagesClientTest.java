@@ -259,6 +259,36 @@ class AnthropicMessagesClientTest {
         assertThat(block.path("content").asText()).isEqualTo("鎵ц瀹屾垚");
     }
 
+    @Test
+    void shouldSerializeAssistantToolUseMessage() throws Exception {
+        CapturingAnthropicClient capturingClient = new CapturingAnthropicClient();
+        LlmStreamRequest request = new LlmStreamRequest(
+                "https://api.anthropic.com",
+                "test-api-key",
+                null,
+                "test-model",
+                List.of(LlmMessage.assistantToolCalls(List.of(new LlmToolCall(
+                        "toolu_1",
+                        "exec",
+                        Map.of("command", "python3 main.py")
+                )))),
+                1024,
+                false);
+
+        capturingClient.stream(request, ignored -> {
+        });
+
+        JsonNode block = OBJECT_MAPPER.readTree(readBody(capturingClient.capturedRequest))
+                .path("messages")
+                .get(0)
+                .path("content")
+                .get(0);
+        assertThat(block.path("type").asText()).isEqualTo("tool_use");
+        assertThat(block.path("id").asText()).isEqualTo("toolu_1");
+        assertThat(block.path("name").asText()).isEqualTo("exec");
+        assertThat(block.path("input").path("command").asText()).isEqualTo("python3 main.py");
+    }
+
     private LlmStreamRequest request(String baseUrl, Integer maxOutputTokens) {
         return new LlmStreamRequest(
                 baseUrl,

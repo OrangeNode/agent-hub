@@ -92,3 +92,52 @@ func TestFileServiceRejectsPathEscape(t *testing.T) {
 		t.Fatal("expected ScanArtifacts to reject escaped path")
 	}
 }
+
+func TestFileServiceRejectsSymlinkEscapeForReadListAndScan(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o644); err != nil {
+		t.Fatalf("WriteFile outside error = %v", err)
+	}
+	createSymlinkOrSkip(t, outside, filepath.Join(root, "link"))
+
+	service := NewFileService(root)
+	if _, err := service.ReadFile("link/secret.txt", 100); err == nil {
+		t.Fatal("expected ReadFile to reject symlink escape")
+	}
+	if _, err := service.ListFiles("link", false, 20); err == nil {
+		t.Fatal("expected ListFiles to reject symlink escape")
+	}
+	if _, err := service.ScanArtifacts("link"); err == nil {
+		t.Fatal("expected ScanArtifacts to reject symlink escape")
+	}
+}
+
+func TestFileServiceRejectsSymlinkEscapeForWrite(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	createSymlinkOrSkip(t, outside, filepath.Join(root, "link"))
+
+	service := NewFileService(root)
+	if err := service.WriteFile("link/created.txt", []byte("bad"), false); err == nil {
+		t.Fatal("expected WriteFile to reject symlink parent escape")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "created.txt")); err == nil {
+		t.Fatal("outside file should not be created through symlink")
+	}
+
+	if err := os.WriteFile(filepath.Join(outside, "target.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatalf("WriteFile outside target error = %v", err)
+	}
+	createSymlinkOrSkip(t, filepath.Join(outside, "target.txt"), filepath.Join(root, "file-link"))
+	if err := service.WriteFile("file-link", []byte("bad"), false); err == nil {
+		t.Fatal("expected WriteFile to reject existing symlink target escape")
+	}
+}
+
+func createSymlinkOrSkip(t *testing.T, oldname string, newname string) {
+	t.Helper()
+	if err := os.Symlink(oldname, newname); err != nil {
+		t.Skipf("当前环境无法创建 symlink: %v", err)
+	}
+}

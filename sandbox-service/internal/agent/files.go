@@ -12,7 +12,8 @@ import (
 )
 
 type FileService struct {
-	root string
+	root          string
+	canonicalRoot string
 }
 
 type FileContent struct {
@@ -37,15 +38,33 @@ func NewFileService(root string) *FileService {
 	if err != nil {
 		absRoot = filepath.Clean(root)
 	}
-	return &FileService{root: filepath.Clean(absRoot)}
+	canonicalRoot := filepath.Clean(absRoot)
+	if evaluatedRoot, err := filepath.EvalSymlinks(canonicalRoot); err == nil {
+		canonicalRoot = filepath.Clean(evaluatedRoot)
+	}
+	return &FileService{root: filepath.Clean(absRoot), canonicalRoot: canonicalRoot}
 }
 
 func (s *FileService) WriteFile(path string, content []byte, appendMode bool) error {
-	target, err := s.resolve(path)
+	target, err := s.resolveLexical(path)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	parent := filepath.Dir(target)
+	if err := s.ensureExistingAncestorInside(parent); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return err
+	}
+	if _, err := s.resolveExisting(parent); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(target); err == nil {
+		if _, err := s.resolveExisting(target); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
 		return err
 	}
 	flag := os.O_CREATE | os.O_WRONLY
@@ -64,7 +83,7 @@ func (s *FileService) WriteFile(path string, content []byte, appendMode bool) er
 }
 
 func (s *FileService) ReadFile(path string, maxBytes int64) (FileContent, error) {
-	target, err := s.resolve(path)
+	target, err := s.resolveExisting(path)
 	if err != nil {
 		return FileContent{}, err
 	}
@@ -93,7 +112,7 @@ func (s *FileService) ReadFile(path string, maxBytes int64) (FileContent, error)
 }
 
 func (s *FileService) ListFiles(path string, recursive bool, maxFiles int) ([]FileInfo, error) {
-	target, err := s.resolve(path)
+	target, err := s.resolveExisting(path)
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +127,9 @@ func (s *FileService) ListFiles(path string, recursive bool, maxFiles int) ([]Fi
 			}
 			if current == target {
 				return nil
+			}
+			if _, err := s.resolveExisting(current); err != nil {
+				return err
 			}
 			info, err := entry.Info()
 			if err != nil {
@@ -133,6 +155,9 @@ func (s *FileService) ListFiles(path string, recursive bool, maxFiles int) ([]Fi
 		if len(files) >= maxFiles {
 			break
 		}
+		if _, err := s.resolveExisting(filepath.Join(target, entry.Name())); err != nil {
+			return nil, err
+		}
 		info, err := entry.Info()
 		if err != nil {
 			return nil, err
@@ -143,7 +168,7 @@ func (s *FileService) ListFiles(path string, recursive bool, maxFiles int) ([]Fi
 }
 
 func (s *FileService) ScanArtifacts(artifactDir string) ([]ArtifactInfo, error) {
-	target, err := s.resolve(artifactDir)
+	target, err := s.resolveExisting(artifactDir)
 	if err != nil {
 		return nil, err
 	}
@@ -154,6 +179,9 @@ func (s *FileService) ScanArtifacts(artifactDir string) ([]ArtifactInfo, error) 
 		}
 		if current == target || entry.IsDir() {
 			return nil
+		}
+		if _, err := s.resolveExisting(current); err != nil {
+			return err
 		}
 		info, err := entry.Info()
 		if err != nil {
@@ -183,7 +211,7 @@ func (s *FileService) ScanArtifacts(artifactDir string) ([]ArtifactInfo, error) 
 	return artifacts, nil
 }
 
-func (s *FileService) resolve(input string) (string, error) {
+func (s *FileService) resolveLexical(input string) (string, error) {
 	cleanInput := filepath.Clean(strings.TrimSpace(input))
 	if cleanInput == "." {
 		cleanInput = ""
@@ -198,18 +226,69 @@ func (s *FileService) resolve(input string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	rel, err := filepath.Rel(s.root, filepath.Clean(absTarget))
+	cleanTarget := filepath.Clean(absTarget)
+	if !isInsideBase(s.root, cleanTarget) && !isInsideBase(s.canonicalRoot, cleanTarget) {
+		return "", errors.New("路径不能超出工作目录")
+	}
+	return cleanTarget, nil
+}
+
+func (s *FileService) resolveExisting(input string) (string, error) {
+	target, err := s.resolveLexical(input)
+	if err != nil {
+		return "", err
+	}
+	canonicalTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", err
+	}
+	return s.ensureCanonicalInside(canonicalTarget)
+}
+
+func (s *FileService) ensureExistingAncestorInside(path string) error {
+	current := filepath.Clean(path)
+	for {
+		if _, err := os.Lstat(current); err == nil {
+			_, err := s.resolveExisting(current)
+			return err
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			return errors.New("工作目录不存在")
+		}
+		current = parent
+	}
+}
+
+func (s *FileService) ensureCanonicalInside(path string) (string, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	cleanPath := filepath.Clean(absPath)
+	rel, err := filepath.Rel(s.canonicalRoot, cleanPath)
 	if err != nil {
 		return "", err
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", errors.New("路径不能超出工作目录")
+		return "", errors.New("路径真实目标不能超出工作目录")
 	}
-	return filepath.Clean(absTarget), nil
+	return cleanPath, nil
+}
+
+func isInsideBase(base string, target string) bool {
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
 
 func (s *FileService) fileInfo(path string, info os.FileInfo) FileInfo {
-	relative, err := filepath.Rel(s.root, path)
+	relative, err := filepath.Rel(s.canonicalRoot, path)
 	if err != nil {
 		relative = info.Name()
 	}

@@ -43,7 +43,7 @@ func (p CommandPolicy) Validate(req CommandRequest) error {
 	if hasPathSeparator(argv[0]) {
 		return errors.New("命令入口不允许包含路径")
 	}
-	if !allowedCommandNames[strings.ToLower(argv[0])] {
+	if !allowedCommandNames[argv[0]] {
 		return errors.New("命令不在允许列表中")
 	}
 	for _, arg := range argv[1:] {
@@ -104,14 +104,26 @@ func isForbiddenCommandChar(r rune) bool {
 
 func hasDangerousPath(value string) bool {
 	cleanedValue := cleanSlash(strings.Trim(value, `"'`))
+	if hasDotDotPathSegment(cleanedValue) {
+		return true
+	}
 	for i, r := range cleanedValue {
 		if r != '/' {
 			continue
 		}
-		if i != 0 && !isEmbeddedPathSeparator(cleanedValue[i-1]) {
+		if i != 0 && !isEmbeddedPathSeparator(cleanedValue[i-1]) && !isShortFlagAttachedPathStart(cleanedValue, i) {
 			continue
 		}
 		if isForbiddenAbsolutePath(cleanedValue[i:]) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDotDotPathSegment(value string) bool {
+	for _, segment := range strings.Split(value, "/") {
+		if segment == ".." {
 			return true
 		}
 	}
@@ -136,6 +148,14 @@ func isEmbeddedPathSeparator(r byte) bool {
 	default:
 		return false
 	}
+}
+
+func isShortFlagAttachedPathStart(value string, slashIndex int) bool {
+	return slashIndex >= 2 && value[slashIndex-2] == '-' && isAsciiLetter(value[slashIndex-1])
+}
+
+func isAsciiLetter(value byte) bool {
+	return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z')
 }
 
 func hasPathSeparator(value string) bool {

@@ -79,6 +79,24 @@ func TestValidateCommandRejectsDangerousPaths(t *testing.T) {
 		"go build -o=/etc/app",
 		"mvn -Dmaven.repo.local=/root/.m2",
 		"npm --prefix=/var/run install",
+		"go build -o/tmp/app",
+		"javac -d/tmp/classes",
+		"sed -f/etc/passwd",
+	} {
+		err := policy.Validate(CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30})
+		if err == nil {
+			t.Fatalf("expected %q to be rejected", command)
+		}
+	}
+}
+
+func TestValidateCommandRejectsRelativePathTraversal(t *testing.T) {
+	policy := NewCommandPolicy(200, 60)
+	for _, command := range []string{
+		"cat ../etc/passwd",
+		"find ..",
+		"cp ../etc/passwd /workspace/x",
+		"cat subdir/../../etc/passwd",
 	} {
 		err := policy.Validate(CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30})
 		if err == nil {
@@ -112,6 +130,16 @@ func TestValidateCommandRejectsUnknownCommand(t *testing.T) {
 	err := policy.Validate(CommandRequest{Command: "curl https://example.com", WorkingDir: "/workspace", TimeoutSeconds: 30})
 	if err == nil {
 		t.Fatal("expected command outside allowlist to be rejected")
+	}
+}
+
+func TestValidateCommandRejectsEntrypointWithDifferentCase(t *testing.T) {
+	policy := NewCommandPolicy(200, 60)
+	for _, command := range []string{"Python3 script.py", "NPM install"} {
+		err := policy.Validate(CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30})
+		if err == nil {
+			t.Fatalf("expected %q to be rejected", command)
+		}
 	}
 }
 

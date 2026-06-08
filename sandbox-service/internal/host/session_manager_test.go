@@ -26,14 +26,30 @@ func TestSessionManagerReusesSessionForSameConversation(t *testing.T) {
 	if first != second {
 		t.Fatal("expected same session for same conversation")
 	}
+	if first.ID == "" {
+		t.Fatal("expected session ID")
+	}
+	if first.ID != second.ID {
+		t.Fatalf("session ID changed: first=%q second=%q", first.ID, second.ID)
+	}
 	if factory.starts != 1 {
 		t.Fatalf("starts = %d", factory.starts)
 	}
 	if !second.LastActiveAt.After(oldLastActiveAt) {
 		t.Fatalf("LastActiveAt was not refreshed: %s", second.LastActiveAt)
 	}
-	if !manager.HasSession("conversation-1") {
+	if !manager.HasSession(first.ID) {
 		t.Fatal("expected manager to have session")
+	}
+	if manager.HasSession("conversation-1") {
+		t.Fatal("expected HasSession to use session ID, not conversation ID")
+	}
+	got, ok := manager.Get(first.ID)
+	if !ok {
+		t.Fatal("expected Get() to find session")
+	}
+	if got != first {
+		t.Fatal("expected Get() to return the original session")
 	}
 }
 
@@ -67,11 +83,34 @@ func TestSessionManagerReapsIdleSessionsAndStopsVM(t *testing.T) {
 		t.Fatalf("ReapIdle() error = %v", err)
 	}
 
-	if manager.HasSession("conversation-1") {
+	if manager.HasSession(session.ID) {
 		t.Fatal("expected idle session to be removed")
+	}
+	if _, ok := manager.Get(session.ID); ok {
+		t.Fatal("expected idle session to be unavailable by session ID")
 	}
 	if vm.stops != 1 {
 		t.Fatalf("stops = %d", vm.stops)
+	}
+}
+
+func TestSessionManagerGeneratesStableSequentialSessionIDs(t *testing.T) {
+	manager := NewSessionManager(&fakeVMFactory{}, 2, 5*time.Minute)
+
+	first, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate(first) error = %v", err)
+	}
+	second, err := manager.GetOrCreate("conversation-2")
+	if err != nil {
+		t.Fatalf("GetOrCreate(second) error = %v", err)
+	}
+
+	if first.ID != "sbx_000001" {
+		t.Fatalf("first.ID = %q", first.ID)
+	}
+	if second.ID != "sbx_000002" {
+		t.Fatalf("second.ID = %q", second.ID)
 	}
 }
 

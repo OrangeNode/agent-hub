@@ -12,6 +12,8 @@ import (
 	"sync"
 )
 
+const maxWorkspaceSymlinkScanEntries = 10000
+
 type FileService struct {
 	mu            sync.Mutex
 	root          string
@@ -242,6 +244,14 @@ func (s *FileService) ValidateExecRequest(req ExecRequest) error {
 		return errors.New("命令不能为空")
 	}
 	for _, arg := range argv[1:] {
+		if isSymlinkFollowingOption(arg) {
+			return errors.New("命令不允许跟随符号链接")
+		}
+	}
+	if err := s.ensureWorkspaceHasNoSymlinkLocked(maxWorkspaceSymlinkScanEntries); err != nil {
+		return err
+	}
+	for _, arg := range argv[1:] {
 		for _, candidate := range execPathCandidates(arg) {
 			target, err := s.resolveExecCandidate(candidate, req.WorkingDir)
 			if err != nil {
@@ -253,6 +263,13 @@ func (s *FileService) ValidateExecRequest(req ExecRequest) error {
 		}
 	}
 	return nil
+}
+
+func (s *FileService) EnsureWorkspaceHasNoSymlink() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.ensureWorkspaceHasNoSymlinkLocked(maxWorkspaceSymlinkScanEntries)
 }
 
 func (s *FileService) resolveLexical(input string) (string, error) {
@@ -361,12 +378,38 @@ func (s *FileService) ensureNoSymlinkInExistingComponents(path string, requireTa
 	return current, nil
 }
 
+func (s *FileService) ensureWorkspaceHasNoSymlinkLocked(maxEntries int) error {
+	checked := 0
+	return filepath.WalkDir(s.canonicalRoot, func(current string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		checked++
+		if checked > maxEntries {
+			return errors.New("工作目录条目过多，无法完成符号链接安全扫描")
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return errors.New("工作目录包含符号链接，不能执行命令")
+		}
+		return nil
+	})
+}
+
 func isInsideBase(base string, target string) bool {
 	rel, err := filepath.Rel(base, target)
 	if err != nil {
 		return false
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+func isSymlinkFollowingOption(arg string) bool {
+	switch arg {
+	case "-L", "-H", "-follow", "--dereference", "--copy-links":
+		return true
+	default:
+		return strings.HasPrefix(arg, "--dereference=") || strings.HasPrefix(arg, "--copy-links=")
+	}
 }
 
 func execPathCandidates(arg string) []string {

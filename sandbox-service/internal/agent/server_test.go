@@ -99,6 +99,55 @@ func TestServerExecStreamRejectsSymlinkWorkingDir(t *testing.T) {
 	}
 }
 
+func TestServerExecStreamRejectsSymlinkFollowingOptions(t *testing.T) {
+	for _, command := range []string{"find -L /workspace", "find /workspace -follow"} {
+		executor := &recordingExecutor{}
+		server := NewServer(executor, NewFileService(t.TempDir()))
+		body := bytes.NewBufferString(`{"command":"` + command + `","workingDir":"/workspace","timeoutSeconds":5}`)
+		req := httptest.NewRequest(http.MethodPost, "/exec/stream", body)
+		rec := httptest.NewRecorder()
+
+		server.Router().ServeHTTP(rec, req)
+
+		response := rec.Body.String()
+		if !strings.Contains(response, "event: error") {
+			t.Fatalf("expected error SSE for %q, got %s", command, response)
+		}
+		if !strings.Contains(response, "符号链接") {
+			t.Fatalf("expected symlink error for %q, got %s", command, response)
+		}
+		if executor.called {
+			t.Fatalf("executor should not be called for %q", command)
+		}
+	}
+}
+
+func TestServerExecStreamRejectsWorkspaceContainingSymlink(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("safe"), 0o644); err != nil {
+		t.Fatalf("WriteFile file error = %v", err)
+	}
+	createSymlinkOrSkip(t, filepath.Join(root, "file.txt"), filepath.Join(root, "file-link"))
+	executor := &recordingExecutor{}
+	server := NewServer(executor, NewFileService(root))
+	body := bytes.NewBufferString(`{"command":"cat /workspace/file.txt","workingDir":"/workspace","timeoutSeconds":5}`)
+	req := httptest.NewRequest(http.MethodPost, "/exec/stream", body)
+	rec := httptest.NewRecorder()
+
+	server.Router().ServeHTTP(rec, req)
+
+	response := rec.Body.String()
+	if !strings.Contains(response, "event: error") {
+		t.Fatalf("expected error SSE, got %s", response)
+	}
+	if !strings.Contains(response, "符号链接") {
+		t.Fatalf("expected symlink error, got %s", response)
+	}
+	if executor.called {
+		t.Fatal("executor should not be called when workspace contains symlink")
+	}
+}
+
 func TestServerFileAPIWriteReadAndList(t *testing.T) {
 	server := NewServer(NewExecutor(1024), NewFileService(t.TempDir()))
 	writeBody, _ := json.Marshal(map[string]any{

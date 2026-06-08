@@ -13,6 +13,7 @@ import (
 const (
 	defaultTimeoutSeconds = 60
 	defaultMaxExcerpt     = 64 * 1024
+	defaultReadMaxBytes   = 1024 * 1024
 )
 
 type ExecRunner interface {
@@ -78,6 +79,10 @@ func (s *Server) handleExecStream(w http.ResponseWriter, r *http.Request) {
 		writeSSE(w, "error", map[string]string{"message": err.Error()})
 		return
 	}
+	if err := s.files.ValidateExecRequest(req); err != nil {
+		writeSSE(w, "error", map[string]string{"message": err.Error()})
+		return
+	}
 
 	writeSSE(w, "started", map[string]string{"message": "命令已开始执行"})
 	var mu sync.Mutex
@@ -112,7 +117,7 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
-	maxBytes, err := parseInt64Default(r.URL.Query().Get("maxBytes"), 0)
+	maxBytes, err := parseInt64Default(r.URL.Query().Get("maxBytes"), defaultReadMaxBytes)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "maxBytes 参数必须是数字")
 		return

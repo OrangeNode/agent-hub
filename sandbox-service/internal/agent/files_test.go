@@ -135,6 +135,26 @@ func TestFileServiceRejectsSymlinkEscapeForWrite(t *testing.T) {
 	}
 }
 
+func TestFileServiceRejectsSymlinkInsideRoot(t *testing.T) {
+	root := t.TempDir()
+	realDir := filepath.Join(root, "real")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll realDir error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(realDir, "data.txt"), []byte("data"), 0o644); err != nil {
+		t.Fatalf("WriteFile data error = %v", err)
+	}
+	createSymlinkOrSkip(t, realDir, filepath.Join(root, "link"))
+
+	service := NewFileService(root)
+	if _, err := service.ReadFile("link/data.txt", 100); err == nil {
+		t.Fatal("expected ReadFile to reject symlink inside root")
+	}
+	if _, err := service.ListFiles("link", false, 20); err == nil {
+		t.Fatal("expected ListFiles to reject symlink inside root")
+	}
+}
+
 func createSymlinkOrSkip(t *testing.T, oldname string, newname string) {
 	t.Helper()
 	if err := os.Symlink(oldname, newname); err != nil {

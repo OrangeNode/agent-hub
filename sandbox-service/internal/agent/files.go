@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 type FileService struct {
+	mu            sync.Mutex
 	root          string
 	canonicalRoot string
 }
@@ -42,26 +44,29 @@ func NewFileService(root string) *FileService {
 	if evaluatedRoot, err := filepath.EvalSymlinks(canonicalRoot); err == nil {
 		canonicalRoot = filepath.Clean(evaluatedRoot)
 	}
-	return &FileService{root: filepath.Clean(absRoot), canonicalRoot: canonicalRoot}
+	return &FileService{root: canonicalRoot, canonicalRoot: canonicalRoot}
 }
 
 func (s *FileService) WriteFile(path string, content []byte, appendMode bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	target, err := s.resolveLexical(path)
 	if err != nil {
 		return err
 	}
 	parent := filepath.Dir(target)
-	if err := s.ensureExistingAncestorInside(parent); err != nil {
+	if err := s.ensureNoSymlinkInExistingComponents(parent, false); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return err
 	}
-	if _, err := s.resolveExisting(parent); err != nil {
+	if _, err := s.ensureNoSymlinkInExistingComponents(parent, true); err != nil {
 		return err
 	}
 	if _, err := os.Lstat(target); err == nil {
-		if _, err := s.resolveExisting(target); err != nil {
+		if _, err := s.ensureNoSymlinkInExistingComponents(target, true); err != nil {
 			return err
 		}
 	} else if !os.IsNotExist(err) {
@@ -83,7 +88,10 @@ func (s *FileService) WriteFile(path string, content []byte, appendMode bool) er
 }
 
 func (s *FileService) ReadFile(path string, maxBytes int64) (FileContent, error) {
-	target, err := s.resolveExisting(path)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	target, err := s.resolveExistingNoSymlink(path)
 	if err != nil {
 		return FileContent{}, err
 	}
@@ -112,7 +120,10 @@ func (s *FileService) ReadFile(path string, maxBytes int64) (FileContent, error)
 }
 
 func (s *FileService) ListFiles(path string, recursive bool, maxFiles int) ([]FileInfo, error) {
-	target, err := s.resolveExisting(path)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	target, err := s.resolveExistingNoSymlink(path)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +139,7 @@ func (s *FileService) ListFiles(path string, recursive bool, maxFiles int) ([]Fi
 			if current == target {
 				return nil
 			}
-			if _, err := s.resolveExisting(current); err != nil {
+			if _, err := s.ensureNoSymlinkInExistingComponents(current, true); err != nil {
 				return err
 			}
 			info, err := entry.Info()
@@ -155,7 +166,7 @@ func (s *FileService) ListFiles(path string, recursive bool, maxFiles int) ([]Fi
 		if len(files) >= maxFiles {
 			break
 		}
-		if _, err := s.resolveExisting(filepath.Join(target, entry.Name())); err != nil {
+		if _, err := s.ensureNoSymlinkInExistingComponents(filepath.Join(target, entry.Name()), true); err != nil {
 			return nil, err
 		}
 		info, err := entry.Info()
@@ -168,7 +179,10 @@ func (s *FileService) ListFiles(path string, recursive bool, maxFiles int) ([]Fi
 }
 
 func (s *FileService) ScanArtifacts(artifactDir string) ([]ArtifactInfo, error) {
-	target, err := s.resolveExisting(artifactDir)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	target, err := s.resolveExistingNoSymlink(artifactDir)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +194,7 @@ func (s *FileService) ScanArtifacts(artifactDir string) ([]ArtifactInfo, error) 
 		if current == target || entry.IsDir() {
 			return nil
 		}
-		if _, err := s.resolveExisting(current); err != nil {
+		if _, err := s.ensureNoSymlinkInExistingComponents(current, true); err != nil {
 			return err
 		}
 		info, err := entry.Info()
@@ -211,6 +225,36 @@ func (s *FileService) ScanArtifacts(artifactDir string) ([]ArtifactInfo, error) 
 	return artifacts, nil
 }
 
+func (s *FileService) ValidateExecRequest(req ExecRequest) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	workingDir, err := s.resolveGuestWorkspacePath(req.WorkingDir)
+	if err != nil {
+		return err
+	}
+	if _, err := s.ensureNoSymlinkInExistingComponents(workingDir, true); err != nil {
+		return errors.New("工作目录不安全: " + err.Error())
+	}
+
+	argv := strings.Fields(req.Command)
+	if len(argv) == 0 {
+		return errors.New("命令不能为空")
+	}
+	for _, arg := range argv[1:] {
+		for _, candidate := range execPathCandidates(arg) {
+			target, err := s.resolveExecCandidate(candidate, req.WorkingDir)
+			if err != nil {
+				return errors.New("命令参数路径不安全: " + err.Error())
+			}
+			if err := s.ensureExecPathAncestorSafe(target); err != nil {
+				return errors.New("命令参数路径不安全: " + err.Error())
+			}
+		}
+	}
+	return nil
+}
+
 func (s *FileService) resolveLexical(input string) (string, error) {
 	cleanInput := filepath.Clean(strings.TrimSpace(input))
 	if cleanInput == "." {
@@ -233,50 +277,88 @@ func (s *FileService) resolveLexical(input string) (string, error) {
 	return cleanTarget, nil
 }
 
-func (s *FileService) resolveExisting(input string) (string, error) {
+func (s *FileService) resolveExistingNoSymlink(input string) (string, error) {
 	target, err := s.resolveLexical(input)
 	if err != nil {
 		return "", err
 	}
-	canonicalTarget, err := filepath.EvalSymlinks(target)
+	return s.ensureNoSymlinkInExistingComponents(target, true)
+}
+
+func (s *FileService) resolveGuestWorkspacePath(input string) (string, error) {
+	cleaned := filepath.ToSlash(filepath.Clean(strings.TrimSpace(input)))
+	if cleaned == "." || cleaned == "" {
+		cleaned = "/workspace"
+	}
+	if cleaned != "/workspace" && !strings.HasPrefix(cleaned, "/workspace/") {
+		return "", errors.New("路径必须位于 /workspace")
+	}
+	relative := strings.TrimPrefix(cleaned, "/workspace")
+	relative = strings.TrimPrefix(relative, "/")
+	return s.resolveLexical(relative)
+}
+
+func (s *FileService) resolveExecCandidate(candidate string, workingDir string) (string, error) {
+	cleaned := filepath.ToSlash(filepath.Clean(strings.TrimSpace(candidate)))
+	if cleaned == "." || cleaned == "" {
+		return s.resolveGuestWorkspacePath(workingDir)
+	}
+	if strings.HasPrefix(cleaned, "/") {
+		return s.resolveGuestWorkspacePath(cleaned)
+	}
+	workingHostPath, err := s.resolveGuestWorkspacePath(workingDir)
 	if err != nil {
 		return "", err
 	}
-	return s.ensureCanonicalInside(canonicalTarget)
+	return s.resolveLexical(filepath.Join(workingHostPath, filepath.FromSlash(cleaned)))
 }
 
-func (s *FileService) ensureExistingAncestorInside(path string) error {
-	current := filepath.Clean(path)
-	for {
-		if _, err := os.Lstat(current); err == nil {
-			_, err := s.resolveExisting(current)
-			return err
-		} else if !os.IsNotExist(err) {
-			return err
-		}
-
-		parent := filepath.Dir(current)
-		if parent == current {
-			return errors.New("工作目录不存在")
-		}
-		current = parent
+func (s *FileService) ensureExecPathAncestorSafe(path string) error {
+	if _, err := s.ensureNoSymlinkInExistingComponents(path, true); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
 	}
+	_, err := s.ensureNoSymlinkInExistingComponents(path, false)
+	return err
 }
 
-func (s *FileService) ensureCanonicalInside(path string) (string, error) {
-	absPath, err := filepath.Abs(path)
+func (s *FileService) ensureNoSymlinkInExistingComponents(path string, requireTarget bool) (string, error) {
+	absPath, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return "", err
 	}
 	cleanPath := filepath.Clean(absPath)
+	if !isInsideBase(s.canonicalRoot, cleanPath) {
+		return "", errors.New("路径不能超出工作目录")
+	}
+
 	rel, err := filepath.Rel(s.canonicalRoot, cleanPath)
 	if err != nil {
 		return "", err
 	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return "", errors.New("路径真实目标不能超出工作目录")
+	current := s.canonicalRoot
+	if rel == "." {
+		if _, err := os.Lstat(current); err != nil {
+			return "", err
+		}
+		return current, nil
 	}
-	return cleanPath, nil
+	parts := strings.Split(rel, string(filepath.Separator))
+	for index, part := range parts {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if os.IsNotExist(err) && (!requireTarget || index < len(parts)-1) {
+				return current, nil
+			}
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", errors.New("路径不能包含符号链接")
+		}
+	}
+	return current, nil
 }
 
 func isInsideBase(base string, target string) bool {
@@ -285,6 +367,43 @@ func isInsideBase(base string, target string) bool {
 		return false
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+func execPathCandidates(arg string) []string {
+	candidates := make([]string, 0, 2)
+	if strings.HasPrefix(arg, "-") {
+		if index := strings.IndexAny(arg, "=:"); index >= 0 && index+1 < len(arg) {
+			value := arg[index+1:]
+			if isPathLike(value) {
+				candidates = append(candidates, value)
+			}
+		}
+		if len(arg) > 2 && isASCIILetter(arg[1]) && (arg[2] == '/' || arg[2] == '\\' || arg[2] == '.') {
+			candidates = append(candidates, arg[2:])
+		}
+		return candidates
+	}
+	if index := strings.IndexAny(arg, "=:"); index >= 0 && index+1 < len(arg) {
+		value := arg[index+1:]
+		if isPathLike(value) {
+			candidates = append(candidates, value)
+		}
+	}
+	if isPathLike(arg) || !strings.HasPrefix(arg, "-") {
+		candidates = append(candidates, arg)
+	}
+	return candidates
+}
+
+func isPathLike(value string) bool {
+	return strings.HasPrefix(value, "/") ||
+		strings.HasPrefix(value, ".") ||
+		strings.Contains(value, "/") ||
+		strings.Contains(value, "\\")
+}
+
+func isASCIILetter(value byte) bool {
+	return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z')
 }
 
 func (s *FileService) fileInfo(path string, info os.FileInfo) FileInfo {

@@ -57,7 +57,8 @@ func (e *Executor) Exec(ctx context.Context, req ExecRequest, emit func(ExecEven
 	}
 	defer cancel()
 
-	cmd := exec.CommandContext(execCtx, argv[0], argv[1:]...)
+	cmd := exec.Command(argv[0], argv[1:]...)
+	configureCommand(cmd)
 	if strings.TrimSpace(req.WorkingDir) != "" {
 		cmd.Dir = req.WorkingDir
 	}
@@ -81,11 +82,27 @@ func (e *Executor) Exec(ctx context.Context, req ExecRequest, emit func(ExecEven
 	go streamPipe(&wg, stdout, stdoutExcerpt, "stdout_delta", emit)
 	go streamPipe(&wg, stderr, stderrExcerpt, "stderr_delta", emit)
 
-	waitErr := cmd.Wait()
+	waitCh := make(chan error, 1)
+	go func() {
+		waitCh <- cmd.Wait()
+	}()
+
+	var waitErr error
+	select {
+	case waitErr = <-waitCh:
+	case <-execCtx.Done():
+		result.TimedOut = errors.Is(execCtx.Err(), context.DeadlineExceeded)
+		terminateCommand(cmd)
+		_ = stdout.Close()
+		_ = stderr.Close()
+		waitErr = <-waitCh
+	}
 	wg.Wait()
 
 	result.Duration = time.Since(startedAt)
-	result.TimedOut = errors.Is(execCtx.Err(), context.DeadlineExceeded)
+	if !result.TimedOut {
+		result.TimedOut = errors.Is(execCtx.Err(), context.DeadlineExceeded)
+	}
 	result.StdoutExcerpt = stdoutExcerpt.String()
 	result.StderrExcerpt = stderrExcerpt.String()
 	result.StdoutTruncated = stdoutExcerpt.Truncated()

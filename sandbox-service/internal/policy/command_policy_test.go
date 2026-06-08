@@ -10,6 +10,34 @@ func TestValidateCommandAllowsCommonCommands(t *testing.T) {
 	}
 }
 
+func TestValidateCommandRejectsBlankCommand(t *testing.T) {
+	policy := NewCommandPolicy(200, 60)
+	for _, command := range []string{"", "   ", "\t\n"} {
+		err := policy.Validate(CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30})
+		if err == nil {
+			t.Fatalf("expected %q to be rejected", command)
+		}
+	}
+}
+
+func TestValidateCommandRejectsNonPositiveTimeout(t *testing.T) {
+	policy := NewCommandPolicy(200, 60)
+	for _, timeoutSeconds := range []int{0, -1} {
+		err := policy.Validate(CommandRequest{Command: "pwd", WorkingDir: "/workspace", TimeoutSeconds: timeoutSeconds})
+		if err == nil {
+			t.Fatalf("expected timeout %d to be rejected", timeoutSeconds)
+		}
+	}
+}
+
+func TestValidateCommandRejectsTimeoutOverLimit(t *testing.T) {
+	policy := NewCommandPolicy(200, 60)
+	err := policy.Validate(CommandRequest{Command: "pwd", WorkingDir: "/workspace", TimeoutSeconds: 61})
+	if err == nil {
+		t.Fatal("expected timeout over maxTimeout to be rejected")
+	}
+}
+
 func TestValidateCommandRejectsDangerousKeywords(t *testing.T) {
 	policy := NewCommandPolicy(200, 60)
 	for _, command := range []string{"sudo whoami", "systemctl restart ssh", "mount /dev/sda /tmp/x"} {

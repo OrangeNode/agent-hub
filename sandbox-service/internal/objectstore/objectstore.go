@@ -27,3 +27,8 @@ type Uploader interface {
 type Downloader interface {
 	Download(req DownloadRequest) (io.ReadCloser, error)
 }
+
+type Store interface {
+	Uploader
+	Downloader
+}

@@ -2,7 +2,9 @@ package host
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -204,6 +206,80 @@ func TestCreateSessionRejectsEscapingRestoreArtifact(t *testing.T) {
 	}
 }
 
+func TestCreateSessionRestoresArtifactWithStorageFields(t *testing.T) {
+	content := "restored content"
+	sum := sha256.Sum256([]byte(content))
+	var written struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/files/content" {
+			t.Fatalf("unexpected guest request %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&written); err != nil {
+			t.Fatalf("Decode(guest write) error = %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer guest.Close()
+
+	downloader := &recordingDownloader{content: content}
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
+	body := bytes.NewBufferString(fmt.Sprintf(
+		`{"conversationId":"conversation-1","artifacts":[{"relativePath":"reports/out.txt","storageBucket":"bucket-a","storageKey":"objects/out.txt","sha256":"%x"}]}`,
+		sum,
+	))
+	req := httptest.NewRequest(http.MethodPost, "/internal/sandbox/sessions", body)
+	rec := httptest.NewRecorder()
+
+	NewRouterWithManager(manager, WithDownloader(downloader)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if len(downloader.downloads) != 1 {
+		t.Fatalf("downloads = %d, want 1", len(downloader.downloads))
+	}
+	if downloader.downloads[0].Bucket != "bucket-a" || downloader.downloads[0].Key != "objects/out.txt" {
+		t.Fatalf("download target = %#v", downloader.downloads[0])
+	}
+	if written.Path != "/workspace/artifacts/reports/out.txt" {
+		t.Fatalf("written path = %q", written.Path)
+	}
+	if written.Content != content {
+		t.Fatalf("written content = %q", written.Content)
+	}
+}
+
+func TestCreateSessionRejectsRestoreArtifactWithMismatchedSHA256(t *testing.T) {
+	guestCalled := false
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		guestCalled = true
+	}))
+	defer guest.Close()
+
+	downloader := &recordingDownloader{content: "restored content"}
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
+	body := bytes.NewBufferString(
+		`{"conversationId":"conversation-1","artifacts":[{"relativePath":"reports/out.txt","storageBucket":"bucket-a","storageKey":"objects/out.txt","sha256":"0000"}]}`,
+	)
+	req := httptest.NewRequest(http.MethodPost, "/internal/sandbox/sessions", body)
+	rec := httptest.NewRecorder()
+
+	NewRouterWithManager(manager, WithDownloader(downloader)).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if guestCalled {
+		t.Fatal("guest should not be called when sha256 mismatches")
+	}
+	if !strings.Contains(rec.Body.String(), "sha256") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
 func postJSON(t *testing.T, router http.Handler, path string, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(body))
@@ -239,10 +315,17 @@ func (u *recordingUploader) Upload(req objectstore.UploadRequest) error {
 }
 
 type recordingDownloader struct {
-	called bool
+	called    bool
+	content   string
+	downloads []objectstore.DownloadRequest
 }
 
 func (d *recordingDownloader) Download(req objectstore.DownloadRequest) (io.ReadCloser, error) {
 	d.called = true
-	return io.NopCloser(strings.NewReader("content")), nil
+	d.downloads = append(d.downloads, req)
+	content := d.content
+	if content == "" {
+		content = "content"
+	}
+	return io.NopCloser(strings.NewReader(content)), nil
 }

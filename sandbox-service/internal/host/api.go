@@ -2,6 +2,7 @@ package host
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -95,9 +96,12 @@ type createSessionRequest struct {
 }
 
 type restoreArtifact struct {
-	RelativePath string `json:"relativePath"`
-	Bucket       string `json:"bucket"`
-	Key          string `json:"key"`
+	RelativePath  string `json:"relativePath"`
+	StorageBucket string `json:"storageBucket"`
+	StorageKey    string `json:"storageKey"`
+	Bucket        string `json:"bucket"`
+	Key           string `json:"key"`
+	Sha256        string `json:"sha256"`
 }
 
 type createSessionResponse struct {
@@ -348,8 +352,8 @@ func (s *apiServer) restoreArtifacts(r *http.Request, session Session, artifacts
 		}
 		content, err := s.downloader.Download(objectstore.DownloadRequest{
 			Context: r.Context(),
-			Bucket: artifact.Bucket,
-			Key:    artifact.Key,
+			Bucket: artifact.downloadBucket(),
+			Key:    artifact.downloadKey(),
 		})
 		if err != nil {
 			return fmt.Errorf("下载恢复产物失败: %w", err)
@@ -362,11 +366,40 @@ func (s *apiServer) restoreArtifacts(r *http.Request, session Session, artifacts
 		if closeErr != nil {
 			return fmt.Errorf("关闭恢复产物失败: %w", closeErr)
 		}
+		if err := verifyRestoreArtifactSHA256(relativePath, artifact.Sha256, data); err != nil {
+			return err
+		}
 		if err := s.writeGuestFile(r, session, defaultArtifactPath+"/"+relativePath, data); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func verifyRestoreArtifactSHA256(relativePath string, expected string, data []byte) error {
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return nil
+	}
+	actual := sha256.Sum256(data)
+	if !strings.EqualFold(expected, fmt.Sprintf("%x", actual)) {
+		return fmt.Errorf("恢复产物 %s 的 sha256 校验失败", relativePath)
+	}
+	return nil
+}
+
+func (artifact restoreArtifact) downloadBucket() string {
+	if strings.TrimSpace(artifact.StorageBucket) != "" {
+		return strings.TrimSpace(artifact.StorageBucket)
+	}
+	return strings.TrimSpace(artifact.Bucket)
+}
+
+func (artifact restoreArtifact) downloadKey() string {
+	if strings.TrimSpace(artifact.StorageKey) != "" {
+		return strings.TrimSpace(artifact.StorageKey)
+	}
+	return strings.TrimSpace(artifact.Key)
 }
 
 func (s *apiServer) writeGuestFile(r *http.Request, session Session, guestPath string, content []byte) error {

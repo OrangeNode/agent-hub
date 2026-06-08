@@ -55,6 +55,13 @@ func TestResolveInputAllowsInputDirectory(t *testing.T) {
 	}
 }
 
+func TestResolveInputRejectsEmptyPath(t *testing.T) {
+	p := NewPathPolicy("/workspace")
+	if _, err := p.ResolveInput(""); err == nil {
+		t.Fatal("expected empty upload path to be rejected")
+	}
+}
+
 func TestResolveInputOnlyRejectsArtifacts(t *testing.T) {
 	p := NewPathPolicy("/workspace")
 	if _, err := p.ResolveInput("/workspace/artifacts/report.csv"); err == nil {

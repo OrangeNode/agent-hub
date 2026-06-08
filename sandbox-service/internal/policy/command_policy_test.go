@@ -22,6 +22,14 @@ func TestValidateCommandRejectsBlankCommand(t *testing.T) {
 	}
 }
 
+func TestValidateCommandRejectsCommandOverLengthLimit(t *testing.T) {
+	policy := NewCommandPolicy(3, 60)
+	err := policy.Validate(CommandRequest{Command: "pwd -L", WorkingDir: "/workspace", TimeoutSeconds: 30})
+	if err == nil {
+		t.Fatal("expected command over maxCommandLength to be rejected")
+	}
+}
+
 func TestValidateCommandRejectsNonPositiveTimeout(t *testing.T) {
 	policy := NewCommandPolicy(200, 60)
 	for _, timeoutSeconds := range []int{0, -1} {

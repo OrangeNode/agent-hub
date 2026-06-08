@@ -20,6 +20,16 @@ func TestValidateCommandRejectsDangerousKeywords(t *testing.T) {
 	}
 }
 
+func TestValidateCommandRejectsDangerousKeywordsWithShellSeparators(t *testing.T) {
+	policy := NewCommandPolicy(200, 60)
+	for _, command := range []string{"sudo\twhoami", "reboot; echo ok", "systemctl&&true", "service\nssh restart"} {
+		err := policy.Validate(CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30})
+		if err == nil {
+			t.Fatalf("expected %q to be rejected", command)
+		}
+	}
+}
+
 func TestValidateCommandRejectsDangerousPaths(t *testing.T) {
 	policy := NewCommandPolicy(200, 60)
 	for _, command := range []string{"rm -rf /", "cat /etc/passwd", "ls /proc"} {

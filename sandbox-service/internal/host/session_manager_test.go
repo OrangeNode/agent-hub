@@ -3,40 +3,45 @@ package host
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
 
 func TestSessionManagerReusesSessionForSameConversation(t *testing.T) {
+	baseTime := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+	now := baseTime
 	factory := &fakeVMFactory{}
 	manager := NewSessionManager(factory, 2, 5*time.Minute)
+	manager.setClockForTest(func() time.Time {
+		return now
+	})
 
 	first, err := manager.GetOrCreate("conversation-1")
 	if err != nil {
 		t.Fatalf("GetOrCreate() error = %v", err)
 	}
-	oldLastActiveAt := time.Now().Add(-time.Minute)
-	first.LastActiveAt = oldLastActiveAt
+	now = now.Add(time.Second)
 
 	second, err := manager.GetOrCreate("conversation-1")
 	if err != nil {
 		t.Fatalf("GetOrCreate() error = %v", err)
 	}
 
-	if first != second {
-		t.Fatal("expected same session for same conversation")
-	}
 	if first.ID == "" {
 		t.Fatal("expected session ID")
 	}
 	if first.ID != second.ID {
 		t.Fatalf("session ID changed: first=%q second=%q", first.ID, second.ID)
 	}
-	if factory.starts != 1 {
-		t.Fatalf("starts = %d", factory.starts)
+	if factory.StartCount() != 1 {
+		t.Fatalf("starts = %d", factory.StartCount())
 	}
-	if !second.LastActiveAt.After(oldLastActiveAt) {
-		t.Fatalf("LastActiveAt was not refreshed: %s", second.LastActiveAt)
+	if !first.LastActiveAt.Equal(baseTime) {
+		t.Fatalf("first LastActiveAt = %s", first.LastActiveAt)
+	}
+	if !second.LastActiveAt.Equal(now) {
+		t.Fatalf("second LastActiveAt = %s", second.LastActiveAt)
 	}
 	if !manager.HasSession(first.ID) {
 		t.Fatal("expected manager to have session")
@@ -48,8 +53,30 @@ func TestSessionManagerReusesSessionForSameConversation(t *testing.T) {
 	if !ok {
 		t.Fatal("expected Get() to find session")
 	}
-	if got != first {
+	if got.ID != first.ID {
 		t.Fatal("expected Get() to return the original session")
+	}
+}
+
+func TestSessionManagerReturnsSessionCopies(t *testing.T) {
+	manager := NewSessionManager(&fakeVMFactory{}, 1, 5*time.Minute)
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+
+	session.ConversationID = "modified"
+	session.LastActiveAt = time.Time{}
+
+	got, ok := manager.Get(session.ID)
+	if !ok {
+		t.Fatal("expected Get() to find session")
+	}
+	if got.ConversationID != "conversation-1" {
+		t.Fatalf("ConversationID = %q", got.ConversationID)
+	}
+	if got.LastActiveAt.IsZero() {
+		t.Fatal("LastActiveAt was modified through returned value")
 	}
 }
 
@@ -70,16 +97,20 @@ func TestSessionManagerRejectsWhenCapacityReached(t *testing.T) {
 }
 
 func TestSessionManagerReapsIdleSessionsAndStopsVM(t *testing.T) {
+	baseTime := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+	now := baseTime
 	vm := &fakeVM{id: "vm-1"}
 	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{vm}}, 1, 10*time.Millisecond)
+	manager.setClockForTest(func() time.Time {
+		return now
+	})
 
 	session, err := manager.GetOrCreate("conversation-1")
 	if err != nil {
 		t.Fatalf("GetOrCreate() error = %v", err)
 	}
-	session.LastActiveAt = time.Now().Add(-time.Second)
 
-	if err := manager.ReapIdle(time.Now()); err != nil {
+	if err := manager.ReapIdle(baseTime.Add(time.Second)); err != nil {
 		t.Fatalf("ReapIdle() error = %v", err)
 	}
 
@@ -89,8 +120,87 @@ func TestSessionManagerReapsIdleSessionsAndStopsVM(t *testing.T) {
 	if _, ok := manager.Get(session.ID); ok {
 		t.Fatal("expected idle session to be unavailable by session ID")
 	}
-	if vm.stops != 1 {
-		t.Fatalf("stops = %d", vm.stops)
+	if vm.StopCount() != 1 {
+		t.Fatalf("stops = %d", vm.StopCount())
+	}
+}
+
+func TestSessionManagerRefreshPreventsIdleReap(t *testing.T) {
+	baseTime := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+	now := baseTime
+	vm := &fakeVM{id: "vm-1"}
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{vm}}, 1, 10*time.Millisecond)
+	manager.setClockForTest(func() time.Time {
+		return now
+	})
+
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	now = baseTime.Add(9 * time.Millisecond)
+	if _, err := manager.GetOrCreate("conversation-1"); err != nil {
+		t.Fatalf("GetOrCreate(reuse) error = %v", err)
+	}
+
+	if err := manager.ReapIdle(baseTime.Add(15 * time.Millisecond)); err != nil {
+		t.Fatalf("ReapIdle() error = %v", err)
+	}
+
+	if !manager.HasSession(session.ID) {
+		t.Fatal("expected refreshed session to remain active")
+	}
+	if vm.StopCount() != 0 {
+		t.Fatalf("stops = %d", vm.StopCount())
+	}
+}
+
+func TestSessionManagerStopsDuplicateVMWhenConcurrentCreateWins(t *testing.T) {
+	factory := newBlockingFirstFactory()
+	manager := NewSessionManager(factory, 2, 5*time.Minute)
+
+	var first Session
+	var firstErr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		first, firstErr = manager.GetOrCreate("conversation-1")
+	}()
+
+	<-factory.firstStarted
+	var second Session
+	var secondErr error
+	secondDone := make(chan struct{})
+	go func() {
+		defer close(secondDone)
+		second, secondErr = manager.GetOrCreate("conversation-1")
+	}()
+
+	select {
+	case <-secondDone:
+	case <-time.After(100 * time.Millisecond):
+		factory.ReleaseFirst()
+		<-done
+		<-secondDone
+		t.Fatal("GetOrCreate held manager lock while starting VM")
+	}
+	if secondErr != nil {
+		t.Fatalf("GetOrCreate(second) error = %v", secondErr)
+	}
+	factory.ReleaseFirst()
+	<-done
+	if firstErr != nil {
+		t.Fatalf("GetOrCreate(first) error = %v", firstErr)
+	}
+
+	if first.ID != second.ID {
+		t.Fatalf("session ID mismatch: first=%q second=%q", first.ID, second.ID)
+	}
+	if factory.StartCount() != 2 {
+		t.Fatalf("starts = %d", factory.StartCount())
+	}
+	if factory.FirstVM().StopCount() != 1 {
+		t.Fatalf("duplicate VM stops = %d", factory.FirstVM().StopCount())
 	}
 }
 
@@ -125,6 +235,7 @@ func TestSessionManagerReturnsFactoryError(t *testing.T) {
 }
 
 type fakeVM struct {
+	mu    sync.Mutex
 	id    string
 	url   string
 	stops int
@@ -142,17 +253,28 @@ func (v *fakeVM) AgentURL() string {
 }
 
 func (v *fakeVM) Stop() error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.stops++
 	return nil
 }
 
+func (v *fakeVM) StopCount() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.stops
+}
+
 type fakeVMFactory struct {
+	mu     sync.Mutex
 	vms    []*fakeVM
 	err    error
 	starts int
 }
 
 func (f *fakeVMFactory) Start() (VM, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -161,4 +283,58 @@ func (f *fakeVMFactory) Start() (VM, error) {
 		return f.vms[f.starts-1], nil
 	}
 	return &fakeVM{id: fmt.Sprintf("vm-%d", f.starts)}, nil
+}
+
+func (f *fakeVMFactory) StartCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.starts
+}
+
+type blockingFirstFactory struct {
+	mu           sync.Mutex
+	starts       int
+	first        *fakeVM
+	firstStarted chan struct{}
+	releaseFirst chan struct{}
+}
+
+func newBlockingFirstFactory() *blockingFirstFactory {
+	return &blockingFirstFactory{
+		firstStarted: make(chan struct{}),
+		releaseFirst: make(chan struct{}),
+	}
+}
+
+func (f *blockingFirstFactory) Start() (VM, error) {
+	f.mu.Lock()
+	f.starts++
+	start := f.starts
+	vm := &fakeVM{id: fmt.Sprintf("vm-%d", start)}
+	if start == 1 {
+		f.first = vm
+	}
+	f.mu.Unlock()
+
+	if start == 1 {
+		close(f.firstStarted)
+		<-f.releaseFirst
+	}
+	return vm, nil
+}
+
+func (f *blockingFirstFactory) ReleaseFirst() {
+	close(f.releaseFirst)
+}
+
+func (f *blockingFirstFactory) StartCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.starts
+}
+
+func (f *blockingFirstFactory) FirstVM() *fakeVM {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.first
 }

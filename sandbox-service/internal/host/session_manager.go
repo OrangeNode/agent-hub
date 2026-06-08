@@ -34,6 +34,8 @@ type SessionManager struct {
 	sessions       map[string]*Session
 	byConversation map[string]string
 	nextID         int
+	starting       int
+	clock          func() time.Time
 }
 
 func NewSessionManager(factory VMFactory, maxActive int, idleTimeout time.Duration) *SessionManager {
@@ -47,29 +49,43 @@ func NewSessionManager(factory VMFactory, maxActive int, idleTimeout time.Durati
 		sessions:       make(map[string]*Session),
 		byConversation: make(map[string]string),
 		nextID:         1,
+		clock:          time.Now,
 	}
 }
 
-func (m *SessionManager) GetOrCreate(conversationID string) (*Session, error) {
+func (m *SessionManager) GetOrCreate(conversationID string) (Session, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	now := time.Now()
-	if sessionID, ok := m.byConversation[conversationID]; ok {
-		if session, ok := m.sessions[sessionID]; ok {
-			session.LastActiveAt = now
-			return session, nil
-		}
-		delete(m.byConversation, conversationID)
+	if session, ok := m.sessionByConversationLocked(conversationID); ok {
+		snapshot := m.touchLocked(session)
+		m.mu.Unlock()
+		return snapshot, nil
 	}
-	if m.maxActive > 0 && len(m.sessions) >= m.maxActive {
-		return nil, errors.New("当前沙箱会话数量已达到上限")
+	if m.maxActive > 0 && len(m.sessions)+m.starting >= m.maxActive {
+		m.mu.Unlock()
+		return Session{}, errors.New("当前沙箱会话数量已达到上限")
 	}
+	m.starting++
+	m.mu.Unlock()
 
 	vm, err := m.factory.Start()
 	if err != nil {
-		return nil, err
+		m.mu.Lock()
+		m.starting--
+		m.mu.Unlock()
+		return Session{}, err
 	}
+
+	m.mu.Lock()
+	m.starting--
+	if session, ok := m.sessionByConversationLocked(conversationID); ok {
+		snapshot := m.touchLocked(session)
+		m.mu.Unlock()
+		if err := vm.Stop(); err != nil {
+			return snapshot, fmt.Errorf("停止重复沙箱 VM 失败: %w", err)
+		}
+		return snapshot, nil
+	}
+
 	sessionID := fmt.Sprintf("sbx_%06d", m.nextID)
 	m.nextID++
 	session := &Session{
@@ -77,11 +93,13 @@ func (m *SessionManager) GetOrCreate(conversationID string) (*Session, error) {
 		ConversationID: conversationID,
 		VM:             vm,
 		AgentURL:       vm.AgentURL(),
-		LastActiveAt:   now,
+		LastActiveAt:   m.nowLocked(),
 	}
 	m.sessions[sessionID] = session
 	m.byConversation[conversationID] = sessionID
-	return session, nil
+	snapshot := *session
+	m.mu.Unlock()
+	return snapshot, nil
 }
 
 func (m *SessionManager) ReapIdle(now time.Time) error {
@@ -105,11 +123,14 @@ func (m *SessionManager) ReapIdle(now time.Time) error {
 	return errors.Join(errs...)
 }
 
-func (m *SessionManager) Get(sessionID string) (*Session, bool) {
+func (m *SessionManager) Get(sessionID string) (Session, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	session, ok := m.sessions[sessionID]
-	return session, ok
+	if !ok {
+		return Session{}, false
+	}
+	return *session, true
 }
 
 func (m *SessionManager) HasSession(id string) bool {
@@ -117,4 +138,35 @@ func (m *SessionManager) HasSession(id string) bool {
 	defer m.mu.Unlock()
 	_, ok := m.sessions[id]
 	return ok
+}
+
+func (m *SessionManager) sessionByConversationLocked(conversationID string) (*Session, bool) {
+	sessionID, ok := m.byConversation[conversationID]
+	if !ok {
+		return nil, false
+	}
+	session, ok := m.sessions[sessionID]
+	if !ok {
+		delete(m.byConversation, conversationID)
+		return nil, false
+	}
+	return session, true
+}
+
+func (m *SessionManager) touchLocked(session *Session) Session {
+	session.LastActiveAt = m.nowLocked()
+	return *session
+}
+
+func (m *SessionManager) nowLocked() time.Time {
+	if m.clock == nil {
+		return time.Now()
+	}
+	return m.clock()
+}
+
+func (m *SessionManager) setClockForTest(clock func() time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.clock = clock
 }

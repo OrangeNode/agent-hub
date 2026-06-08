@@ -8,8 +8,9 @@ type WarmPool struct {
 	factory    VMFactory
 	targetSize int
 
-	mu   sync.Mutex
-	pool []VM
+	mu       sync.Mutex
+	pool     []VM
+	starting int
 }
 
 func NewWarmPool(factory VMFactory, targetSize int) *WarmPool {
@@ -26,7 +27,10 @@ func NewWarmPool(factory VMFactory, targetSize int) *WarmPool {
 func (p *WarmPool) Fill() error {
 	for {
 		p.mu.Lock()
-		needed := p.targetSize - len(p.pool)
+		needed := p.targetSize - len(p.pool) - p.starting
+		if needed > 0 {
+			p.starting++
+		}
 		p.mu.Unlock()
 		if needed <= 0 {
 			return nil
@@ -34,10 +38,14 @@ func (p *WarmPool) Fill() error {
 
 		vm, err := p.factory.Start()
 		if err != nil {
+			p.mu.Lock()
+			p.starting--
+			p.mu.Unlock()
 			return err
 		}
 
 		p.mu.Lock()
+		p.starting--
 		if len(p.pool) < p.targetSize {
 			p.pool = append(p.pool, vm)
 			p.mu.Unlock()

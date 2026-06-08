@@ -47,17 +47,23 @@ func (f FirecrackerFactory) Start() (VM, error) {
 		agentURL = "http://127.0.0.1:8081"
 	}
 
-	return &FirecrackerVM{
+	vm := &FirecrackerVM{
 		id:       id,
 		agentURL: agentURL,
 		cmd:      cmd,
-	}, nil
+		runDir:   vmRunDir,
+		waitCh:   make(chan error, 1),
+	}
+	go vm.wait()
+	return vm, nil
 }
 
 type FirecrackerVM struct {
 	id       string
 	agentURL string
 	cmd      *exec.Cmd
+	runDir   string
+	waitCh   chan error
 
 	mu      sync.Mutex
 	stopped bool
@@ -84,13 +90,33 @@ func (v *FirecrackerVM) Stop() error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
+	select {
+	case err := <-v.waitCh:
+		if err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return fmt.Errorf("等待 Firecracker 进程退出失败: %w", err)
+		}
+		return nil
+	default:
+	}
+
 	if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return fmt.Errorf("停止 Firecracker 进程失败: %w", err)
 	}
-	if err := cmd.Wait(); err != nil && !errors.Is(err, os.ErrProcessDone) && !isExitError(err) {
+	if err := <-v.waitCh; err != nil && !errors.Is(err, os.ErrProcessDone) && !isExitError(err) {
 		return fmt.Errorf("等待 Firecracker 进程退出失败: %w", err)
 	}
 	return nil
+}
+
+func (v *FirecrackerVM) wait() {
+	err := v.cmd.Wait()
+	v.waitCh <- err
+	close(v.waitCh)
+	if v.runDir != "" {
+		go func() {
+			_ = os.RemoveAll(v.runDir)
+		}()
+	}
 }
 
 func isExitError(err error) bool {

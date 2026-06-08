@@ -40,7 +40,10 @@ func (p CommandPolicy) Validate(req CommandRequest) error {
 	if err != nil {
 		return err
 	}
-	if !allowedCommandNames[strings.ToLower(path.Base(cleanSlash(argv[0])))] {
+	if hasPathSeparator(argv[0]) {
+		return errors.New("命令入口不允许包含路径")
+	}
+	if !allowedCommandNames[strings.ToLower(argv[0])] {
 		return errors.New("命令不在允许列表中")
 	}
 	for _, arg := range argv[1:] {
@@ -100,17 +103,43 @@ func isForbiddenCommandChar(r rune) bool {
 }
 
 func hasDangerousPath(value string) bool {
-	cleaned := path.Clean(cleanSlash(strings.Trim(value, `"'`)))
+	cleanedValue := cleanSlash(strings.Trim(value, `"'`))
+	for i, r := range cleanedValue {
+		if r != '/' {
+			continue
+		}
+		if i != 0 && !isEmbeddedPathSeparator(cleanedValue[i-1]) {
+			continue
+		}
+		if isForbiddenAbsolutePath(cleanedValue[i:]) {
+			return true
+		}
+	}
+	return false
+}
+
+func isForbiddenAbsolutePath(value string) bool {
+	cleaned := path.Clean(value)
 	if cleaned == "/" {
 		return true
 	}
 	if cleaned == "/workspace" || strings.HasPrefix(cleaned, "/workspace/") {
 		return false
 	}
-	if strings.HasPrefix(cleaned, "/") {
+	return strings.HasPrefix(cleaned, "/")
+}
+
+func isEmbeddedPathSeparator(r byte) bool {
+	switch r {
+	case '=', ':':
 		return true
+	default:
+		return false
 	}
-	return false
+}
+
+func hasPathSeparator(value string) bool {
+	return strings.Contains(value, "/") || strings.Contains(value, "\\")
 }
 
 func isWorkspacePath(value string) bool {

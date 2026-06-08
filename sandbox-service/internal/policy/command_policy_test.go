@@ -70,7 +70,36 @@ func TestValidateCommandRejectsDangerousKeywordsWithShellSeparators(t *testing.T
 
 func TestValidateCommandRejectsDangerousPaths(t *testing.T) {
 	policy := NewCommandPolicy(200, 60)
-	for _, command := range []string{"rm -rf /", "cat /etc/passwd", `cat \etc\passwd`, "cat /e'tc'/passwd", "ls /proc"} {
+	for _, command := range []string{
+		"rm -rf /",
+		"cat /etc/passwd",
+		`cat \etc\passwd`,
+		"cat /e'tc'/passwd",
+		"ls /proc",
+		"go build -o=/etc/app",
+		"mvn -Dmaven.repo.local=/root/.m2",
+		"npm --prefix=/var/run install",
+	} {
+		err := policy.Validate(CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30})
+		if err == nil {
+			t.Fatalf("expected %q to be rejected", command)
+		}
+	}
+}
+
+func TestValidateCommandRejectsPathLikeEntrypoint(t *testing.T) {
+	policy := NewCommandPolicy(200, 60)
+	for _, command := range []string{"/workspace/python3 script.py", "/tmp/npm install", `..\node app.js`} {
+		err := policy.Validate(CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30})
+		if err == nil {
+			t.Fatalf("expected %q to be rejected", command)
+		}
+	}
+}
+
+func TestValidateCommandRejectsShellEntrypoint(t *testing.T) {
+	policy := NewCommandPolicy(200, 60)
+	for _, command := range []string{"sh -c ls", "bash -c ls", "zsh -c ls"} {
 		err := policy.Validate(CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30})
 		if err == nil {
 			t.Fatalf("expected %q to be rejected", command)

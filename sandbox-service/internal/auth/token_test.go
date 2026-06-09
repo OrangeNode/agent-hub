@@ -40,13 +40,28 @@ func TestRequireTokenAllowsLowercaseBearerScheme(t *testing.T) {
 	}
 }
 
-func TestRequireTokenRejectsMissingToken(t *testing.T) {
+func TestRequireTokenAllowsHealthWithoutToken(t *testing.T) {
+	called := false
+	handler := RequireToken("secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	res := httptest.NewRecorder()
+
+	handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/health", nil))
+
+	if res.Code != http.StatusNoContent || !called {
+		t.Fatalf("expected health handler to run without token, code=%d called=%v", res.Code, called)
+	}
+}
+
+func TestRequireTokenRejectsMissingTokenForInternalAPI(t *testing.T) {
 	handler := RequireToken("secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not run")
 	}))
 	res := httptest.NewRecorder()
 
-	handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/health", nil))
+	handler.ServeHTTP(res, httptest.NewRequest(http.MethodPost, "/internal/sandbox/sessions", nil))
 
 	if res.Code != http.StatusUnauthorized {
 		t.Fatalf("code = %d", res.Code)
@@ -60,7 +75,7 @@ func TestRequireTokenRejectsWrongToken(t *testing.T) {
 	handler := RequireToken("secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not run")
 	}))
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequest(http.MethodPost, "/internal/sandbox/sessions", nil)
 	req.Header.Set("Authorization", "Bearer wrong")
 	res := httptest.NewRecorder()
 
@@ -78,7 +93,7 @@ func TestRequireTokenRejectsMalformedAuthorization(t *testing.T) {
 	handler := RequireToken("secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not run")
 	}))
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := httptest.NewRequest(http.MethodPost, "/internal/sandbox/sessions", nil)
 	req.Header.Set("Authorization", "Basic secret")
 	res := httptest.NewRecorder()
 

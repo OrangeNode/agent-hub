@@ -19,3 +19,10 @@ coverage/
 
 backend/logs/
 .worktrees/
+
+sandbox-service/bin/
+sandbox-service/build/
+sandbox-service/logs/
+sandbox-service/run/
+sandbox-service/rootfs/
+sandbox-service/sandbox-service.pid

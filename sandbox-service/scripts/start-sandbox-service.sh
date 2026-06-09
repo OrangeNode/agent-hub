@@ -2,14 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-SERVICE_DIR="${PROJECT_DIR}/sandbox-service"
+SERVICE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-ROOTFS_DIR="${SANDBOX_ASSET_DIR:-${SCRIPT_DIR}/rootfs}"
-BIN_DIR="${SCRIPT_DIR}/bin"
-LOG_DIR="${SCRIPT_DIR}/logs"
-RUN_DIR="${SANDBOX_FIRECRACKER_RUN_DIR:-${SCRIPT_DIR}/run}"
-PID_FILE="${SANDBOX_SERVICE_PID_FILE:-${SCRIPT_DIR}/sandbox-service.pid}"
+ROOTFS_DIR="${SANDBOX_ASSET_DIR:-${SERVICE_DIR}/rootfs}"
+BIN_DIR="${SERVICE_DIR}/bin"
+LOG_DIR="${SERVICE_DIR}/logs"
+RUN_DIR="${SANDBOX_FIRECRACKER_RUN_DIR:-${SERVICE_DIR}/run}"
+PID_FILE="${SANDBOX_SERVICE_PID_FILE:-${SERVICE_DIR}/sandbox-service.pid}"
 LOG_FILE="${SANDBOX_SERVICE_LOG_FILE:-${LOG_DIR}/sandbox-service.log}"
 
 LISTEN_ADDR="${SANDBOX_LISTEN_ADDR:-:8090}"
@@ -55,7 +54,7 @@ check_executable() {
 
 check_port_free() {
   if command -v ss >/dev/null 2>&1 && ss -ltn "sport = :${LISTEN_PORT}" | grep -q ":${LISTEN_PORT}"; then
-    fail "端口 ${LISTEN_PORT} 已被占用，请先执行 sandbox/stop-sandbox-service.sh 或调整 SANDBOX_LISTEN_ADDR"
+    fail "端口 ${LISTEN_PORT} 已被占用，请先执行 sandbox-service/scripts/stop-sandbox-service.sh 或调整 SANDBOX_LISTEN_ADDR"
   fi
 }
 
@@ -125,9 +124,9 @@ export SANDBOX_NETWORK_ALLOW_CIDRS="${SANDBOX_NETWORK_ALLOW_CIDRS:-127.0.0.1/32}
 sudo_start_service
 START_PID=$!
 sleep 1
-SERVICE_PID="$(pgrep -x sandbox-service | head -1 || true)"
+SERVICE_PID="$(ps -eo pid=,comm=,args= | awk -v bin="${SERVICE_BIN}" '$2 == "sandbox-service" && index($0, bin) > 0 {print $1}' | sort -n | tail -1)"
 if [[ -z "${SERVICE_PID}" ]]; then
-	SERVICE_PID="${START_PID}"
+  SERVICE_PID="${START_PID}"
 fi
 echo "${SERVICE_PID}" >"${PID_FILE}"
 

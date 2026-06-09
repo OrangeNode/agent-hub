@@ -58,7 +58,7 @@ func (s *FileService) WriteFile(path string, content []byte, appendMode bool) er
 		return err
 	}
 	parent := filepath.Dir(target)
-	if err := s.ensureNoSymlinkInExistingComponents(parent, false); err != nil {
+	if _, err := s.ensureNoSymlinkInExistingComponents(parent, false); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(parent, 0o755); err != nil {

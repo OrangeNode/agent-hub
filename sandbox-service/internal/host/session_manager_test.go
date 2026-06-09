@@ -3,6 +3,7 @@ package host
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"sync"
 	"testing"
 	"time"
@@ -259,11 +260,39 @@ func TestSessionManagerGeneratesStableSequentialSessionIDs(t *testing.T) {
 		t.Fatalf("GetOrCreate(second) error = %v", err)
 	}
 
-	if first.ID != "sbx_000001" {
+	idPattern := regexp.MustCompile(`^sbx_[0-9a-f]{12}_[0-9]{6}$`)
+	if !idPattern.MatchString(first.ID) {
 		t.Fatalf("first.ID = %q", first.ID)
 	}
-	if second.ID != "sbx_000002" {
+	if !idPattern.MatchString(second.ID) {
 		t.Fatalf("second.ID = %q", second.ID)
+	}
+	if first.ID[:16] != second.ID[:16] {
+		t.Fatalf("session boot prefix changed: first=%q second=%q", first.ID, second.ID)
+	}
+	if first.ID[17:] != "000001" {
+		t.Fatalf("first sequence = %q", first.ID[17:])
+	}
+	if second.ID[17:] != "000002" {
+		t.Fatalf("second sequence = %q", second.ID[17:])
+	}
+}
+
+func TestSessionManagerGeneratesUniqueIDsAcrossManagers(t *testing.T) {
+	firstManager := NewSessionManager(&fakeVMFactory{}, 1, 5*time.Minute)
+	secondManager := NewSessionManager(&fakeVMFactory{}, 1, 5*time.Minute)
+
+	first, err := firstManager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate(first) error = %v", err)
+	}
+	second, err := secondManager.GetOrCreate("conversation-2")
+	if err != nil {
+		t.Fatalf("GetOrCreate(second) error = %v", err)
+	}
+
+	if first.ID == second.ID {
+		t.Fatalf("session IDs collided across managers: %q", first.ID)
 	}
 }
 

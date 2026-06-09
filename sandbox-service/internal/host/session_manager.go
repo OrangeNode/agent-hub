@@ -1,6 +1,8 @@
 package host
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sync"
@@ -37,6 +39,7 @@ type SessionManager struct {
 	nextID         int
 	starting       int
 	clock          func() time.Time
+	runtimeID      string
 }
 
 func NewSessionManager(factory VMFactory, maxActive int, idleTimeout time.Duration) *SessionManager {
@@ -52,6 +55,7 @@ func NewSessionManager(factory VMFactory, maxActive int, idleTimeout time.Durati
 		activeUses:     make(map[string]int),
 		nextID:         1,
 		clock:          time.Now,
+		runtimeID:      newRuntimeID(),
 	}
 }
 
@@ -88,7 +92,7 @@ func (m *SessionManager) GetOrCreate(conversationID string) (Session, error) {
 		return snapshot, nil
 	}
 
-	sessionID := fmt.Sprintf("sbx_%06d", m.nextID)
+	sessionID := fmt.Sprintf("sbx_%s_%06d", m.runtimeID, m.nextID)
 	m.nextID++
 	session := &Session{
 		ID:             sessionID,
@@ -199,4 +203,12 @@ func (m *SessionManager) setClockForTest(clock func() time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.clock = clock
+}
+
+func newRuntimeID() string {
+	bytes := make([]byte, 6)
+	if _, err := rand.Read(bytes); err == nil {
+		return hex.EncodeToString(bytes)
+	}
+	return fmt.Sprintf("%012x", time.Now().UnixNano()&0xffffffffffff)
 }

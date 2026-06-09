@@ -97,6 +97,38 @@ func TestSessionManagerRejectsWhenCapacityReached(t *testing.T) {
 	}
 }
 
+func TestSessionManagerReapsIdleBeforeCapacityCheck(t *testing.T) {
+	baseTime := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
+	now := baseTime
+	vm := &fakeVM{id: "vm-1"}
+	factory := &fakeVMFactory{vms: []*fakeVM{vm, &fakeVM{id: "vm-2"}}}
+	manager := NewSessionManager(factory, 1, 10*time.Millisecond)
+	manager.setClockForTest(func() time.Time {
+		return now
+	})
+
+	first, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate(first) error = %v", err)
+	}
+	now = baseTime.Add(time.Second)
+
+	second, err := manager.GetOrCreate("conversation-2")
+	if err != nil {
+		t.Fatalf("GetOrCreate(second) error = %v", err)
+	}
+
+	if first.ID == second.ID {
+		t.Fatalf("expected a new session after idle reap, got %q", second.ID)
+	}
+	if manager.HasSession(first.ID) {
+		t.Fatal("expected first session to be reaped")
+	}
+	if vm.StopCount() != 1 {
+		t.Fatalf("stops = %d, want 1", vm.StopCount())
+	}
+}
+
 func TestSessionManagerReapsIdleSessionsAndStopsVM(t *testing.T) {
 	baseTime := time.Date(2026, 6, 8, 10, 0, 0, 0, time.UTC)
 	now := baseTime

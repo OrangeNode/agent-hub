@@ -10,6 +10,7 @@ import com.agenthub.sandbox.session.entity.SandboxSession;
 import com.agenthub.sandbox.session.mapper.SandboxSessionMapper;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Locale;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -46,11 +47,18 @@ public class SandboxSessionServiceImpl implements SandboxSessionService {
         if (response == null || response.sandboxSessionId() == null || response.sandboxSessionId().isBlank()) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "沙箱会话创建失败");
         }
+        SandboxSession persisted = sessionMapper.selectBySandboxSessionId(response.sandboxSessionId());
+        if (persisted != null) {
+            persisted.setStatus(normalizeStatus(response.status()));
+            persisted.setLastActiveAt(OffsetDateTime.now());
+            sessionMapper.updateById(persisted);
+            return persisted.getSandboxSessionId();
+        }
         SandboxSession session = new SandboxSession();
         session.setUserId(userId);
         session.setConversationId(conversationId);
         session.setSandboxSessionId(response.sandboxSessionId());
-        session.setStatus(response.status() == null || response.status().isBlank() ? STATUS_READY : response.status());
+        session.setStatus(normalizeStatus(response.status()));
         session.setImage(DEFAULT_IMAGE);
         session.setVcpu(DEFAULT_VCPU);
         session.setMemoryMb(DEFAULT_MEMORY_MB);
@@ -59,5 +67,12 @@ public class SandboxSessionServiceImpl implements SandboxSessionService {
         session.setLastActiveAt(session.getCreatedAt());
         sessionMapper.insert(session);
         return session.getSandboxSessionId();
+    }
+
+    private String normalizeStatus(String status) {
+        if (status == null || status.isBlank()) {
+            return STATUS_READY;
+        }
+        return status.trim().toUpperCase(Locale.ROOT);
     }
 }

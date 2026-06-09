@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"agent-hub/sandbox-service/internal/auth"
 	"agent-hub/sandbox-service/internal/config"
@@ -17,12 +19,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	log.Printf("sandbox-service 配置加载完成: listen=%s vmMode=%s warmPool=%d maxActive=%d",
+		cfg.ListenAddr, cfg.VMMode, cfg.WarmPoolSize, cfg.MaxActiveSessions)
 
-	factory := host.FirecrackerFactory{
-		VMCpu:      cfg.VMCpu,
-		VMMemoryMB: cfg.VMMemoryMB,
-		VMDiskGB:   cfg.VMDiskGB,
+	factory, err := newVMFactory(cfg)
+	if err != nil {
+		log.Fatal(err)
 	}
+	log.Printf("sandbox-service VM 工厂已初始化: mode=%s", cfg.VMMode)
 	warmPool := host.NewWarmPool(factory, cfg.WarmPoolSize)
 	manager := host.NewSessionManager(warmPoolFactory{pool: warmPool}, cfg.MaxActiveSessions, cfg.IdleTimeout)
 	syncer := host.NewArtifactSyncer(cfg.ObjectBucket)
@@ -42,8 +46,35 @@ func main() {
 		host.WithUploader(store),
 		host.WithDownloader(store),
 	))
+	log.Printf("sandbox-service 开始监听: %s", cfg.ListenAddr)
 	if err := http.ListenAndServe(cfg.ListenAddr, handler); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func newVMFactory(cfg config.Config) (host.VMFactory, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.VMMode)) {
+	case "", "firecracker":
+		log.Printf("使用 Firecracker VM: bin=%s kernel=%s rootfs=%s runDir=%s guestCIDR=%s tapPrefix=%s",
+			cfg.FirecrackerBinaryPath, cfg.FirecrackerKernelPath, cfg.FirecrackerRootfsPath,
+			cfg.FirecrackerRunDir, cfg.GuestNetworkCIDR, cfg.TapNamePrefix)
+		return &host.FirecrackerFactory{
+			BinaryPath:       cfg.FirecrackerBinaryPath,
+			RunDir:           cfg.FirecrackerRunDir,
+			KernelImagePath:  cfg.FirecrackerKernelPath,
+			RootDrivePath:    cfg.FirecrackerRootfsPath,
+			GuestAgentPort:   cfg.GuestAgentPort,
+			GuestNetworkCIDR: cfg.GuestNetworkCIDR,
+			TapNamePrefix:    cfg.TapNamePrefix,
+			VMCpu:            cfg.VMCpu,
+			VMMemoryMB:       cfg.VMMemoryMB,
+			VMDiskGB:         cfg.VMDiskGB,
+		}, nil
+	case "dev-agent":
+		log.Printf("使用 dev-agent 模式: agentURL=%s", cfg.GuestAgentURL)
+		return &staticAgentFactory{agentURL: cfg.GuestAgentURL}, nil
+	default:
+		return nil, fmt.Errorf("不支持的 SANDBOX_VM_MODE: %s", cfg.VMMode)
 	}
 }
 
@@ -67,4 +98,34 @@ type warmPoolFactory struct {
 
 func (f warmPoolFactory) Start() (host.VM, error) {
 	return f.pool.Acquire()
+}
+
+type staticAgentFactory struct {
+	agentURL string
+	nextID   int
+}
+
+func (f *staticAgentFactory) Start() (host.VM, error) {
+	if strings.TrimSpace(f.agentURL) == "" {
+		f.agentURL = "http://127.0.0.1:8081"
+	}
+	f.nextID++
+	return staticAgentVM{id: fmt.Sprintf("dev-agent-%d", f.nextID), agentURL: f.agentURL}, nil
+}
+
+type staticAgentVM struct {
+	id       string
+	agentURL string
+}
+
+func (v staticAgentVM) ID() string {
+	return v.id
+}
+
+func (v staticAgentVM) AgentURL() string {
+	return v.agentURL
+}
+
+func (v staticAgentVM) Stop() error {
+	return nil
 }

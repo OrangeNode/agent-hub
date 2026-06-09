@@ -39,8 +39,9 @@ class SandboxSessionServiceImplTest {
         SandboxClient sandboxClient = mock(SandboxClient.class);
         SandboxSessionMapper sessionMapper = mock(SandboxSessionMapper.class);
         when(sessionMapper.selectActiveByConversation(7L, 100L)).thenReturn(null);
+        when(sessionMapper.selectBySandboxSessionId("sbx_new")).thenReturn(null);
         when(sandboxClient.createSession(any(CreateSandboxSessionRequest.class)))
-                .thenReturn(new CreateSandboxSessionResponse("sbx_new", "READY"));
+                .thenReturn(new CreateSandboxSessionResponse("sbx_new", "ready"));
         SandboxSessionServiceImpl service = new SandboxSessionServiceImpl(sandboxClient, sessionMapper);
 
         String sandboxSessionId = service.ensureSession(7L, 100L);
@@ -57,10 +58,29 @@ class SandboxSessionServiceImplTest {
         assertThat(inserted.getUserId()).isEqualTo(7L);
         assertThat(inserted.getConversationId()).isEqualTo(100L);
         assertThat(inserted.getSandboxSessionId()).isEqualTo("sbx_new");
+        assertThat(inserted.getStatus()).isEqualTo("READY");
         assertThat(inserted.getImage()).isEqualTo("minimal");
         assertThat(inserted.getVcpu()).isEqualTo(1);
         assertThat(inserted.getMemoryMb()).isEqualTo(1024);
         assertThat(inserted.getDiskGb()).isEqualTo(5);
+    }
+
+    @Test
+    void shouldReusePersistedRuntimeSessionWhenSandboxServiceReturnsExistingId() {
+        SandboxClient sandboxClient = mock(SandboxClient.class);
+        SandboxSessionMapper sessionMapper = mock(SandboxSessionMapper.class);
+        SandboxSession existing = session("sbx_existing");
+        when(sessionMapper.selectActiveByConversation(7L, 100L)).thenReturn(null);
+        when(sandboxClient.createSession(any(CreateSandboxSessionRequest.class)))
+                .thenReturn(new CreateSandboxSessionResponse("sbx_existing", "ready"));
+        when(sessionMapper.selectBySandboxSessionId("sbx_existing")).thenReturn(existing);
+        SandboxSessionServiceImpl service = new SandboxSessionServiceImpl(sandboxClient, sessionMapper);
+
+        String sandboxSessionId = service.ensureSession(7L, 100L);
+
+        assertThat(sandboxSessionId).isEqualTo("sbx_existing");
+        verify(sessionMapper).updateById(existing);
+        verify(sessionMapper, never()).insert(any(SandboxSession.class));
     }
 
     private SandboxSession session(String sandboxSessionId) {

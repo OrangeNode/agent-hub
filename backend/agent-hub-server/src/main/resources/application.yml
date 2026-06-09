@@ -34,6 +34,9 @@ agent-hub:
     presigned-read-ttl-minutes: ${AGENT_HUB_STORAGE_PRESIGNED_READ_TTL_MINUTES:10}
     pending-cleanup-minutes: ${AGENT_HUB_STORAGE_PENDING_CLEANUP_MINUTES:60}
     unused-ready-cleanup-hours: ${AGENT_HUB_STORAGE_UNUSED_READY_CLEANUP_HOURS:24}
+  sandbox:
+    base-url: ${AGENT_HUB_SANDBOX_BASE_URL:http://172.16.112.183:8090}
+    internal-token: ${AGENT_HUB_SANDBOX_INTERNAL_TOKEN:dev-sandbox-token}
   logging:
     path: logs/agent-hub
     access-log-enabled: true

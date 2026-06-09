@@ -22,7 +22,7 @@ public interface SandboxSessionMapper extends BaseMapper<SandboxSession> {
             from sandbox_session
             where user_id = #{userId}
               and conversation_id = #{conversationId}
-              and status in ('READY', 'RUNNING')
+              and status in ('READY', 'RUNNING', 'ready', 'running')
             order by last_active_at desc, id desc
             limit 1
             """)

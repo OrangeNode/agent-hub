@@ -11,23 +11,32 @@ import (
 )
 
 type Config struct {
-	ListenAddr        string
-	InternalToken     string
-	WarmPoolSize      int
-	MaxActiveSessions int
-	IdleTimeout       time.Duration
-	VMCpu             int
-	VMMemoryMB        int
-	VMDiskGB          int
-	ExecTimeout       time.Duration
-	StdoutMaxBytes    int
-	StderrMaxBytes    int
-	ObjectEndpoint    string
-	ObjectAccessKey   string
-	ObjectSecretKey   string
-	ObjectBucket      string
-	ObjectSecure      bool
-	NetworkAllowCIDRs []string
+	ListenAddr            string
+	InternalToken         string
+	VMMode                string
+	WarmPoolSize          int
+	MaxActiveSessions     int
+	IdleTimeout           time.Duration
+	VMCpu                 int
+	VMMemoryMB            int
+	VMDiskGB              int
+	FirecrackerBinaryPath string
+	FirecrackerKernelPath string
+	FirecrackerRootfsPath string
+	FirecrackerRunDir     string
+	GuestAgentURL         string
+	GuestAgentPort        int
+	GuestNetworkCIDR      string
+	TapNamePrefix         string
+	ExecTimeout           time.Duration
+	StdoutMaxBytes        int
+	StderrMaxBytes        int
+	ObjectEndpoint        string
+	ObjectAccessKey       string
+	ObjectSecretKey       string
+	ObjectBucket          string
+	ObjectSecure          bool
+	NetworkAllowCIDRs     []string
 }
 
 func Load() (Config, error) {
@@ -45,6 +54,14 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	vmDiskGB, err := positiveIntEnv("SANDBOX_VM_DISK_GB", 5)
+	if err != nil {
+		return Config{}, err
+	}
+	guestAgentPort, err := positiveIntEnv("SANDBOX_GUEST_AGENT_PORT", 8081)
+	if err != nil {
+		return Config{}, err
+	}
+	guestNetworkCIDR, err := ipv4CIDREnv("SANDBOX_GUEST_NETWORK_CIDR", "172.16.200.0/24")
 	if err != nil {
 		return Config{}, err
 	}
@@ -82,23 +99,32 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		ListenAddr:        stringEnv("SANDBOX_LISTEN_ADDR", ":8090"),
-		InternalToken:     token,
-		WarmPoolSize:      warmPoolSize,
-		MaxActiveSessions: maxActiveSessions,
-		IdleTimeout:       idleTimeout,
-		VMCpu:             vmCpu,
-		VMMemoryMB:        vmMemoryMB,
-		VMDiskGB:          vmDiskGB,
-		ExecTimeout:       time.Duration(execTimeoutSeconds) * time.Second,
-		StdoutMaxBytes:    stdoutMaxBytes,
-		StderrMaxBytes:    stderrMaxBytes,
-		ObjectEndpoint:    stringEnv("SANDBOX_OBJECT_ENDPOINT", "127.0.0.1:9000"),
-		ObjectAccessKey:   stringEnv("SANDBOX_OBJECT_ACCESS_KEY", "agenthub"),
-		ObjectSecretKey:   stringEnv("SANDBOX_OBJECT_SECRET_KEY", "agenthub123"),
-		ObjectBucket:      stringEnv("SANDBOX_OBJECT_BUCKET", "agent-hub-sandbox-artifacts"),
-		ObjectSecure:      objectSecure,
-		NetworkAllowCIDRs: networkAllowCIDRs,
+		ListenAddr:            stringEnv("SANDBOX_LISTEN_ADDR", ":8090"),
+		InternalToken:         token,
+		VMMode:                stringEnv("SANDBOX_VM_MODE", "firecracker"),
+		WarmPoolSize:          warmPoolSize,
+		MaxActiveSessions:     maxActiveSessions,
+		IdleTimeout:           idleTimeout,
+		VMCpu:                 vmCpu,
+		VMMemoryMB:            vmMemoryMB,
+		VMDiskGB:              vmDiskGB,
+		FirecrackerBinaryPath: stringEnv("SANDBOX_FIRECRACKER_BIN", "firecracker"),
+		FirecrackerKernelPath: stringEnv("SANDBOX_KERNEL_IMAGE", ""),
+		FirecrackerRootfsPath: stringEnv("SANDBOX_ROOTFS_IMAGE", ""),
+		FirecrackerRunDir:     stringEnv("SANDBOX_FIRECRACKER_RUN_DIR", "/var/lib/agent-hub-sandbox/run"),
+		GuestAgentURL:         stringEnv("SANDBOX_GUEST_AGENT_URL", "http://127.0.0.1:8081"),
+		GuestAgentPort:        guestAgentPort,
+		GuestNetworkCIDR:      guestNetworkCIDR,
+		TapNamePrefix:         stringEnv("SANDBOX_TAP_NAME_PREFIX", "tap-ah"),
+		ExecTimeout:           time.Duration(execTimeoutSeconds) * time.Second,
+		StdoutMaxBytes:        stdoutMaxBytes,
+		StderrMaxBytes:        stderrMaxBytes,
+		ObjectEndpoint:        stringEnv("SANDBOX_OBJECT_ENDPOINT", "127.0.0.1:9000"),
+		ObjectAccessKey:       stringEnv("SANDBOX_OBJECT_ACCESS_KEY", "agenthub"),
+		ObjectSecretKey:       stringEnv("SANDBOX_OBJECT_SECRET_KEY", "agenthub123"),
+		ObjectBucket:          stringEnv("SANDBOX_OBJECT_BUCKET", "agent-hub-sandbox-artifacts"),
+		ObjectSecure:          objectSecure,
+		NetworkAllowCIDRs:     networkAllowCIDRs,
 	}, nil
 }
 
@@ -196,4 +222,16 @@ func cidrListEnv(name string, defaultValue []string) ([]string, error) {
 		}
 	}
 	return values, nil
+}
+
+func ipv4CIDREnv(name string, defaultValue string) (string, error) {
+	value := stringEnv(name, defaultValue)
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil {
+		return "", fmt.Errorf("%s 配置无效: %w", name, err)
+	}
+	if !prefix.Addr().Is4() {
+		return "", fmt.Errorf("%s 当前只支持 IPv4 CIDR", name)
+	}
+	return value, nil
 }

@@ -61,6 +61,14 @@ func NewSessionManager(factory VMFactory, maxActive int, idleTimeout time.Durati
 
 func (m *SessionManager) GetOrCreate(conversationID string) (Session, error) {
 	m.mu.Lock()
+	idle := m.collectIdleLocked(m.nowLocked())
+	if len(idle) > 0 {
+		m.mu.Unlock()
+		if err := stopVMs(idle); err != nil {
+			return Session{}, err
+		}
+		m.mu.Lock()
+	}
 	if session, ok := m.sessionByConversationLocked(conversationID); ok {
 		snapshot := m.touchLocked(session)
 		m.mu.Unlock()
@@ -110,6 +118,13 @@ func (m *SessionManager) GetOrCreate(conversationID string) (Session, error) {
 
 func (m *SessionManager) ReapIdle(now time.Time) error {
 	m.mu.Lock()
+	idle := m.collectIdleLocked(now)
+	m.mu.Unlock()
+
+	return stopVMs(idle)
+}
+
+func (m *SessionManager) collectIdleLocked(now time.Time) []VM {
 	var idle []VM
 	for id, session := range m.sessions {
 		if m.activeUses[id] > 0 {
@@ -122,10 +137,12 @@ func (m *SessionManager) ReapIdle(now time.Time) error {
 			delete(m.activeUses, id)
 		}
 	}
-	m.mu.Unlock()
+	return idle
+}
 
+func stopVMs(vms []VM) error {
 	var errs []error
-	for _, vm := range idle {
+	for _, vm := range vms {
 		if err := vm.Stop(); err != nil {
 			errs = append(errs, err)
 		}

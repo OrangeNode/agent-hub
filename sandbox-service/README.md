@@ -90,6 +90,10 @@ export SANDBOX_SUDO_PASSWORD=123123
 - `SANDBOX_FIRECRACKER_RUN_DIR`：每个 VM 的 socket、日志和 rootfs 副本目录，默认 `sandbox-service/run`，不要放在空间较小的 `/var/run` tmpfs。
 - `SANDBOX_GUEST_NETWORK_CIDR`：为 microVM 分配 `/30` 子网的地址池，默认 `172.16.200.0/24`。
 - `SANDBOX_TAP_NAME_PREFIX`：tap 设备名前缀，默认 `tap-ah`。
+- `SANDBOX_OBJECT_ENDPOINT`：沙箱产物对象存储地址，默认 `127.0.0.1:9000`。
+- `SANDBOX_OBJECT_ACCESS_KEY` / `SANDBOX_OBJECT_SECRET_KEY`：对象存储访问凭证，默认与 `docker/env/minio.env` 一致。
+- `SANDBOX_OBJECT_BUCKET`：沙箱产物 bucket，默认 `agent-hub-sandbox-artifacts`。
+- `SANDBOX_OBJECT_LOCAL_DIR`：仅用于本地调试；显式配置后沙箱产物会写入本地目录，此时 Java 后端无法通过 MinIO 预览这些产物。
 
 `sandbox-service` 会为每个 microVM 创建独立运行目录、复制 rootfs 镜像、创建 tap 设备，通过 Firecracker API 配置 machine、boot source、root drive 和网络设备，然后等待 microVM 内 `sandbox-agent /health` 就绪。
 

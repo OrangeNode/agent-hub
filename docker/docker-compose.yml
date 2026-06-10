@@ -76,6 +76,7 @@ services:
       - |
         mc alias set agent-hub http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
         mc mb --ignore-existing "agent-hub/$$MINIO_BUCKET_CHAT_IMAGES"
+        mc mb --ignore-existing "agent-hub/$$MINIO_BUCKET_SANDBOX_ARTIFACTS"
         cat > /tmp/chat-image-cors.xml <<EOF
         <CORSConfiguration>
           <CORSRule>

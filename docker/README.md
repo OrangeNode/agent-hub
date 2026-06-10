@@ -90,7 +90,8 @@ docker compose down
 - API 端口：`9000`
 - Console 端口：`9001`
 - 聊天图片 bucket 名称来自 `MINIO_BUCKET_CHAT_IMAGES`，默认值为 `agent-hub-chat-images`
-- `minio-init` 会在 MinIO 健康后创建 bucket，并配置 `MINIO_IMAGE_EXPIRE_DAYS` 指定的生命周期规则，默认 7 天后过期清理
+- 沙箱产物 bucket 名称来自 `MINIO_BUCKET_SANDBOX_ARTIFACTS`，默认值为 `agent-hub-sandbox-artifacts`
+- `minio-init` 会在 MinIO 健康后创建这两个 bucket，并为聊天图片 bucket 配置 `MINIO_IMAGE_EXPIRE_DAYS` 指定的生命周期规则，默认 7 天后过期清理
 - bucket 默认不公开读
 - 前端上传图片和模型读取图片都通过后端签发的短期预签名 URL 完成
 - 云模型读取图片时，后端 `agent-hub.storage.public-endpoint` 必须配置为模型可访问的公网或内网地址

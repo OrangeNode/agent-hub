@@ -5,7 +5,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"agent-hub/sandbox-service/internal/auth"
@@ -79,17 +78,7 @@ func newVMFactory(cfg config.Config) (host.VMFactory, error) {
 }
 
 func defaultObjectStoreRoot() string {
-	if value := os.Getenv("SANDBOX_OBJECT_LOCAL_DIR"); value != "" {
-		return value
-	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		return filepath.Join("sandbox-service", "build", "objectstore")
-	}
-	if filepath.Base(cwd) == "sandbox-service" {
-		return filepath.Join(cwd, "build", "objectstore")
-	}
-	return filepath.Join(cwd, "sandbox-service", "build", "objectstore")
+	return strings.TrimSpace(os.Getenv("SANDBOX_OBJECT_LOCAL_DIR"))
 }
 
 type warmPoolFactory struct {

@@ -1,6 +1,6 @@
-//go:build minio
-
 package objectstore
+
+import "strings"
 
 type DefaultStoreConfig struct {
 	Endpoint  string
@@ -11,6 +11,9 @@ type DefaultStoreConfig struct {
 }
 
 func NewDefaultStore(cfg DefaultStoreConfig) (Store, error) {
+	if strings.TrimSpace(cfg.LocalDir) != "" {
+		return NewFilesystemStore(cfg.LocalDir)
+	}
 	return NewMinioStore(MinioConfig{
 		Endpoint:  cfg.Endpoint,
 		AccessKey: cfg.AccessKey,

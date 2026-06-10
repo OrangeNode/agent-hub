@@ -3,26 +3,30 @@ package com.agenthub.sandbox.policy;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 public class CommandPolicy {
 
+    private static final String WORKSPACE_ROOT = "/workspace";
+    private static final String INPUT_DIR = "/workspace/input";
+    private static final String ARTIFACTS_DIR = "/workspace/artifacts";
+    private static final String OUTPUT_DIR = "/workspace/output";
+    private static final Pattern COMMAND_TOKEN_SEPARATOR = Pattern.compile("[\\s;|&<>\"'`$(){}\\[\\],]+");
     private static final List<String> DANGEROUS_KEYWORDS = List.of(
             "shutdown", "reboot", "poweroff", "halt", "mount", "umount",
             "modprobe", "insmod", "sysctl", "sudo", "su", "systemctl", "service"
     );
-    private static final List<String> DANGEROUS_PATHS = List.of(
-            "rm -rf /", "rm -rf /*", "/etc", "/proc", "/sys", "/dev", "/root"
-    );
     private static final Set<String> ALLOWED_COMMANDS = Set.of(
-            "python", "python3", "node", "npm", "cat", "ls", "pwd", "find",
-            "grep", "sed", "awk", "head", "tail", "wc", "sort", "uniq",
-            "mkdir", "cp", "mv", "touch", "echo", "zip", "unzip", "tar"
+            "sh", "bash", "python", "python3", "node", "npm", "npx", "pip", "pip3",
+            "go", "java", "javac", "mvn", "gradle", "cat", "ls", "pwd", "find",
+            "grep", "sed", "awk", "head", "tail", "wc", "sort", "uniq", "printf",
+            "mkdir", "cp", "mv", "rm", "touch", "chmod", "echo", "zip", "unzip", "tar"
     );
-    private static final Set<String> SHELL_COMMANDS = Set.of("sh", "bash", "zsh", "fish", "powershell", "cmd");
 
     private final int maxCommandLength;
     private final int maxTimeoutSeconds;
@@ -43,30 +47,34 @@ public class CommandPolicy {
         if (timeoutSeconds <= 0 || timeoutSeconds > maxTimeoutSeconds) {
             throw new BusinessException(ErrorCode.COMMAND_TIMEOUT, "命令超时时间超过限制");
         }
-        rejectShellSyntax(command);
+        rejectDangerousContent(command);
         String[] parts = command.strip().split("\\s+");
         String entrypoint = parts.length == 0 ? "" : parts[0];
-        if (entrypoint.contains("/") || entrypoint.contains("\\") || SHELL_COMMANDS.contains(entrypoint)
-                || !ALLOWED_COMMANDS.contains(entrypoint)) {
+        if (entrypoint.contains("/") || entrypoint.contains("\\") || !ALLOWED_COMMANDS.contains(entrypoint)) {
             throw new BusinessException(ErrorCode.COMMAND_DENIED, "命令未通过安全校验");
-        }
-        validateArgumentPaths(parts);
-        String normalized = " " + command.toLowerCase(Locale.ROOT) + " ";
-        for (String keyword : DANGEROUS_KEYWORDS) {
-            if (normalized.contains(" " + keyword + " ")) {
-                throw new BusinessException(ErrorCode.COMMAND_DENIED, "命令包含禁止的操作");
-            }
-        }
-        for (String path : DANGEROUS_PATHS) {
-            if (normalized.contains(path)) {
-                throw new BusinessException(ErrorCode.COMMAND_DENIED, "命令包含禁止访问的路径");
-            }
         }
     }
 
+    private void rejectDangerousContent(String command) {
+        if (command.indexOf('\0') >= 0) {
+            throw new BusinessException(ErrorCode.COMMAND_DENIED, "命令未通过安全校验");
+        }
+        String normalized = command.replace('\\', '/');
+        String compact = removeQuotes(normalized).toLowerCase(Locale.ROOT);
+        for (String keyword : DANGEROUS_KEYWORDS) {
+            if (containsWord(compact, keyword)) {
+                throw new BusinessException(ErrorCode.COMMAND_DENIED, "命令包含禁止的操作");
+            }
+        }
+        validateArgumentPaths(COMMAND_TOKEN_SEPARATOR.split(compact));
+    }
+
     private void validateArgumentPaths(String[] parts) {
-        for (int i = 1; i < parts.length; i++) {
-            for (String candidate : pathCandidates(parts[i])) {
+        for (String part : parts) {
+            if (part == null || part.isBlank()) {
+                continue;
+            }
+            for (String candidate : pathCandidates(part)) {
                 if (hasParentTraversal(candidate) || isAbsoluteOutsideWorkspace(candidate)) {
                     throw new BusinessException(ErrorCode.COMMAND_DENIED, "命令未通过安全校验");
                 }
@@ -76,11 +84,20 @@ public class CommandPolicy {
 
     private List<String> pathCandidates(String value) {
         String normalized = value.replace('\\', '/');
+        List<String> candidates = new ArrayList<>();
+        candidates.add(normalized);
         int equalsIndex = normalized.indexOf('=');
         if (equalsIndex >= 0 && equalsIndex < normalized.length() - 1) {
-            return List.of(normalized, normalized.substring(equalsIndex + 1));
+            candidates.add(normalized.substring(equalsIndex + 1));
         }
-        return List.of(normalized);
+        int colonIndex = normalized.indexOf(':');
+        if (colonIndex >= 0 && colonIndex < normalized.length() - 1) {
+            candidates.add(normalized.substring(colonIndex + 1));
+        }
+        if (normalized.length() > 2 && normalized.charAt(0) == '-' && isAsciiLetter(normalized.charAt(1))) {
+            candidates.add(normalized.substring(2));
+        }
+        return candidates;
     }
 
     private boolean hasParentTraversal(String value) {
@@ -92,31 +109,83 @@ public class CommandPolicy {
         return value.startsWith("/") && !value.equals("/workspace") && !value.startsWith("/workspace/");
     }
 
-    private void rejectShellSyntax(String command) {
-        if (command.indexOf('\n') >= 0 || command.indexOf('\r') >= 0) {
-            throw new BusinessException(ErrorCode.COMMAND_DENIED, "命令未通过安全校验");
-        }
-        for (String token : Arrays.asList(";", "&&", "||", "|", "`", "$(", ">", "<", "\"", "'")) {
-            if (command.contains(token)) {
-                throw new BusinessException(ErrorCode.COMMAND_DENIED, "命令未通过安全校验");
-            }
-        }
+    private boolean containsWord(String value, String word) {
+        return Pattern.compile("(?<![a-z0-9_-])" + Pattern.quote(word) + "(?![a-z0-9_-])")
+                .matcher(value)
+                .find();
+    }
+
+    private String removeQuotes(String value) {
+        return value.replace("'", "").replace("\"", "");
+    }
+
+    private boolean isAsciiLetter(char value) {
+        return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z');
     }
 
     public String validateWorkspacePath(String path, String message) {
-        String normalized = normalizeWorkspacePath(path);
-        if (!normalized.equals("/workspace") && !normalized.startsWith("/workspace/")) {
+        String normalized = normalizeWorkspacePath(path, WORKSPACE_ROOT);
+        if (!isUnder(normalized, WORKSPACE_ROOT)) {
             throw new BusinessException(ErrorCode.PATH_DENIED, message);
         }
         return normalized;
     }
 
-    private String normalizeWorkspacePath(String value) {
+    public String validateOutputPath(String path) {
+        String normalized = normalizeWorkspacePath(path, ARTIFACTS_DIR);
+        if (isUnder(normalized, OUTPUT_DIR)) {
+            normalized = ARTIFACTS_DIR + normalized.substring(OUTPUT_DIR.length());
+        } else if (isUnder(normalized, WORKSPACE_ROOT) && !isUnder(normalized, ARTIFACTS_DIR)) {
+            String relative = normalized.equals(WORKSPACE_ROOT)
+                    ? "output.txt"
+                    : normalized.substring(WORKSPACE_ROOT.length() + 1);
+            normalized = ARTIFACTS_DIR + "/" + relative;
+        }
+        if (!isUnder(normalized, ARTIFACTS_DIR)) {
+            throw new BusinessException(ErrorCode.PATH_DENIED, "输出文件只能写入 /workspace/artifacts");
+        }
+        return normalized;
+    }
+
+    public String validateInputPath(String path) {
+        String normalized = normalizeWorkspacePath(path, INPUT_DIR);
+        if (!isUnder(normalized, INPUT_DIR)) {
+            throw new BusinessException(ErrorCode.PATH_DENIED, "上传文件只能写入 /workspace/input");
+        }
+        return normalized;
+    }
+
+    private String normalizeWorkspacePath(String value, String defaultDirectory) {
         if (value == null || value.isBlank()) {
             throw new BusinessException(ErrorCode.PATH_DENIED, "路径不能为空");
         }
         String replaced = value.trim().replace('\\', '/');
+        if (replaced.matches("^[A-Za-z]:.*")) {
+            throw new BusinessException(ErrorCode.PATH_DENIED, "路径不在允许访问范围内");
+        }
+        if (Arrays.stream(replaced.split("/")).anyMatch(".."::equals)) {
+            throw new BusinessException(ErrorCode.PATH_DENIED, "路径不在允许访问范围内");
+        }
         Path normalized = Path.of(replaced).normalize();
-        return normalized.toString().replace('\\', '/');
+        String path = normalized.toString().replace('\\', '/');
+        if (".".equals(path)) {
+            path = "";
+        }
+        if (path.equals("workspace") || path.startsWith("workspace/")) {
+            path = "/" + path;
+        } else if (path.equals("artifacts") || path.startsWith("artifacts/")) {
+            path = WORKSPACE_ROOT + "/" + path;
+        } else if (path.equals("input") || path.startsWith("input/")) {
+            path = WORKSPACE_ROOT + "/" + path;
+        } else if (path.equals("output") || path.startsWith("output/")) {
+            path = WORKSPACE_ROOT + "/" + path;
+        } else if (!path.startsWith("/")) {
+            path = defaultDirectory + "/" + path;
+        }
+        return Path.of(path).normalize().toString().replace('\\', '/');
+    }
+
+    private boolean isUnder(String path, String base) {
+        return path.equals(base) || path.startsWith(base + "/");
     }
 }

@@ -13,6 +13,7 @@ import com.agenthub.common.exception.BusinessException;
 import com.agenthub.sandbox.artifact.mapper.SandboxArtifactMapper;
 import com.agenthub.sandbox.client.SandboxClient;
 import com.agenthub.sandbox.client.dto.ExecSandboxRequest;
+import com.agenthub.sandbox.client.dto.SandboxArtifactItem;
 import com.agenthub.sandbox.client.dto.SandboxEvent;
 import com.agenthub.sandbox.execution.entity.SandboxExecution;
 import com.agenthub.sandbox.execution.mapper.SandboxExecutionMapper;
@@ -180,6 +181,128 @@ class SandboxToolServiceImplTest {
     }
 
     @Test
+    void shouldWriteRelativeModelOutputIntoArtifactsDirectory() {
+        SandboxClient client = mock(SandboxClient.class);
+        SandboxToolServiceImpl service = service(client, mock(SandboxExecutionMapper.class));
+
+        service.writeFile(7L, 100L, "sbx_1", "作文.txt", "正文", false);
+
+        verify(client).writeFile("sbx_1", "/workspace/artifacts/作文.txt", "正文", false);
+    }
+
+    @Test
+    void shouldPersistArtifactsReturnedByWriteFile() {
+        SandboxClient client = mock(SandboxClient.class);
+        SandboxArtifactMapper artifactMapper = mock(SandboxArtifactMapper.class);
+        when(client.writeFile("sbx_1", "/workspace/artifacts/output.txt", "hello", false)).thenReturn(List.of(
+                new SandboxArtifactItem(
+                        null,
+                        "output.txt",
+                        "output.txt",
+                        "bucket",
+                        "sandbox-artifacts/100/sha/output.txt",
+                        "text/plain",
+                        5L,
+                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        1
+                )
+        ));
+        SandboxSessionMapper sessionMapper = mock(SandboxSessionMapper.class);
+        when(sessionMapper.selectBySandboxSessionId("sbx_1")).thenReturn(session(55L));
+        SandboxToolServiceImpl service = new SandboxToolServiceImpl(
+                client,
+                new CommandPolicy(200, 60),
+                sessionMapper,
+                mock(SandboxExecutionMapper.class),
+                artifactMapper
+        );
+
+        service.writeFile(7L, 100L, "sbx_1", "output.txt", "hello", false);
+
+        ArgumentCaptor<com.agenthub.sandbox.artifact.entity.SandboxArtifact> artifactCaptor =
+                ArgumentCaptor.forClass(com.agenthub.sandbox.artifact.entity.SandboxArtifact.class);
+        verify(artifactMapper).insert(artifactCaptor.capture());
+        assertThat(artifactCaptor.getValue().getConversationId()).isEqualTo(100L);
+        assertThat(artifactCaptor.getValue().getExecutionId()).isNull();
+        assertThat(artifactCaptor.getValue().getFileName()).isEqualTo("output.txt");
+        verify(client, never()).streamExec(any(), any(), any());
+    }
+
+    @Test
+    void shouldTriggerLegacyArtifactSyncWhenWriteFileReturnsNoArtifacts() {
+        SandboxClient client = mock(SandboxClient.class);
+        SandboxArtifactMapper artifactMapper = mock(SandboxArtifactMapper.class);
+        when(client.writeFile("sbx_1", "/workspace/artifacts/output.txt", "hello", false)).thenReturn(List.of());
+        org.mockito.Mockito.doAnswer(invocation -> {
+            java.util.function.Consumer<SandboxEvent> consumer = invocation.getArgument(2);
+            consumer.accept(new SandboxEvent("artifact_synced", null, null, null, null, null, null,
+                    new SandboxArtifactItem(
+                            null,
+                            "output.txt",
+                            "output.txt",
+                            "bucket",
+                            "sandbox-artifacts/100/sha/output.txt",
+                            "text/plain",
+                            5L,
+                            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                            1
+                    ),
+                    false));
+            consumer.accept(new SandboxEvent("completed", null, null, 0, 10L, null, null, null, false));
+            return null;
+        }).when(client).streamExec(any(), any(), any());
+        SandboxSessionMapper sessionMapper = mock(SandboxSessionMapper.class);
+        when(sessionMapper.selectBySandboxSessionId("sbx_1")).thenReturn(session(55L));
+        SandboxToolServiceImpl service = new SandboxToolServiceImpl(
+                client,
+                new CommandPolicy(200, 60),
+                sessionMapper,
+                mock(SandboxExecutionMapper.class),
+                artifactMapper
+        );
+
+        service.writeFile(7L, 100L, "sbx_1", "output.txt", "hello", false);
+
+        ArgumentCaptor<ExecSandboxRequest> requestCaptor = ArgumentCaptor.forClass(ExecSandboxRequest.class);
+        verify(client).streamExec(org.mockito.ArgumentMatchers.eq("sbx_1"), requestCaptor.capture(), any());
+        assertThat(requestCaptor.getValue().command()).isEqualTo("pwd");
+        ArgumentCaptor<com.agenthub.sandbox.artifact.entity.SandboxArtifact> artifactCaptor =
+                ArgumentCaptor.forClass(com.agenthub.sandbox.artifact.entity.SandboxArtifact.class);
+        verify(artifactMapper).insert(artifactCaptor.capture());
+        assertThat(artifactCaptor.getValue().getConversationId()).isEqualTo(100L);
+        assertThat(artifactCaptor.getValue().getExecutionId()).isNull();
+        assertThat(artifactCaptor.getValue().getFileName()).isEqualTo("output.txt");
+    }
+
+    @Test
+    void shouldUploadRelativeAttachmentIntoInputDirectory() {
+        SandboxClient client = mock(SandboxClient.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        SandboxSessionMapper sessionMapper = mock(SandboxSessionMapper.class);
+        when(sessionMapper.selectBySandboxSessionId("sbx_1")).thenReturn(session(55L));
+        when(attachmentService.requireImportSource(7L, 10L)).thenReturn(new AttachmentImportSource(
+                10L,
+                "data.csv",
+                "text/csv",
+                5L,
+                "data:text/plain;base64,aGVsbG8=",
+                "users/7/chat-files/data.csv"
+        ));
+        SandboxToolServiceImpl service = new SandboxToolServiceImpl(
+                client,
+                new CommandPolicy(200, 60),
+                sessionMapper,
+                mock(SandboxExecutionMapper.class),
+                mock(SandboxArtifactMapper.class),
+                attachmentService
+        );
+
+        service.uploadFile(7L, 100L, "sbx_1", 10L, "data.csv");
+
+        verify(client).writeFile("sbx_1", "/workspace/input/data.csv", "hello", false);
+    }
+
+    @Test
     void shouldPersistSyncedArtifactEvent() {
         SandboxClient client = mock(SandboxClient.class);
         SandboxExecutionMapper executionMapper = mock(SandboxExecutionMapper.class);
@@ -276,9 +399,9 @@ class SandboxToolServiceImplTest {
                 attachmentService
         );
 
-        service.uploadFile(7L, 100L, "sbx_1", 10L, "/workspace/input.txt");
+        service.uploadFile(7L, 100L, "sbx_1", 10L, "/workspace/input/input.txt");
 
-        verify(client).writeFile("sbx_1", "/workspace/input.txt", "hello", false);
+        verify(client).writeFile("sbx_1", "/workspace/input/input.txt", "hello", false);
     }
 
     private SandboxToolServiceImpl service(SandboxClient client, SandboxExecutionMapper executionMapper) {

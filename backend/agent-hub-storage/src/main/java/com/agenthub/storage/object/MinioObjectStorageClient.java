@@ -47,10 +47,15 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
 
     @Override
     public String presignGet(String objectKey, Duration ttl) {
+        return presignGet(properties.getBucket(), objectKey, ttl);
+    }
+
+    @Override
+    public String presignGet(String bucket, String objectKey, Duration ttl) {
         try {
             return presignClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(Method.GET)
-                    .bucket(properties.getBucket())
+                    .bucket(resolveBucket(bucket))
                     .object(objectKey)
                     .expiry((int) ttl.toSeconds())
                     .build());
@@ -74,8 +79,13 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
 
     @Override
     public byte[] readFirstBytes(String objectKey, int length) {
+        return readFirstBytes(properties.getBucket(), objectKey, length);
+    }
+
+    @Override
+    public byte[] readFirstBytes(String bucket, String objectKey, int length) {
         try (InputStream inputStream = internalClient.getObject(GetObjectArgs.builder()
-                .bucket(properties.getBucket())
+                .bucket(resolveBucket(bucket))
                 .object(objectKey)
                 .build())) {
             return inputStream.readNBytes(length);
@@ -86,8 +96,13 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
 
     @Override
     public byte[] readBytes(String objectKey) {
+        return readBytes(properties.getBucket(), objectKey);
+    }
+
+    @Override
+    public byte[] readBytes(String bucket, String objectKey) {
         try (InputStream inputStream = internalClient.getObject(GetObjectArgs.builder()
-                .bucket(properties.getBucket())
+                .bucket(resolveBucket(bucket))
                 .object(objectKey)
                 .build())) {
             return inputStream.readAllBytes();
@@ -125,5 +140,9 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
                 || "NoSuchObject".equals(code)
                 || "NoSuchBucket".equals(code)
                 || "NotFound".equals(code);
+    }
+
+    private String resolveBucket(String bucket) {
+        return bucket == null || bucket.isBlank() ? properties.getBucket() : bucket;
     }
 }

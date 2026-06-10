@@ -302,7 +302,32 @@ func (s *apiServer) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "沙箱文件代理失败")
 		return
 	}
-	s.proxyJSON(w, r, http.MethodPost, joinAgentURL(session.AgentURL, "/files/content"), bytes.NewReader(body))
+	status, responseBody, err := s.proxyJSONResponse(r, http.MethodPost, joinAgentURL(session.AgentURL, "/files/content"), bytes.NewReader(body))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "沙箱文件代理失败")
+		return
+	}
+	if status < 200 || status >= 300 {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(status)
+		_, _ = w.Write(responseBody)
+		return
+	}
+	if !isArtifactWorkspacePath(resolvedPath) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(status)
+		_, _ = w.Write(responseBody)
+		return
+	}
+	changes, err := s.syncArtifactChanges(r, session)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, syncArtifactsClientMessage)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":        true,
+		"artifacts": changes,
+	})
 }
 
 func (s *apiServer) beginSessionUse(w http.ResponseWriter, sessionID string) (Session, bool) {
@@ -319,10 +344,20 @@ func (s *apiServer) beginSessionUse(w http.ResponseWriter, sessionID string) (Se
 }
 
 func (s *apiServer) proxyJSON(w http.ResponseWriter, r *http.Request, method string, targetURL string, body io.Reader) {
-	req, err := http.NewRequestWithContext(r.Context(), method, targetURL, body)
+	status, responseBody, err := s.proxyJSONResponse(r, method, targetURL, body)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "沙箱文件代理失败")
 		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(responseBody)
+}
+
+func (s *apiServer) proxyJSONResponse(r *http.Request, method string, targetURL string, body io.Reader) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(r.Context(), method, targetURL, body)
+	if err != nil {
+		return 0, nil, err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json; charset=utf-8")
@@ -333,13 +368,14 @@ func (s *apiServer) proxyJSON(w http.ResponseWriter, r *http.Request, method str
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "沙箱文件代理失败")
-		return
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, err
+	}
+	return resp.StatusCode, responseBody, nil
 }
 
 func (s *apiServer) proxyExecStream(r *http.Request, w http.ResponseWriter, session Session, req execRequest) (bool, error) {
@@ -472,24 +508,35 @@ func emptyCompletedError(raw json.RawMessage) bool {
 }
 
 func (s *apiServer) syncArtifacts(r *http.Request, w http.ResponseWriter, session Session) error {
-	if s.uploader == nil {
-		return nil
-	}
-	artifacts, err := s.fetchArtifacts(r, session)
-	if err != nil {
-		return err
-	}
-	changes, err := s.syncer.Diff(session.ConversationID, artifacts)
+	changes, err := s.syncArtifactChanges(r, session)
 	if err != nil {
 		return err
 	}
 	for _, change := range changes {
+		sse.WriteEvent(w, "artifact_synced", change)
+	}
+	return nil
+}
+
+func (s *apiServer) syncArtifactChanges(r *http.Request, session Session) ([]SyncedArtifact, error) {
+	if s.uploader == nil {
+		return nil, nil
+	}
+	artifacts, err := s.fetchArtifacts(r, session)
+	if err != nil {
+		return nil, err
+	}
+	changes, err := s.syncer.Diff(session.ConversationID, artifacts)
+	if err != nil {
+		return nil, err
+	}
+	for _, change := range changes {
 		content, err := s.readGuestArtifact(r, session, change.RelativePath)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if err := verifySyncedArtifactSHA256(change, content); err != nil {
-			return err
+			return nil, err
 		}
 		if err := s.uploader.Upload(objectstore.UploadRequest{
 			Context:     r.Context(),
@@ -499,14 +546,18 @@ func (s *apiServer) syncArtifacts(r *http.Request, w http.ResponseWriter, sessio
 			Size:        int64(len(content)),
 			ContentType: defaultContentType,
 		}); err != nil {
-			return fmt.Errorf("上传产物失败: %w", err)
+			return nil, fmt.Errorf("上传产物失败: %w", err)
 		}
 		if err := s.syncer.MarkSynced(session.ConversationID, change); err != nil {
-			return err
+			return nil, err
 		}
-		sse.WriteEvent(w, "artifact_synced", change)
 	}
-	return nil
+	return changes, nil
+}
+
+func isArtifactWorkspacePath(value string) bool {
+	value = strings.TrimRight(strings.ReplaceAll(strings.TrimSpace(value), "\\", "/"), "/")
+	return value == defaultArtifactPath || strings.HasPrefix(value, defaultArtifactPath+"/")
 }
 
 func verifySyncedArtifactSHA256(artifact SyncedArtifact, content []byte) error {

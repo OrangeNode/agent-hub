@@ -434,7 +434,7 @@ func TestExecStreamRejectsDangerousCommandWithoutCallingGuest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreate() error = %v", err)
 	}
-	body := bytes.NewBufferString(`{"command":"bash -c ls","workingDir":"/workspace","timeoutSeconds":5}`)
+	body := bytes.NewBufferString(`{"command":"sudo whoami","workingDir":"/workspace","timeoutSeconds":5}`)
 	req := httptest.NewRequest(http.MethodPost, "/internal/sandbox/sessions/"+session.ID+"/exec/stream", body)
 	rec := httptest.NewRecorder()
 
@@ -543,6 +543,71 @@ func TestWriteFileProxiesAppendModeToGuest(t *testing.T) {
 	}
 	if written.Path != "/workspace/notes.txt" || written.Content != "hello" || !written.AppendMode {
 		t.Fatalf("written = %#v", written)
+	}
+}
+
+func TestWriteFileSyncsArtifactsAfterSuccessfulArtifactWrite(t *testing.T) {
+	artifactSHA := sha256Hex("hello")
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/files/content":
+			if r.Method == http.MethodPost {
+				var written struct {
+					Path    string `json:"path"`
+					Content string `json:"content"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&written); err != nil {
+					t.Fatalf("Decode(write) error = %v", err)
+				}
+				if written.Path != "/workspace/artifacts/output.txt" || written.Content != "hello" {
+					t.Fatalf("written = %#v", written)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+				return
+			}
+			if r.Method == http.MethodGet {
+				if r.URL.Query().Get("path") != "/workspace/artifacts/output.txt" {
+					t.Fatalf("read path = %q", r.URL.Query().Get("path"))
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"content": "hello", "truncated": false})
+				return
+			}
+			t.Fatalf("unexpected method for /files/content: %s", r.Method)
+		case "/artifacts":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"artifacts": []map[string]any{
+					{"relativePath": "output.txt", "sha256": artifactSHA, "size": 5},
+				},
+			})
+		default:
+			t.Fatalf("unexpected guest path %s", r.URL.Path)
+		}
+	}))
+	defer guest.Close()
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	uploader := &recordingUploader{}
+	router := NewRouterWithManager(manager, WithUploader(uploader), WithArtifactSyncer(NewArtifactSyncer("bucket")))
+
+	body := bytes.NewBufferString(`{"path":"/workspace/artifacts/output.txt","content":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/internal/sandbox/sessions/"+session.ID+"/files/content", body)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"relativePath":"output.txt"`) {
+		t.Fatalf("response should include synced artifacts, got %s", rec.Body.String())
+	}
+	if len(uploader.uploads) != 1 {
+		t.Fatalf("uploads = %d, want 1", len(uploader.uploads))
+	}
+	if uploader.uploads[0].Bucket != "bucket" || uploader.uploads[0].Content != "hello" {
+		t.Fatalf("upload = %#v", uploader.uploads[0])
 	}
 }
 

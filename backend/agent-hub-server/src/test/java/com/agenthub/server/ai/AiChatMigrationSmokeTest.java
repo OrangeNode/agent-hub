@@ -56,6 +56,22 @@ class AiChatMigrationSmokeTest {
     }
 
     @Test
+    void shouldAddChatMessageProcessEventsColumn() {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+
+        Map<String, Object> processEventsColumn = jdbcTemplate.queryForMap("""
+                SELECT data_type, is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                    AND table_name = 'chat_message'
+                    AND column_name = 'process_events'
+                """);
+
+        assertThat(processEventsColumn.get("data_type").toString()).isEqualToIgnoringCase("CHARACTER VARYING");
+        assertThat(processEventsColumn.get("is_nullable")).isEqualTo("YES");
+    }
+
+    @Test
     void shouldAllowDeletingAiConfigWhileKeepingChatHistory() {
         JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
 

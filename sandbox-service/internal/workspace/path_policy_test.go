@@ -13,6 +13,17 @@ func TestResolveAllowsWorkspacePath(t *testing.T) {
 	}
 }
 
+func TestResolveRelativePathUsesWorkspaceRoot(t *testing.T) {
+	p := NewPathPolicy("/workspace")
+	path, err := p.Resolve("reports/out.txt")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if path != "/workspace/reports/out.txt" {
+		t.Fatalf("path = %q", path)
+	}
+}
+
 func TestResolveEmptyPathUsesWorkspaceRoot(t *testing.T) {
 	p := NewPathPolicy("/workspace")
 	path, err := p.Resolve("")
@@ -40,6 +51,9 @@ func TestResolveRejectsTraversal(t *testing.T) {
 	if _, err := p.Resolve("/workspace/../etc/passwd"); err == nil {
 		t.Fatal("expected traversal to be rejected")
 	}
+	if _, err := p.Resolve("../secret.txt"); err == nil {
+		t.Fatal("expected relative traversal to be rejected")
+	}
 }
 
 func TestResolveInputAllowsInputDirectory(t *testing.T) {
@@ -52,6 +66,17 @@ func TestResolveInputAllowsInputDirectory(t *testing.T) {
 		if path != target {
 			t.Fatalf("path = %q", path)
 		}
+	}
+}
+
+func TestResolveInputRelativePathUsesInputDirectory(t *testing.T) {
+	p := NewPathPolicy("/workspace")
+	path, err := p.ResolveInput("data.csv")
+	if err != nil {
+		t.Fatalf("ResolveInput() error = %v", err)
+	}
+	if path != "/workspace/input/data.csv" {
+		t.Fatalf("path = %q", path)
 	}
 }
 

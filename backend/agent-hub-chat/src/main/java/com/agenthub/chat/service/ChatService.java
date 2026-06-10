@@ -1,6 +1,9 @@
 package com.agenthub.chat.service;
 
 import com.agenthub.chat.conversation.dto.ConversationItem;
+import com.agenthub.chat.artifact.dto.ChatArtifactContent;
+import com.agenthub.chat.artifact.dto.ChatArtifactDownload;
+import com.agenthub.chat.artifact.dto.ChatArtifactItem;
 import com.agenthub.chat.message.dto.MessageItem;
 import java.util.List;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -30,6 +33,14 @@ public interface ChatService {
      * 查询指定会话的消息列表，并校验会话归属。
      */
     List<MessageItem> listMessages(Long userId, Long conversationId);
+
+    List<ChatArtifactItem> listArtifacts(Long userId, Long conversationId);
+
+    ChatArtifactContent previewArtifact(Long userId, Long conversationId, Long artifactId, int maxBytes);
+
+    ChatArtifactDownload downloadArtifact(Long userId, Long conversationId, Long artifactId);
+
+    ChatArtifactDownload downloadAllArtifacts(Long userId, Long conversationId);
 
     /**
      * 软删除用户自己的会话。

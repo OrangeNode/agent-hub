@@ -15,6 +15,7 @@ public class ChatMessage {
     private String role;
     private String content;
     private String reasoningContent;
+    private String processEvents;
     private Long providerId;
     private Long modelId;
     private String status;
@@ -68,6 +69,14 @@ public class ChatMessage {
 
     public void setReasoningContent(String reasoningContent) {
         this.reasoningContent = reasoningContent;
+    }
+
+    public String getProcessEvents() {
+        return processEvents;
+    }
+
+    public void setProcessEvents(String processEvents) {
+        this.processEvents = processEvents;
     }
 
     public Long getProviderId() {

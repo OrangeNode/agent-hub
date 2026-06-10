@@ -30,7 +30,7 @@ func TestServerHealth(t *testing.T) {
 func TestServerExecStreamRejectsDangerousCommand(t *testing.T) {
 	executor := &recordingExecutor{}
 	server := NewServer(executor, NewFileService(t.TempDir()))
-	body := bytes.NewBufferString(`{"command":"bash -c ls","workingDir":"/workspace","timeoutSeconds":5}`)
+	body := bytes.NewBufferString(`{"command":"sudo whoami","workingDir":"/workspace","timeoutSeconds":5}`)
 	req := httptest.NewRequest(http.MethodPost, "/exec/stream", body)
 	rec := httptest.NewRecorder()
 

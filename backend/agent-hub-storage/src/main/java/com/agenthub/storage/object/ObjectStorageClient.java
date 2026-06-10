@@ -8,11 +8,23 @@ public interface ObjectStorageClient {
 
     String presignGet(String objectKey, Duration ttl);
 
+    default String presignGet(String bucket, String objectKey, Duration ttl) {
+        return presignGet(objectKey, ttl);
+    }
+
     ObjectMetadata stat(String objectKey);
 
     byte[] readFirstBytes(String objectKey, int length);
 
+    default byte[] readFirstBytes(String bucket, String objectKey, int length) {
+        return readFirstBytes(objectKey, length);
+    }
+
     byte[] readBytes(String objectKey);
+
+    default byte[] readBytes(String bucket, String objectKey) {
+        return readBytes(objectKey);
+    }
 
     void delete(String objectKey);
 }

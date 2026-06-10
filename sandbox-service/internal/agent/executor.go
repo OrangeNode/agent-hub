@@ -43,8 +43,7 @@ func NewExecutor(maxExcerptBytes int) *Executor {
 func (e *Executor) Exec(ctx context.Context, req ExecRequest, emit func(ExecEvent)) ExecResult {
 	startedAt := time.Now()
 	result := ExecResult{ExitCode: -1}
-	argv := strings.Fields(req.Command)
-	if len(argv) == 0 {
+	if strings.TrimSpace(req.Command) == "" {
 		result.Duration = time.Since(startedAt)
 		result.Error = "命令不能为空"
 		return result
@@ -57,7 +56,11 @@ func (e *Executor) Exec(ctx context.Context, req ExecRequest, emit func(ExecEven
 	}
 	defer cancel()
 
-	cmd := exec.Command(argv[0], argv[1:]...)
+	shell := "bash"
+	if _, err := exec.LookPath(shell); err != nil {
+		shell = "sh"
+	}
+	cmd := exec.CommandContext(execCtx, shell, "-lc", req.Command)
 	configureCommand(cmd)
 	if strings.TrimSpace(req.WorkingDir) != "" {
 		cmd.Dir = req.WorkingDir

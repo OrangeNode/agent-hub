@@ -3,6 +3,7 @@ package com.agenthub.sandbox.client;
 import com.agenthub.sandbox.client.dto.CreateSandboxSessionRequest;
 import com.agenthub.sandbox.client.dto.CreateSandboxSessionResponse;
 import com.agenthub.sandbox.client.dto.ExecSandboxRequest;
+import com.agenthub.sandbox.client.dto.SandboxArtifactItem;
 import com.agenthub.sandbox.client.dto.SandboxFileItem;
 import com.agenthub.sandbox.client.dto.SandboxEvent;
 import java.util.List;
@@ -18,5 +19,5 @@ public interface SandboxClient {
 
     String readFile(String sandboxSessionId, String path, int maxBytes);
 
-    void writeFile(String sandboxSessionId, String path, String content, boolean append);
+    List<SandboxArtifactItem> writeFile(String sandboxSessionId, String path, String content, boolean append);
 }

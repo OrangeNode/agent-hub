@@ -132,7 +132,7 @@ public class HttpSandboxClient implements SandboxClient {
     }
 
     @Override
-    public void writeFile(String sandboxSessionId, String path, String content, boolean append) {
+    public List<SandboxArtifactItem> writeFile(String sandboxSessionId, String path, String content, boolean append) {
         try {
             String body = OBJECT_MAPPER.writeValueAsString(new WriteFileRequest(path, content, append));
             HttpRequest request = requestBuilder("/internal/sandbox/sessions/" + encodePath(sandboxSessionId) + "/files/content")
@@ -141,6 +141,12 @@ public class HttpSandboxClient implements SandboxClient {
                     .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             requireSuccess(response.statusCode(), "写入沙箱文件失败");
+            JsonNode root = OBJECT_MAPPER.readTree(response.body());
+            List<SandboxArtifactItem> artifacts = new ArrayList<>();
+            for (JsonNode item : root.path("artifacts")) {
+                artifacts.add(toSandboxArtifactItem(item));
+            }
+            return artifacts;
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "写入沙箱文件被中断");
@@ -254,6 +260,25 @@ public class HttpSandboxClient implements SandboxClient {
                 path,
                 longValue(item, "size"),
                 item.path("directory").asBoolean(item.path("isDir").asBoolean(false))
+        );
+    }
+
+    private static SandboxArtifactItem toSandboxArtifactItem(JsonNode item) {
+        String relativePath = text(item, "relativePath");
+        String fileName = firstText(item, "fileName", "name");
+        if (fileName == null || fileName.isBlank()) {
+            fileName = fileNameFromPath(relativePath);
+        }
+        return new SandboxArtifactItem(
+                longValue(item, "artifactId"),
+                fileName,
+                relativePath,
+                firstText(item, "storageBucket", "bucket"),
+                text(item, "storageKey"),
+                firstText(item, "contentType", "application/octet-stream"),
+                firstLong(item, "sizeBytes", "size"),
+                text(item, "sha256"),
+                intValue(item, "version")
         );
     }
 

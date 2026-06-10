@@ -35,6 +35,19 @@ func (p CommandPolicy) Validate(req CommandRequest) error {
 	if req.TimeoutSeconds <= 0 || req.TimeoutSeconds > p.maxTimeout {
 		return errors.New("命令超时时间超过限制")
 	}
+	if strings.ContainsRune(command, '\x00') {
+		return errors.New("命令未通过安全校验")
+	}
+
+	compactCommand := removeQuotes(strings.ToLower(cleanSlash(command)))
+	if hasDangerousKeyword(compactCommand) {
+		return errors.New("命令包含禁止的操作")
+	}
+	for _, token := range splitCommandPathTokens(compactCommand) {
+		if hasDangerousPath(token) {
+			return errors.New("命令包含禁止访问的路径")
+		}
+	}
 
 	argv, err := parseSimpleCommand(command)
 	if err != nil {
@@ -46,15 +59,12 @@ func (p CommandPolicy) Validate(req CommandRequest) error {
 	if !allowedCommandNames[argv[0]] {
 		return errors.New("命令不在允许列表中")
 	}
-	for _, arg := range argv[1:] {
-		if hasDangerousPath(arg) {
-			return errors.New("命令包含禁止访问的路径")
-		}
-	}
 	return nil
 }
 
 var allowedCommandNames = map[string]bool{
+	"sh":      true,
+	"bash":    true,
 	"python":  true,
 	"python3": true,
 	"node":    true,
@@ -74,32 +84,30 @@ var allowedCommandNames = map[string]bool{
 	"grep":    true,
 	"sed":     true,
 	"awk":     true,
+	"head":    true,
+	"tail":    true,
+	"wc":      true,
+	"sort":    true,
+	"uniq":    true,
+	"printf":  true,
 	"mkdir":   true,
 	"cp":      true,
 	"mv":      true,
 	"rm":      true,
+	"touch":   true,
+	"chmod":   true,
+	"echo":    true,
+	"zip":     true,
+	"unzip":   true,
+	"tar":     true,
 }
 
 func parseSimpleCommand(command string) ([]string, error) {
-	for _, r := range command {
-		if isForbiddenCommandChar(r) {
-			return nil, errors.New("命令包含禁止的 shell 字符")
-		}
-	}
 	argv := strings.Fields(command)
 	if len(argv) == 0 {
 		return nil, errors.New("命令不能为空")
 	}
 	return argv, nil
-}
-
-func isForbiddenCommandChar(r rune) bool {
-	switch r {
-	case '\'', '"', '`', ';', '&', '|', '<', '>', '$', '(', ')', '{', '}', '[', ']', '*', '?', '!', '#', '\n', '\r':
-		return true
-	default:
-		return false
-	}
 }
 
 func hasDangerousPath(value string) bool {
@@ -119,6 +127,53 @@ func hasDangerousPath(value string) bool {
 		}
 	}
 	return false
+}
+
+func hasDangerousKeyword(command string) bool {
+	for _, token := range strings.FieldsFunc(command, func(r rune) bool {
+		return !isKeywordRune(r)
+	}) {
+		if dangerousKeywords[token] {
+			return true
+		}
+	}
+	return false
+}
+
+var dangerousKeywords = map[string]bool{
+	"shutdown":  true,
+	"reboot":    true,
+	"poweroff":  true,
+	"halt":      true,
+	"mount":     true,
+	"umount":    true,
+	"modprobe":  true,
+	"insmod":    true,
+	"sysctl":    true,
+	"sudo":      true,
+	"su":        true,
+	"systemctl": true,
+	"service":   true,
+}
+
+func splitCommandPathTokens(command string) []string {
+	return strings.FieldsFunc(command, func(r rune) bool {
+		switch r {
+		case ' ', '\t', '\n', '\r', ';', '|', '&', '<', '>', '"', '\'', '`', '$', '(', ')', '{', '}', '[', ']', ',':
+			return true
+		default:
+			return false
+		}
+	})
+}
+
+func removeQuotes(value string) string {
+	value = strings.ReplaceAll(value, "'", "")
+	return strings.ReplaceAll(value, "\"", "")
+}
+
+func isKeywordRune(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-'
 }
 
 func hasRelativeTraversalPath(value string) bool {

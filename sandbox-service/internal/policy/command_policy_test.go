@@ -11,6 +11,9 @@ func TestValidateCommandAllowsCommonCommands(t *testing.T) {
 		"sed -f/workspace/scripts/filter.sed /workspace/input.txt",
 		"grep -f/workspace/patterns /workspace/input.txt",
 		"npm --prefix=/workspace/app install",
+		`python3 -c "print(1)"`,
+		`bash -lc "python3 main.py && cat /workspace/artifacts/output.txt"`,
+		"cat <<'EOF' > /workspace/artifacts/input.txt\n3 1 2\nEOF",
 	} {
 		req := CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30}
 		if err := policy.Validate(req); err != nil {
@@ -126,9 +129,9 @@ func TestValidateCommandRejectsPathLikeEntrypoint(t *testing.T) {
 	}
 }
 
-func TestValidateCommandRejectsShellEntrypoint(t *testing.T) {
+func TestValidateCommandRejectsUnknownShellEntrypoint(t *testing.T) {
 	policy := NewCommandPolicy(200, 60)
-	for _, command := range []string{"sh -c ls", "bash -c ls", "zsh -c ls"} {
+	for _, command := range []string{"zsh -c ls", "fish -c ls"} {
 		err := policy.Validate(CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30})
 		if err == nil {
 			t.Fatalf("expected %q to be rejected", command)

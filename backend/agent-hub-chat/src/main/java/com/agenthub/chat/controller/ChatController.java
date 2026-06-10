@@ -1,6 +1,9 @@
 package com.agenthub.chat.controller;
 
 import com.agenthub.chat.conversation.dto.ConversationItem;
+import com.agenthub.chat.artifact.dto.ChatArtifactContent;
+import com.agenthub.chat.artifact.dto.ChatArtifactDownload;
+import com.agenthub.chat.artifact.dto.ChatArtifactItem;
 import com.agenthub.chat.message.dto.MessageItem;
 import com.agenthub.chat.service.ChatService;
 import com.agenthub.common.api.ApiResponse;
@@ -8,13 +11,19 @@ import com.agenthub.security.principal.LoginUser;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -72,6 +81,45 @@ public class ChatController {
         return ApiResponse.success(chatService.listMessages(loginUser.userId(), conversationId));
     }
 
+    @GetMapping("/conversations/{conversationId}/artifacts")
+    public ApiResponse<List<ChatArtifactItem>> listArtifacts(
+            Authentication authentication,
+            @PathVariable Long conversationId
+    ) {
+        LoginUser loginUser = (LoginUser) authentication.getPrincipal();
+        return ApiResponse.success(chatService.listArtifacts(loginUser.userId(), conversationId));
+    }
+
+    @GetMapping("/conversations/{conversationId}/artifacts/{artifactId}/content")
+    public ApiResponse<ChatArtifactContent> previewArtifact(
+            Authentication authentication,
+            @PathVariable Long conversationId,
+            @PathVariable Long artifactId,
+            @RequestParam(defaultValue = "262144") int maxBytes
+    ) {
+        LoginUser loginUser = (LoginUser) authentication.getPrincipal();
+        return ApiResponse.success(chatService.previewArtifact(loginUser.userId(), conversationId, artifactId, maxBytes));
+    }
+
+    @GetMapping("/conversations/{conversationId}/artifacts/{artifactId}/download")
+    public ResponseEntity<byte[]> downloadArtifact(
+            Authentication authentication,
+            @PathVariable Long conversationId,
+            @PathVariable Long artifactId
+    ) {
+        LoginUser loginUser = (LoginUser) authentication.getPrincipal();
+        return downloadResponse(chatService.downloadArtifact(loginUser.userId(), conversationId, artifactId));
+    }
+
+    @GetMapping("/conversations/{conversationId}/artifacts/download")
+    public ResponseEntity<byte[]> downloadAllArtifacts(
+            Authentication authentication,
+            @PathVariable Long conversationId
+    ) {
+        LoginUser loginUser = (LoginUser) authentication.getPrincipal();
+        return downloadResponse(chatService.downloadAllArtifacts(loginUser.userId(), conversationId));
+    }
+
     /**
      * 删除当前用户指定会话。
      */
@@ -94,6 +142,16 @@ public class ChatController {
         LoginUser loginUser = (LoginUser) authentication.getPrincipal();
         chatService.renameConversation(loginUser.userId(), conversationId, request.title());
         return ApiResponse.success();
+    }
+
+    private ResponseEntity<byte[]> downloadResponse(ChatArtifactDownload download) {
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                        .filename(download.fileName(), StandardCharsets.UTF_8)
+                        .build()
+                        .toString())
+                .contentType(MediaType.parseMediaType(download.contentType()))
+                .body(download.content());
     }
 
     public record ChatStreamRequest(

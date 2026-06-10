@@ -126,9 +126,6 @@
         </button>
         <template v-if="hasMessages">
           <n-button quaternary size="small">分享</n-button>
-          <n-button quaternary size="small" @click="workPanelOpen = !workPanelOpen">
-            {{ workPanelOpen ? '隐藏面板' : '工作面板' }}
-          </n-button>
         </template>
       </header>
 
@@ -255,27 +252,61 @@
 
             <div v-else class="assistant-message">
               <div
-                v-if="messageItem.reasoningContent"
-                class="reasoning-block"
-                :class="{ collapsed: !messageItem.reasoningExpanded }"
+                v-if="messageItem.processEvents?.length"
+                class="process-block"
+                :class="{ collapsed: !messageItem.processExpanded }"
               >
                 <button
                   type="button"
-                  class="reasoning-toggle"
-                  :aria-expanded="messageItem.reasoningExpanded"
-                  @click="toggleReasoning(messageItem)"
+                  class="process-toggle"
+                  :aria-expanded="messageItem.processExpanded"
+                  @click="toggleProcess(messageItem)"
                 >
-                  <span>{{ reasoningStatusText(messageItem) }}</span>
-                  <span class="reasoning-caret" aria-hidden="true" />
+                  <span>{{ processStatusText(messageItem) }}</span>
+                  <span class="process-caret" aria-hidden="true" />
                 </button>
-                <p v-if="messageItem.reasoningExpanded" class="reasoning-content">
-                  {{ messageItem.reasoningContent }}
-                </p>
+                <div v-if="messageItem.processExpanded" class="process-content">
+                  <template
+                    v-for="(event, index) in messageItem.processEvents"
+                    :key="processEventKey(event, index)"
+                  >
+                    <p v-if="event.type === 'reasoning'" class="process-reasoning">
+                      {{ event.content }}
+                    </p>
+                    <section v-else class="process-tool">
+                      <div class="process-tool-header">
+                        <span class="process-tool-icon" aria-hidden="true">
+                          <svg viewBox="0 0 24 24">
+                            <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-5 5a2 2 0 0 0 2.8 2.8l5-5a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.6-2.6 2.4-2.8z" />
+                          </svg>
+                        </span>
+                        <span class="process-tool-title">{{ toolDisplayName(event.tool.name) }}</span>
+                        <span class="process-tool-status">{{ toolStatusText(event.tool.status) }}</span>
+                      </div>
+                      <pre v-if="event.tool.stdout" class="process-tool-output">{{ event.tool.stdout }}</pre>
+                      <pre v-if="event.tool.stderr" class="process-tool-output error">{{ event.tool.stderr }}</pre>
+                      <p v-if="event.tool.result" class="process-tool-result">{{ event.tool.result }}</p>
+                    </section>
+                  </template>
+                </div>
               </div>
               <div
                 class="assistant-markdown"
                 v-html="renderAssistantMarkdown(messageItem.content || '正在生成回复...')"
               />
+              <div v-if="shouldShowArtifactBundle(messageItem)" class="artifact-bundle-card">
+                <span class="artifact-bundle-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z" />
+                    <path d="M3 10h18" />
+                  </svg>
+                </span>
+                <span class="artifact-bundle-text">
+                  <strong>全部文件</strong>
+                  <small>预览或者下载文件</small>
+                </span>
+                <button type="button" @click="openArtifactPanel()">预览</button>
+              </div>
               <div class="message-tools">
                 <button type="button" title="复制" @click="copyMessage(messageItem.content)">
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -418,42 +449,131 @@
       />
     </main>
 
-    <aside v-if="workPanelOpen" class="work-panel" aria-label="工作面板">
+    <aside v-if="workPanelOpen" class="work-panel" aria-label="全部文件">
       <div class="work-panel-header">
         <div>
-          <strong>工作面板</strong>
-          <span>任务进度与预览插槽</span>
+          <strong>全部文件</strong>
+          <span>{{ currentArtifacts.length ? `${currentArtifacts.length} 个文件` : '暂无文件' }}</span>
         </div>
-        <n-button quaternary size="small" @click="workPanelOpen = false">收起</n-button>
+        <div class="work-panel-actions">
+          <button
+            type="button"
+            class="panel-icon-button"
+            title="下载全部"
+            aria-label="下载全部"
+            :disabled="!currentArtifacts.length || artifactDownloading"
+            @click="downloadAllConversationArtifacts"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3v12" />
+              <path d="m7 10 5 5 5-5" />
+              <path d="M5 21h14" />
+            </svg>
+          </button>
+          <button type="button" class="panel-icon-button" title="关闭" aria-label="关闭" @click="workPanelOpen = false">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
 
-      <section class="panel-card">
-        <div class="panel-title">
-          <span>任务进度</span>
-          <small>Todo list</small>
-        </div>
-        <label v-for="todo in todos" :key="todo.id" class="todo-item">
-          <input type="checkbox" :checked="todo.done" disabled />
-          <span>{{ todo.title }}</span>
-        </label>
-      </section>
-
-      <section class="panel-card preview-card">
-        <div class="panel-title">
-          <span>预览插槽</span>
-          <small>Excel / Word / PDF / Markdown</small>
-        </div>
-        <div class="preview-placeholder">
-          <div class="file-stack">
-            <span>XLSX</span>
-            <span>DOCX</span>
-            <span>PDF</span>
-            <span>MD</span>
+      <section class="artifact-panel-section">
+        <div v-if="artifactsLoading" class="artifact-empty">正在加载文件...</div>
+        <div v-else-if="!currentArtifacts.length" class="artifact-empty">当前会话还没有可下载文件</div>
+        <div v-else class="artifact-list">
+          <div
+            v-for="artifact in currentArtifacts"
+            :key="artifact.artifactId"
+            class="artifact-list-item"
+            :class="{ active: selectedArtifact?.artifactId === artifact.artifactId }"
+          >
+            <button type="button" class="artifact-preview-trigger" @click="selectArtifact(artifact)">
+              <span class="artifact-file-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                  <path d="M8 13h8M8 17h6" />
+                </svg>
+              </span>
+              <span class="artifact-file-meta">
+                <strong>{{ artifact.fileName }}</strong>
+                <small>{{ formatFileSize(artifact.sizeBytes) }}</small>
+              </span>
+            </button>
+            <span class="artifact-item-actions">
+              <button
+                type="button"
+                title="下载"
+                aria-label="下载"
+                :disabled="artifactDownloading"
+                @click="downloadOneArtifact(artifact)"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3v12" />
+                  <path d="m7 10 5 5 5-5" />
+                  <path d="M5 21h14" />
+                </svg>
+              </button>
+            </span>
           </div>
-          <p>后续文件预览组件会挂载在这里，不挤占主聊天区。</p>
         </div>
       </section>
     </aside>
+
+    <n-modal
+      v-model:show="artifactPreviewOpen"
+      class="artifact-preview-modal"
+      to="body"
+      transform-origin="center"
+    >
+      <section class="artifact-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="artifact-preview-title">
+        <header class="artifact-preview-dialog-header">
+          <div>
+            <h3 id="artifact-preview-title">{{ selectedArtifact?.fileName || '文件预览' }}</h3>
+            <span>{{ artifactPreviewSubtitle }}</span>
+          </div>
+          <div class="artifact-preview-dialog-actions">
+            <button
+              v-if="selectedArtifact"
+              type="button"
+              class="panel-text-button"
+              :disabled="artifactDownloading"
+              @click="downloadOneArtifact(selectedArtifact)"
+            >
+              下载
+            </button>
+            <button type="button" class="panel-icon-button" title="关闭" aria-label="关闭" @click="artifactPreviewOpen = false">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="artifact-preview-dialog-body">
+          <div v-if="artifactPreviewLoading" class="artifact-preview-state">正在读取预览...</div>
+          <div v-else-if="!selectedArtifact" class="artifact-preview-state">请选择一个文件</div>
+          <div v-else-if="!artifactPreview" class="artifact-preview-state">正在准备文件预览</div>
+          <div v-else-if="currentArtifactPreviewMode === 'code'" class="artifact-code-preview">
+            <div class="artifact-preview-toolbar">
+              <span>{{ artifactPreviewTitle(currentArtifactPreviewMode) }}</span>
+              <small v-if="currentArtifactLanguage">{{ currentArtifactLanguage }}</small>
+            </div>
+            <pre><code class="hljs" :class="currentArtifactLanguage ? `language-${currentArtifactLanguage}` : ''" v-html="highlightedArtifactHtml" /></pre>
+            <span v-if="artifactPreview.truncated" class="artifact-preview-note">预览已截断</span>
+          </div>
+          <div v-else-if="currentArtifactPreviewMode === 'text'" class="artifact-text-preview">
+            <pre>{{ artifactPreview.content }}</pre>
+            <span v-if="artifactPreview.truncated" class="artifact-preview-note">预览已截断</span>
+          </div>
+          <div v-else class="artifact-preview-state">
+            <strong>暂不支持预览该文件</strong>
+            <span>当前可以直接下载，后续会在这里接入 Word、PowerPoint、Excel 等文件预览。</span>
+          </div>
+        </div>
+      </section>
+    </n-modal>
 
     <n-modal
       v-model:show="deleteConfirmOpen"
@@ -575,13 +695,18 @@ export function validateReuseImageCount(pendingCount: number, reuseCount: number
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMessage, NButton, NDropdown, NInput, NModal, NSelect } from 'naive-ui'
+import 'highlight.js/styles/github.css'
 
 import {
   confirmImageUpload,
   createImageUploadUrl,
   deleteConversation,
+  downloadAllArtifacts,
+  downloadArtifact,
   fetchAvailableAgents,
   fetchAvailableModels,
+  fetchArtifactContent,
+  fetchConversationArtifacts,
   fetchConversationMessages,
   fetchConversations,
   openChatStream,
@@ -590,15 +715,32 @@ import {
 import type {
   AvailableAgentRecord,
   AvailableModelRecord,
+  ChatArtifactContentRecord,
+  ChatArtifactRecord,
   ChatAttachmentRecord,
   ChatMessageRecord,
   ConversationRecord
 } from '../api/chat'
 import { useAuthStore } from '../stores/auth'
 import { renderAssistantMarkdown } from './message-render.helpers'
+import {
+  artifactPreviewTitle,
+  languageFromArtifact,
+  renderHighlightedCode,
+  resolveArtifactPreviewMode
+} from './artifact-preview.helpers'
 import { buildReasoningStatusText } from './reasoning-timer.helpers'
 import { validateImageCount, validateImageFile } from './chat-attachments.helpers'
 import { updatePendingImageByLocalId } from './chat-pending-images.helpers'
+import {
+  appendReasoningEvent,
+  applyToolCallEvent,
+  applyToolOutputEvent,
+  applyToolResultEvent,
+  createInitialProcessEvents,
+  createProcessEvents
+} from './chat-tool-events.helpers'
+import type { ChatProcessEvent } from './chat-tool-events.helpers'
 import {
   canClearAgentSelection,
   mapConversationRecord,
@@ -615,11 +757,12 @@ interface ChatMessageItem {
   role: ChatRole
   content: string
   reasoningContent?: string
-  reasoningExpanded?: boolean
+  processExpanded?: boolean
   reasoningStartedAt?: number
   reasoningFinishedAt?: number
   status?: string
   attachments?: ChatAttachmentItem[]
+  processEvents?: ChatProcessEvent[]
 }
 
 interface ChatAttachmentItem {
@@ -631,6 +774,16 @@ interface ChatAttachmentItem {
   previewUrl?: string | null
   message?: string | null
   messageId?: number | null
+}
+
+interface ChatArtifactItem {
+  artifactId: number
+  fileName: string
+  relativePath: string
+  contentType: string
+  sizeBytes: number
+  sha256?: string | null
+  version?: number | null
 }
 
 interface AgentOption {
@@ -678,6 +831,13 @@ const selectedReuseAttachmentIds = ref<number[]>([])
 const selectedModel = ref<number | null>(null)
 const availableModels = ref<AvailableModelRecord[]>([])
 const reasoningNow = ref(Date.now())
+const artifactMap = ref<Record<number, ChatArtifactItem[]>>({})
+const selectedArtifactId = ref<number | null>(null)
+const artifactPreview = ref<ChatArtifactContentRecord | null>(null)
+const artifactPreviewOpen = ref(false)
+const artifactsLoading = ref(false)
+const artifactPreviewLoading = ref(false)
+const artifactDownloading = ref(false)
 let reasoningTimer: ReturnType<typeof window.setInterval> | null = null
 let sentLocalPreviewUrls = new Set<string>()
 
@@ -744,6 +904,46 @@ const todos = [
 const currentMessages = computed(() =>
   activeConversationId.value ? messageMap.value[activeConversationId.value] ?? [] : []
 )
+const currentArtifacts = computed(() =>
+  activeConversationId.value && activeConversationId.value > 0
+    ? artifactMap.value[activeConversationId.value] ?? []
+    : []
+)
+const selectedArtifact = computed(() =>
+  currentArtifacts.value.find((item) => item.artifactId === selectedArtifactId.value) ?? currentArtifacts.value[0] ?? null
+)
+const currentArtifactLanguage = computed(() => {
+  const artifact = selectedArtifact.value
+  if (!artifact) {
+    return ''
+  }
+  return languageFromArtifact(artifact.fileName, artifactPreview.value?.contentType ?? artifact.contentType)
+})
+const currentArtifactPreviewMode = computed(() => {
+  const artifact = selectedArtifact.value
+  if (!artifact) {
+    return 'unsupported'
+  }
+  return resolveArtifactPreviewMode({
+    fileName: artifact.fileName,
+    contentType: artifactPreview.value?.contentType ?? artifact.contentType,
+    previewable: artifactPreview.value?.previewable ?? null
+  })
+})
+const highlightedArtifactHtml = computed(() => {
+  if (!artifactPreview.value?.content) {
+    return ''
+  }
+  return renderHighlightedCode(artifactPreview.value.content, currentArtifactLanguage.value)
+})
+const artifactPreviewSubtitle = computed(() => {
+  const artifact = selectedArtifact.value
+  if (!artifact) {
+    return '选择一个文件开始预览'
+  }
+  const modeTitle = artifactPreviewTitle(currentArtifactPreviewMode.value)
+  return `${modeTitle} · ${formatFileSize(artifact.sizeBytes)}`
+})
 const activeAgentLocked = computed(() =>
   !canClearAgentSelection({
     activeConversation: activeConversation.value,
@@ -801,9 +1001,10 @@ function mapMessage(item: ChatMessageRecord): ChatMessageItem {
     role: item.role.toLowerCase() === 'user' ? 'user' : 'assistant',
     content: item.content,
     reasoningContent: item.reasoningContent ?? '',
-    reasoningExpanded: false,
+    processExpanded: false,
     status: item.status,
-    attachments: item.attachments?.map(mapAttachment) ?? []
+    attachments: item.attachments?.map(mapAttachment) ?? [],
+    processEvents: createInitialProcessEvents(item.reasoningContent, item.processEvents)
   }
 }
 
@@ -820,6 +1021,18 @@ function mapAttachment(item: ChatAttachmentRecord): ChatAttachmentItem {
   }
 }
 
+function mapArtifact(item: ChatArtifactRecord): ChatArtifactItem {
+  return {
+    artifactId: item.artifactId,
+    fileName: item.fileName,
+    relativePath: item.relativePath,
+    contentType: item.contentType,
+    sizeBytes: item.sizeBytes,
+    sha256: item.sha256 ?? null,
+    version: item.version ?? null
+  }
+}
+
 async function loadConversations() {
   try {
     const data = await fetchConversations()
@@ -832,6 +1045,7 @@ async function loadConversations() {
       activeConversationId.value = conversations.value[0].id
       syncActiveAgentFromConversation(conversations.value[0])
       await loadMessages(conversations.value[0].id)
+      await loadArtifacts(conversations.value[0].id)
     }
   } catch (error) {
     message.error(error instanceof Error ? error.message : '加载会话失败')
@@ -844,6 +1058,25 @@ async function loadMessages(conversationId: number) {
     messageMap.value[conversationId] = data.map(mapMessage)
   } catch (error) {
     message.error(error instanceof Error ? error.message : '加载消息失败')
+  }
+}
+
+async function loadArtifacts(conversationId: number) {
+  if (conversationId <= 0) {
+    return
+  }
+  try {
+    artifactsLoading.value = true
+    const data = await fetchConversationArtifacts(conversationId)
+    artifactMap.value[conversationId] = data.map(mapArtifact)
+    if (!artifactMap.value[conversationId].some((item) => item.artifactId === selectedArtifactId.value)) {
+      selectedArtifactId.value = artifactMap.value[conversationId][0]?.artifactId ?? null
+      artifactPreview.value = null
+    }
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '加载文件失败')
+  } finally {
+    artifactsLoading.value = false
   }
 }
 
@@ -892,6 +1125,9 @@ function createConversation() {
   // 重置到空状态，让用户发送消息时才创建新对话
   activeConversationId.value = null
   workPanelOpen.value = false
+  selectedArtifactId.value = null
+  artifactPreview.value = null
+  artifactPreviewOpen.value = false
   prompt.value = ''
   clearPendingImages()
   clearSelectedReuseAttachments()
@@ -903,8 +1139,11 @@ async function switchConversation(conversationId: number) {
   prompt.value = ''
   clearPendingImages()
   clearSelectedReuseAttachments()
+  artifactPreviewOpen.value = false
+  artifactPreview.value = null
   syncActiveAgentFromConversation()
   await loadMessages(conversationId)
+  await loadArtifacts(conversationId)
 }
 
 function selectThinkingMode(mode: ThinkingMode) {
@@ -1001,13 +1240,18 @@ async function confirmDeleteConversation() {
     await deleteConversation(conversationId)
     conversations.value = conversations.value.filter((item) => item.id !== conversationId)
     delete messageMap.value[conversationId]
+    delete artifactMap.value[conversationId]
     if (activeConversationId.value === conversationId) {
       clearSelectedReuseAttachments()
       clearPendingImages()
+      selectedArtifactId.value = null
+      artifactPreview.value = null
+      artifactPreviewOpen.value = false
       activeConversationId.value = conversations.value[0]?.id ?? null
       if (activeConversationId.value) {
         syncActiveAgentFromConversation()
         await loadMessages(activeConversationId.value)
+        await loadArtifacts(activeConversationId.value)
       } else {
         syncActiveAgentFromConversation(null)
       }
@@ -1244,7 +1488,24 @@ function revokeSentPreviewUrls() {
 async function refreshActiveConversationMessages() {
   const conversationId = activeConversationId.value
   if (conversationId && conversationId > 0) {
-    await loadMessages(conversationId)
+    const existingProcessEvents = new Map(
+      (messageMap.value[conversationId] ?? [])
+        .filter((item) => item.processEvents?.length)
+        .map((item) => [item.id, item.processEvents as ChatProcessEvent[]])
+    )
+    const data = await fetchConversationMessages(conversationId)
+    messageMap.value[conversationId] = data.map((item) => {
+      const mapped = mapMessage(item)
+      mapped.processEvents = existingProcessEvents.get(mapped.id) ?? mapped.processEvents
+      return mapped
+    })
+  }
+}
+
+async function refreshActiveArtifacts() {
+  const conversationId = activeConversationId.value
+  if (conversationId && conversationId > 0) {
+    await loadArtifacts(conversationId)
   }
 }
 
@@ -1273,6 +1534,101 @@ function previewMessageAttachment(attachment: ChatAttachmentItem) {
   imagePreviewUrl.value = attachment.previewUrl ?? null
 }
 
+function shouldShowArtifactBundle(messageItem: ChatMessageItem) {
+  if (messageItem.role !== 'assistant' || !currentArtifacts.value.length) {
+    return false
+  }
+  const assistantMessages = currentMessages.value.filter((item) => item.role === 'assistant')
+  return assistantMessages[assistantMessages.length - 1]?.id === messageItem.id
+}
+
+async function openArtifactPanel(artifact?: ChatArtifactItem) {
+  workPanelOpen.value = true
+  const conversationId = activeConversationId.value
+  if (!conversationId || conversationId <= 0) {
+    return
+  }
+  if (!currentArtifacts.value.length) {
+    await loadArtifacts(conversationId)
+  }
+  const target = artifact ?? null
+  if (target) {
+    await selectArtifact(target)
+  }
+}
+
+async function selectArtifact(artifact: ChatArtifactItem) {
+  const conversationId = activeConversationId.value
+  if (!conversationId || conversationId <= 0) {
+    return
+  }
+  selectedArtifactId.value = artifact.artifactId
+  artifactPreviewOpen.value = true
+  artifactPreview.value = null
+  try {
+    artifactPreviewLoading.value = true
+    artifactPreview.value = await fetchArtifactContent(conversationId, artifact.artifactId)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '预览文件失败')
+  } finally {
+    artifactPreviewLoading.value = false
+  }
+}
+
+async function downloadOneArtifact(artifact: ChatArtifactItem) {
+  const conversationId = activeConversationId.value
+  if (!conversationId || conversationId <= 0) {
+    return
+  }
+  try {
+    artifactDownloading.value = true
+    const result = await downloadArtifact(conversationId, artifact.artifactId, artifact.fileName)
+    saveBlob(result.blob, result.filename)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '下载文件失败')
+  } finally {
+    artifactDownloading.value = false
+  }
+}
+
+async function downloadAllConversationArtifacts() {
+  const conversationId = activeConversationId.value
+  if (!conversationId || conversationId <= 0 || !currentArtifacts.value.length) {
+    return
+  }
+  try {
+    artifactDownloading.value = true
+    const result = await downloadAllArtifacts(conversationId)
+    saveBlob(result.blob, result.filename)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '下载全部文件失败')
+  } finally {
+    artifactDownloading.value = false
+  }
+}
+
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename || 'download'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+function formatFileSize(size: number | null | undefined) {
+  const value = Number(size ?? 0)
+  if (value < 1024) {
+    return `${value} bytes`
+  }
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`
+  }
+  return `${(value / 1024 / 1024).toFixed(1)} MB`
+}
+
 function copyMessage(content: string) {
   navigator.clipboard.writeText(content).then(
     () => message.success('已复制到剪贴板'),
@@ -1280,15 +1636,15 @@ function copyMessage(content: string) {
   )
 }
 
-function toggleReasoning(messageItem: ChatMessageItem) {
-  messageItem.reasoningExpanded = !messageItem.reasoningExpanded
+function toggleProcess(messageItem: ChatMessageItem) {
+  messageItem.processExpanded = !messageItem.processExpanded
 }
 
-function reasoningStatusText(messageItem: ChatMessageItem) {
+function processStatusText(messageItem: ChatMessageItem) {
   const elapsedMs = reasoningElapsedMs(messageItem)
 
   if (elapsedMs === null) {
-    return '思考过程'
+    return messageItem.status === 'STREAMING' ? '处理中' : '处理过程'
   }
 
   return buildReasoningStatusText(elapsedMs, Boolean(messageItem.reasoningFinishedAt))
@@ -1423,10 +1779,11 @@ function handleSend() {
     role: 'assistant',
     content: '',
     reasoningContent: '',
-    reasoningExpanded: thinkingMode.value === 'thinking',
+    processExpanded: false,
     reasoningStartedAt: undefined,
     reasoningFinishedAt: undefined,
-    status: 'STREAMING'
+    status: 'STREAMING',
+    processEvents: createProcessEvents()
   })
 
   const currentPrompt = trimmedPrompt
@@ -1481,12 +1838,31 @@ function handleSend() {
         if (assistantMessage) {
           startReasoningTiming(assistantMessage)
           assistantMessage.reasoningContent = `${assistantMessage.reasoningContent ?? ''}${data.content}`
+          appendReasoningEvent(ensureProcessEvents(assistantMessage), data.content)
         }
       },
       onAnswerDelta: (data) => {
         const assistantMessage = findAssistantMessage(currentAssistantMessageId)
         if (assistantMessage) {
           assistantMessage.content += data.content
+        }
+      },
+      onToolCall: (data) => {
+        const assistantMessage = findAssistantMessage(currentAssistantMessageId)
+        if (assistantMessage) {
+          applyToolCallEvent(ensureProcessEvents(assistantMessage), data)
+        }
+      },
+      onToolOutput: (data) => {
+        const assistantMessage = findAssistantMessage(currentAssistantMessageId)
+        if (assistantMessage) {
+          applyToolOutputEvent(ensureProcessEvents(assistantMessage), data)
+        }
+      },
+      onToolResult: (data) => {
+        const assistantMessage = findAssistantMessage(currentAssistantMessageId)
+        if (assistantMessage) {
+          applyToolResultEvent(ensureProcessEvents(assistantMessage), data)
         }
       },
       onMessageCompleted: (data) => {
@@ -1501,17 +1877,20 @@ function handleSend() {
         message.error(data.message ?? '\u6d41\u5f0f\u54cd\u5e94\u5931\u8d25')
         closeStream()
         void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
+        void refreshActiveArtifacts()
       },
       onDone: () => {
         finishReasoningTiming(findAssistantMessage(currentAssistantMessageId))
         closeStream()
         void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
+        void refreshActiveArtifacts()
         void loadConversations()
       },
       onTransportError: () => {
         finishReasoningTiming(findAssistantMessage(currentAssistantMessageId))
         closeStream()
         void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
+        void refreshActiveArtifacts()
       }
     }
   )
@@ -1523,6 +1902,38 @@ function findAssistantMessage(messageId: number) {
   }
 
   return ensureConversationMessages(activeConversationId.value).find((item) => item.id === messageId)
+}
+
+function ensureProcessEvents(messageItem: ChatMessageItem) {
+  if (!messageItem.processEvents) {
+    messageItem.processEvents = createProcessEvents()
+  }
+  return messageItem.processEvents
+}
+
+function processEventKey(event: ChatProcessEvent, index: number) {
+  return event.type === 'tool' ? `tool-${event.tool.toolCallId}` : `reasoning-${index}`
+}
+
+function toolDisplayName(name: string) {
+  const names: Record<string, string> = {
+    exec: '执行命令',
+    read_file: '读取文件',
+    write_file: '写入文件',
+    list_files: '浏览文件',
+    upload_file: '导入文件'
+  }
+  return names[name] ?? name
+}
+
+function toolStatusText(status: string) {
+  const statuses: Record<string, string> = {
+    running: '进行中',
+    completed: '已完成',
+    failed: '失败',
+    timeout: '超时'
+  }
+  return statuses[status] ?? status
 }
 
 function handleLogout() {
@@ -1613,7 +2024,12 @@ onMounted(() => {
 .agent-option,
 .mode-option,
 .message-attachment,
-.history-image-option {
+.history-image-option,
+.artifact-bundle-card button,
+.panel-icon-button,
+.panel-text-button,
+.artifact-preview-trigger,
+.artifact-item-actions button {
   border: 0;
   background: transparent;
   color: inherit;
@@ -2419,7 +2835,7 @@ svg {
   text-align: left;
 }
 
-.reasoning-block {
+.process-block {
   display: grid;
   gap: 14px;
   margin-bottom: 18px;
@@ -2427,11 +2843,11 @@ svg {
   border-bottom: 1px solid #edf0f3;
 }
 
-.reasoning-block.collapsed {
+.process-block.collapsed {
   gap: 0;
 }
 
-.reasoning-toggle {
+.process-toggle {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2448,12 +2864,12 @@ svg {
   text-align: left;
 }
 
-.reasoning-toggle span {
+.process-toggle span {
   font-size: 13px;
   font-weight: 500;
 }
 
-.reasoning-caret {
+.process-caret {
   width: 7px;
   height: 7px;
   border-right: 1.5px solid currentColor;
@@ -2462,18 +2878,148 @@ svg {
   transition: transform 0.16s ease;
 }
 
-.reasoning-toggle[aria-expanded='false'] .reasoning-caret {
+.process-toggle[aria-expanded='false'] .process-caret {
   transform: translateY(1px) rotate(-45deg);
 }
 
-.reasoning-content {
+.process-content {
+  display: grid;
+  gap: 12px;
   margin: 0 0 16px 0;
   padding-left: 14px;
   border-left: 2px solid #e5e7eb;
+}
+
+.process-reasoning {
+  margin: 0;
   color: #4b5563;
   font-size: 14px;
   line-height: 1.85;
   white-space: pre-wrap;
+}
+
+.process-tool {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.process-tool-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #374151;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.process-tool-icon {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: #4f46e5;
+}
+
+.process-tool-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.process-tool-title {
+  font-weight: 600;
+}
+
+.process-tool-status {
+  color: #6b7280;
+}
+
+.process-tool-output {
+  overflow: auto;
+  max-height: 160px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #334155;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.process-tool-output.error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.process-tool-result {
+  margin: 0;
+  color: #4b5563;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.artifact-bundle-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: min(100%, var(--chat-column-width));
+  margin: 18px 0 10px;
+  padding: 12px 14px;
+  border: 1px solid #d9dce3;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.artifact-bundle-icon {
+  display: grid;
+  width: 42px;
+  height: 34px;
+  place-items: center;
+  color: #6b7280;
+}
+
+.artifact-bundle-icon svg {
+  width: 38px;
+  height: 30px;
+}
+
+.artifact-bundle-text {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.artifact-bundle-text strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-bundle-text small {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.artifact-bundle-card button {
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: #f4f4f5;
+  color: #111827;
+  font-size: 13px;
+}
+
+.artifact-bundle-card button:hover {
+  background: #e9eaee;
 }
 
 .message-tools {
@@ -2709,6 +3255,40 @@ svg {
   padding: 6px 2px;
 }
 
+.work-panel-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.panel-icon-button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 8px;
+  color: #374151;
+}
+
+.panel-icon-button:hover:not(:disabled),
+.artifact-item-actions button:hover:not(:disabled),
+.panel-text-button:hover:not(:disabled) {
+  background: #f1f2f4;
+}
+
+.panel-icon-button:disabled,
+.artifact-item-actions button:disabled,
+.panel-text-button:disabled {
+  color: #c0c4cc;
+  cursor: not-allowed;
+}
+
+.panel-icon-button svg,
+.artifact-item-actions svg {
+  width: 17px;
+  height: 17px;
+}
+
 .work-panel-header strong,
 .work-panel-header span,
 .panel-title span,
@@ -2727,6 +3307,241 @@ svg {
 .preview-placeholder p {
   color: #6b7280;
   font-size: 12px;
+}
+
+.artifact-panel-section {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.artifact-list {
+  display: grid;
+  gap: 8px;
+}
+
+.artifact-list-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.artifact-list-item.active {
+  border-color: #d6dae2;
+  background: #f8fafc;
+}
+
+.artifact-preview-trigger {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  text-align: left;
+}
+
+.artifact-file-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  color: #6b7280;
+}
+
+.artifact-file-icon svg {
+  width: 26px;
+  height: 26px;
+}
+
+.artifact-file-meta {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.artifact-file-meta strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-file-meta small {
+  color: #6b7280;
+  font-size: 11px;
+}
+
+.artifact-item-actions {
+  display: inline-flex;
+  padding-right: 4px;
+}
+
+.artifact-item-actions button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 8px;
+  color: #374151;
+}
+
+.panel-text-button {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border-radius: 8px;
+  color: #374151;
+  font-size: 12px;
+}
+
+.artifact-empty {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.artifact-empty {
+  display: grid;
+  min-height: 96px;
+  place-items: center;
+  border: 1px dashed #d9dce3;
+  border-radius: 8px;
+  background: #fafafa;
+  text-align: center;
+}
+
+.artifact-preview-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(1120px, calc(100vw - 48px));
+  height: min(760px, calc(100vh - 48px));
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.18);
+}
+
+.artifact-preview-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  padding: 14px 16px;
+  border-bottom: 1px solid #ececf1;
+}
+
+.artifact-preview-dialog-header h3 {
+  overflow: hidden;
+  margin: 0;
+  color: #111827;
+  font-size: 15px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-preview-dialog-header span {
+  display: block;
+  margin-top: 2px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.artifact-preview-dialog-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.artifact-preview-dialog-body {
+  min-height: 0;
+  min-width: 0;
+  padding: 14px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.artifact-code-preview,
+.artifact-text-preview {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  height: 100%;
+  min-width: 0;
+}
+
+.artifact-preview-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #374151;
+  font-size: 12px;
+}
+
+.artifact-preview-toolbar small {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.artifact-code-preview pre,
+.artifact-text-preview pre {
+  overflow: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 14px;
+  border: 1px solid #e4e7ec;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f2937;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.artifact-code-preview code {
+  display: block;
+  min-width: max-content;
+  padding: 0;
+  background: transparent;
+}
+
+.artifact-text-preview pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.artifact-preview-note {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.artifact-preview-state {
+  display: grid;
+  gap: 6px;
+  height: 100%;
+  min-height: 240px;
+  place-content: center;
+  justify-items: center;
+  border: 1px dashed #d9dce3;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #6b7280;
+  font-size: 13px;
+  text-align: center;
+}
+
+.artifact-preview-state strong {
+  color: #111827;
+  font-size: 15px;
 }
 
 .panel-card {

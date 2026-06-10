@@ -1,3 +1,5 @@
+//go:build unix
+
 package agent
 
 import (
@@ -46,6 +48,23 @@ func TestExecutorCapturesStderr(t *testing.T) {
 	}
 	if !hasEvent(events, "stderr_delta", "definitely_missing_agent_hub_test_path") {
 		t.Fatalf("expected stderr_delta missing path event, got %#v", events)
+	}
+}
+
+func TestExecutorRunsShellComposition(t *testing.T) {
+	executor := NewExecutor(1024)
+
+	result := executor.Exec(context.Background(), ExecRequest{
+		Command:        "cat <<'EOF' > output.txt\n3 1 2\nEOF\ncat output.txt",
+		WorkingDir:     t.TempDir(),
+		TimeoutSeconds: 5,
+	}, nil)
+
+	if result.ExitCode != 0 {
+		t.Fatalf("ExitCode = %d, want 0, stderr = %q", result.ExitCode, result.StderrExcerpt)
+	}
+	if result.StdoutExcerpt != "3 1 2\n" {
+		t.Fatalf("StdoutExcerpt = %q, want generated file content", result.StdoutExcerpt)
 	}
 }
 

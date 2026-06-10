@@ -1,10 +1,3 @@
-//go:build minio
-
-// MinIO 实现只在使用 -tags minio 构建时启用。
-// 当前受限环境没有 Go 工具链，因此 go.mod/go.sum 尚未加入 MinIO 依赖；
-// 在可用 Go 工具链的环境中启用该实现前，需要执行
-// go get github.com/minio/minio-go/v7
-// 以更新 go.mod/go.sum。
 package objectstore
 
 import (

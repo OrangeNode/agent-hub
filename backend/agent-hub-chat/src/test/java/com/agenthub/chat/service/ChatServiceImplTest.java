@@ -31,6 +31,7 @@ import com.agenthub.sse.SseEventData;
 import com.agenthub.sse.SseEventSender;
 import com.agenthub.sse.SseEventType;
 import com.agenthub.sandbox.client.dto.SandboxEvent;
+import com.agenthub.sandbox.client.dto.SandboxFileItem;
 import com.agenthub.sandbox.service.SandboxSessionService;
 import com.agenthub.sandbox.service.SandboxToolService;
 import com.agenthub.storage.attachment.dto.AttachmentItem;
@@ -39,6 +40,7 @@ import com.agenthub.storage.attachment.service.AttachmentService;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executor;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -352,10 +354,12 @@ class ChatServiceImplTest {
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
                 attachmentService, new RecordingLlmClient(List.of(LlmStreamChunk.done())));
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
-        when(messageMapper.selectList(any())).thenReturn(List.of(
-                message(1L, 100L, 7L, "USER", "看图"),
-                message(2L, 100L, 7L, "ASSISTANT", "这是一只猫")
-        ));
+        ChatMessage userMessage = message(1L, 100L, 7L, "USER", "看图");
+        ChatMessage assistantMessage = message(2L, 100L, 7L, "ASSISTANT", "这是一只猫");
+        assistantMessage.setProcessEvents("""
+                [{"type":"tool","tool":{"toolCallId":"call_1","name":"exec","status":"completed","stdout":"ok","stderr":"","result":"stdout:\\nok\\nstderr:\\n"}}]
+                """);
+        when(messageMapper.selectList(any())).thenReturn(List.of(userMessage, assistantMessage));
         AttachmentItem attachment = new AttachmentItem(
                 10L,
                 "cat.png",
@@ -373,6 +377,9 @@ class ChatServiceImplTest {
         assertThat(messages).hasSize(2);
         assertThat(messages.get(0).attachments()).containsExactly(attachment);
         assertThat(messages.get(1).attachments()).isEmpty();
+        assertThat(messages.get(1).processEvents()).hasSize(1);
+        assertThat(messages.get(1).processEvents().getFirst().tool().name()).isEqualTo("exec");
+        assertThat(messages.get(1).processEvents().getFirst().tool().stdout()).isEqualTo("ok");
     }
 
     @Test
@@ -692,6 +699,93 @@ class ChatServiceImplTest {
                 SseEventType.MESSAGE_COMPLETED,
                 SseEventType.DONE
         );
+        ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        assertThat(updatedMessageCaptor.getValue().getProcessEvents())
+                .contains("\"type\":\"tool\"", "\"name\":\"exec\"", "\"stdout\":\"ok\"");
+    }
+
+    @Test
+    void shouldAllowOneHundredSandboxToolCallsBeforeCompleting() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        SandboxSessionService sandboxSessionService = mock(SandboxSessionService.class);
+        SandboxToolService sandboxToolService = mock(SandboxToolService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        CountingToolLoopClient llmClient = new CountingToolLoopClient(100);
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                sender,
+                mock(AttachmentService.class),
+                null,
+                contextBuilder(messageMapper, mock(AttachmentService.class), llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                sandboxSessionService,
+                sandboxToolService
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(sandboxSessionService.ensureSession(7L, 100L)).thenReturn("sbx_1");
+        when(sandboxToolService.listFiles(7L, 100L, "sbx_1", "/workspace/artifacts", true)).thenReturn(List.of(
+                new SandboxFileItem("output.txt", "/workspace/artifacts/output.txt", 5L, false)
+        ));
+
+        service.stream(7L, 100L, 10L, null, "生成一百步文件任务", false, List.of(), List.of());
+
+        assertThat(llmClient.requests).hasSize(101);
+        verify(sandboxToolService, org.mockito.Mockito.times(100))
+                .listFiles(7L, 100L, "sbx_1", "/workspace/artifacts", true);
+        ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        assertThat(updatedMessageCaptor.getValue().getStatus()).isEqualTo("COMPLETED");
+        assertThat(updatedMessageCaptor.getValue().getContent()).isEqualTo("全部工具调用完成");
+    }
+
+    @Test
+    void shouldIncludeSandboxPathRulesInSystemPromptWhenToolsAvailable() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.done()));
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                sender,
+                mock(AttachmentService.class),
+                null,
+                contextBuilder(messageMapper, mock(AttachmentService.class), llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                mock(SandboxSessionService.class),
+                mock(SandboxToolService.class)
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.insert(any(ChatConversation.class))).thenAnswer(invocation -> {
+            ChatConversation conversation = invocation.getArgument(0);
+            conversation.setId(100L);
+            return 1;
+        });
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+
+        service.stream(7L, null, 10L, null,
+                "写一个 python 快速排序算法，输入数据为 input.txt，输出结果为 output.txt，最后把代码和 input、output 给我下载",
+                false, List.of(), List.of());
+
+        assertThat(llmClient.lastRequest).isNotNull();
+        assertThat(llmClient.lastRequest.messages().getFirst().role()).isEqualTo("system");
+        assertThat(llmClient.lastRequest.messages().getFirst().content())
+                .contains("/workspace/input", "/workspace/artifacts", "相对路径", "write_file", "下载", "exec");
     }
 
     @Test
@@ -1093,6 +1187,7 @@ class ChatServiceImplTest {
             copied.setRole(source.getRole());
             copied.setContent(source.getContent());
             copied.setReasoningContent(source.getReasoningContent());
+            copied.setProcessEvents(source.getProcessEvents());
             copied.setProviderId(source.getProviderId());
             copied.setModelId(source.getModelId());
             copied.setStatus(source.getStatus());
@@ -1142,6 +1237,33 @@ class ChatServiceImplTest {
             requests.add(request);
             List<LlmStreamChunk> chunks = attempts.get(Math.min(requests.size() - 1, attempts.size() - 1));
             chunks.forEach(chunkConsumer);
+        }
+    }
+
+    private static class CountingToolLoopClient implements LlmClient {
+
+        private final int toolCallCount;
+        private final List<com.agenthub.ai.llm.LlmStreamRequest> requests = new ArrayList<>();
+
+        private CountingToolLoopClient(int toolCallCount) {
+            this.toolCallCount = toolCallCount;
+        }
+
+        @Override
+        public void stream(com.agenthub.ai.llm.LlmStreamRequest request, java.util.function.Consumer<LlmStreamChunk> chunkConsumer) {
+            requests.add(request);
+            int index = requests.size();
+            if (index <= toolCallCount) {
+                chunkConsumer.accept(LlmStreamChunk.toolCall(new LlmToolCall(
+                        "call_" + index,
+                        "list_files",
+                        Map.of("path", "/workspace/artifacts", "recursive", true)
+                )));
+                chunkConsumer.accept(LlmStreamChunk.done());
+                return;
+            }
+            chunkConsumer.accept(LlmStreamChunk.answer("全部工具调用完成"));
+            chunkConsumer.accept(LlmStreamChunk.done());
         }
     }
 

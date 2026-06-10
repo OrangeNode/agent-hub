@@ -18,6 +18,7 @@ import com.agenthub.sandbox.session.mapper.SandboxSessionMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.agenthub.storage.attachment.dto.AttachmentImportSource;
 import com.agenthub.storage.attachment.service.AttachmentService;
+import com.agenthub.storage.object.ObjectStorageClient;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.net.http.HttpClient;
@@ -43,6 +44,9 @@ public class SandboxToolServiceImpl implements SandboxToolService {
     private static final String STATUS_FAILED = "FAILED";
     private static final String STATUS_TIMEOUT = "TIMEOUT";
     private static final int EXCERPT_LIMIT = 4096;
+    private static final String LEGACY_ARTIFACT_SYNC_COMMAND = "pwd";
+    private static final String LEGACY_ARTIFACT_SYNC_WORKING_DIR = "/workspace";
+    private static final int LEGACY_ARTIFACT_SYNC_TIMEOUT_SECONDS = 10;
 
     private final SandboxClient client;
     private final CommandPolicy commandPolicy;
@@ -50,6 +54,7 @@ public class SandboxToolServiceImpl implements SandboxToolService {
     private final SandboxExecutionMapper executionMapper;
     private final SandboxArtifactMapper artifactMapper;
     private final AttachmentService attachmentService;
+    private final ObjectStorageClient objectStorageClient;
     private final HttpClient httpClient;
 
     public SandboxToolServiceImpl(
@@ -59,7 +64,7 @@ public class SandboxToolServiceImpl implements SandboxToolService {
             SandboxExecutionMapper executionMapper,
             SandboxArtifactMapper artifactMapper
     ) {
-        this(client, commandPolicy, sessionMapper, executionMapper, artifactMapper, null, HttpClient.newHttpClient());
+        this(client, commandPolicy, sessionMapper, executionMapper, artifactMapper, null, null, HttpClient.newHttpClient());
     }
 
     @Autowired
@@ -69,9 +74,10 @@ public class SandboxToolServiceImpl implements SandboxToolService {
             SandboxSessionMapper sessionMapper,
             SandboxExecutionMapper executionMapper,
             SandboxArtifactMapper artifactMapper,
-            AttachmentService attachmentService
+            AttachmentService attachmentService,
+            ObjectStorageClient objectStorageClient
     ) {
-        this(client, commandPolicy, sessionMapper, executionMapper, artifactMapper, attachmentService,
+        this(client, commandPolicy, sessionMapper, executionMapper, artifactMapper, attachmentService, objectStorageClient,
                 HttpClient.newHttpClient());
     }
 
@@ -82,6 +88,7 @@ public class SandboxToolServiceImpl implements SandboxToolService {
             SandboxExecutionMapper executionMapper,
             SandboxArtifactMapper artifactMapper,
             AttachmentService attachmentService,
+            ObjectStorageClient objectStorageClient,
             HttpClient httpClient
     ) {
         this.client = client;
@@ -90,7 +97,20 @@ public class SandboxToolServiceImpl implements SandboxToolService {
         this.executionMapper = executionMapper;
         this.artifactMapper = artifactMapper;
         this.attachmentService = attachmentService;
+        this.objectStorageClient = objectStorageClient;
         this.httpClient = httpClient;
+    }
+
+    public SandboxToolServiceImpl(
+            SandboxClient client,
+            CommandPolicy commandPolicy,
+            SandboxSessionMapper sessionMapper,
+            SandboxExecutionMapper executionMapper,
+            SandboxArtifactMapper artifactMapper,
+            AttachmentService attachmentService
+    ) {
+        this(client, commandPolicy, sessionMapper, executionMapper, artifactMapper, attachmentService, null,
+                HttpClient.newHttpClient());
     }
 
     @Override
@@ -153,15 +173,20 @@ public class SandboxToolServiceImpl implements SandboxToolService {
     @Override
     public void writeFile(Long userId, Long conversationId, String sandboxSessionId,
                           String path, String content, boolean append) {
-        requireOwnedSession(userId, conversationId, sandboxSessionId);
-        String normalizedPath = commandPolicy.validateWorkspacePath(path, "路径不在允许访问范围内");
-        client.writeFile(sandboxSessionId, normalizedPath, content == null ? "" : content, append);
+        SandboxSession session = requireOwnedSession(userId, conversationId, sandboxSessionId);
+        String normalizedPath = commandPolicy.validateOutputPath(path);
+        List<SandboxArtifactItem> artifacts = client.writeFile(sandboxSessionId, normalizedPath,
+                content == null ? "" : content, append);
+        persistArtifacts(session.getId(), null, conversationId, artifacts);
+        if ((artifacts == null || artifacts.isEmpty()) && isArtifactPath(normalizedPath)) {
+            syncArtifactsForLegacyWriteFile(session, sandboxSessionId);
+        }
     }
 
     @Override
     public void uploadFile(Long userId, Long conversationId, String sandboxSessionId, Long attachmentId, String targetPath) {
         requireOwnedSession(userId, conversationId, sandboxSessionId);
-        String normalizedPath = commandPolicy.validateWorkspacePath(targetPath, "附件导入路径不在允许访问范围内");
+        String normalizedPath = commandPolicy.validateInputPath(targetPath);
         if (attachmentId == null) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "attachmentId 不能为空");
         }
@@ -188,6 +213,22 @@ public class SandboxToolServiceImpl implements SandboxToolService {
             latestByPath.putIfAbsent(record.getRelativePath(), record);
         }
         return latestByPath.values().stream().map(this::toItem).toList();
+    }
+
+    @Override
+    public byte[] readArtifact(Long userId, Long conversationId, Long artifactId) {
+        if (objectStorageClient == null) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "产物读取服务不可用");
+        }
+        SandboxArtifact artifact = artifactMapper.selectById(artifactId);
+        if (artifact == null || !sameId(artifact.getConversationId(), conversationId)) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "文件不存在");
+        }
+        SandboxSession session = sessionMapper.selectById(artifact.getSandboxSessionId());
+        if (session == null || !sameId(session.getUserId(), userId) || !sameId(session.getConversationId(), conversationId)) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "文件不存在");
+        }
+        return objectStorageClient.readBytes(artifact.getStorageBucket(), artifact.getStorageKey());
     }
 
     private SandboxSession requireOwnedSession(Long userId, Long conversationId, String sandboxSessionId) {
@@ -248,6 +289,52 @@ public class SandboxToolServiceImpl implements SandboxToolService {
                 artifact.getSha256(),
                 artifact.getVersion()
         );
+    }
+
+    private void persistArtifacts(Long sandboxSessionDbId, Long executionId, Long conversationId, List<SandboxArtifactItem> artifacts) {
+        if (artifacts == null || artifacts.isEmpty()) {
+            return;
+        }
+        for (SandboxArtifactItem item : artifacts) {
+            persistArtifact(sandboxSessionDbId, executionId, conversationId, item);
+        }
+    }
+
+    private void syncArtifactsForLegacyWriteFile(SandboxSession session, String sandboxSessionId) {
+        client.streamExec(sandboxSessionId, new ExecSandboxRequest(
+                "artifact_sync_write_file",
+                LEGACY_ARTIFACT_SYNC_COMMAND,
+                LEGACY_ARTIFACT_SYNC_WORKING_DIR,
+                LEGACY_ARTIFACT_SYNC_TIMEOUT_SECONDS
+        ), event -> {
+            if (event != null && "artifact_synced".equals(event.type())) {
+                persistArtifact(session.getId(), null, session.getConversationId(), event.artifact());
+            }
+        });
+    }
+
+    private boolean isArtifactPath(String path) {
+        return path != null && (path.equals("/workspace/artifacts") || path.startsWith("/workspace/artifacts/"));
+    }
+
+    private void persistArtifact(Long sandboxSessionDbId, Long executionId, Long conversationId, SandboxArtifactItem item) {
+        if (item == null) {
+            return;
+        }
+        SandboxArtifact artifact = new SandboxArtifact();
+        artifact.setSandboxSessionId(sandboxSessionDbId);
+        artifact.setExecutionId(executionId);
+        artifact.setConversationId(conversationId);
+        artifact.setRelativePath(item.relativePath());
+        artifact.setFileName(item.fileName());
+        artifact.setSizeBytes(item.sizeBytes() == null ? 0L : item.sizeBytes());
+        artifact.setSha256(item.sha256());
+        artifact.setContentType(item.contentType() == null ? "application/octet-stream" : item.contentType());
+        artifact.setStorageBucket(item.storageBucket());
+        artifact.setStorageKey(item.storageKey());
+        artifact.setVersion(item.version() == null ? 1 : item.version());
+        artifact.setCreatedAt(OffsetDateTime.now());
+        artifactMapper.insert(artifact);
     }
 
     private void forwardEvent(Consumer<SandboxEvent> eventConsumer, SandboxEvent event) {
@@ -337,23 +424,12 @@ public class SandboxToolServiceImpl implements SandboxToolService {
         }
 
         private void persistArtifact(SandboxArtifactItem item) {
-            if (item == null) {
-                return;
-            }
-            SandboxArtifact artifact = new SandboxArtifact();
-            artifact.setSandboxSessionId(execution.getSandboxSessionId());
-            artifact.setExecutionId(execution.getId());
-            artifact.setConversationId(execution.getConversationId());
-            artifact.setRelativePath(item.relativePath());
-            artifact.setFileName(item.fileName());
-            artifact.setSizeBytes(item.sizeBytes() == null ? 0L : item.sizeBytes());
-            artifact.setSha256(item.sha256());
-            artifact.setContentType(item.contentType() == null ? "application/octet-stream" : item.contentType());
-            artifact.setStorageBucket(item.storageBucket());
-            artifact.setStorageKey(item.storageKey());
-            artifact.setVersion(item.version() == null ? 1 : item.version());
-            artifact.setCreatedAt(OffsetDateTime.now());
-            artifactMapper.insert(artifact);
+            SandboxToolServiceImpl.this.persistArtifact(
+                    execution.getSandboxSessionId(),
+                    execution.getId(),
+                    execution.getConversationId(),
+                    item
+            );
         }
 
         private void append(StringBuilder builder, String content) {

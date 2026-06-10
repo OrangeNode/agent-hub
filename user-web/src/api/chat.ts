@@ -20,6 +20,19 @@ export interface ChatAttachmentRecord {
   messageId?: number | null
 }
 
+export interface ChatToolTraceRecord {
+  toolCallId: string
+  name: string
+  status: string
+  stdout: string
+  stderr: string
+  result: string
+}
+
+export type ChatProcessEventRecord =
+  | { type: 'reasoning'; content: string }
+  | { type: 'tool'; tool: ChatToolTraceRecord }
+
 export interface ChatMessageRecord {
   messageId: number
   conversationId: number
@@ -28,6 +41,33 @@ export interface ChatMessageRecord {
   reasoningContent?: string | null
   status: string
   attachments?: ChatAttachmentRecord[]
+  processEvents?: ChatProcessEventRecord[] | null
+}
+
+export interface ChatArtifactRecord {
+  artifactId: number
+  fileName: string
+  relativePath: string
+  contentType: string
+  sizeBytes: number
+  sha256?: string | null
+  version?: number | null
+}
+
+export interface ChatArtifactContentRecord {
+  artifactId: number
+  fileName: string
+  relativePath: string
+  contentType: string
+  sizeBytes: number
+  previewable: boolean
+  truncated: boolean
+  content: string
+}
+
+export interface DownloadBlobResult {
+  blob: Blob
+  filename: string
 }
 
 export interface ImageUploadUrlRecord {
@@ -84,6 +124,9 @@ export interface ChatStreamHandlers {
   onMessage?: (data: { messageId: number; role: string }) => void
   onReasoningDelta?: (data: { content: string }) => void
   onAnswerDelta?: (data: { content: string }) => void
+  onToolCall?: (data: { toolCallId: string; name: string }) => void
+  onToolOutput?: (data: { toolCallId: string; stream: string; content: string }) => void
+  onToolResult?: (data: { toolCallId: string; name: string; status: string; content: string }) => void
   onMessageCompleted?: (data: { messageId: number; status: string }) => void
   onError?: (data: { code: string; message: string }) => void
   onDone?: () => void
@@ -238,6 +281,15 @@ function dispatchSseEvent(event: ParsedSseEvent, handlers: ChatStreamHandlers) {
     case 'answer_delta':
       dispatchJson(event.data, handlers.onAnswerDelta)
       break
+    case 'tool_call':
+      dispatchJson(event.data, handlers.onToolCall)
+      break
+    case 'tool_output':
+      dispatchJson(event.data, handlers.onToolOutput)
+      break
+    case 'tool_result':
+      dispatchJson(event.data, handlers.onToolResult)
+      break
     case 'message_completed':
       dispatchJson(event.data, handlers.onMessageCompleted)
       break
@@ -272,6 +324,38 @@ export async function fetchConversationMessages(conversationId: number) {
   return response.data.data
 }
 
+export async function fetchConversationArtifacts(conversationId: number) {
+  const response = await http.get<ApiResponse<ChatArtifactRecord[]>>(`/chat/conversations/${conversationId}/artifacts`)
+  return response.data.data
+}
+
+export async function fetchArtifactContent(conversationId: number, artifactId: number) {
+  const response = await http.get<ApiResponse<ChatArtifactContentRecord>>(
+    `/chat/conversations/${conversationId}/artifacts/${artifactId}/content`
+  )
+  return response.data.data
+}
+
+export async function downloadArtifact(conversationId: number, artifactId: number, fallbackFilename: string) {
+  const response = await http.get<Blob>(`/chat/conversations/${conversationId}/artifacts/${artifactId}/download`, {
+    responseType: 'blob'
+  })
+  return {
+    blob: response.data,
+    filename: filenameFromDisposition(response.headers['content-disposition']) || fallbackFilename
+  }
+}
+
+export async function downloadAllArtifacts(conversationId: number) {
+  const response = await http.get<Blob>(`/chat/conversations/${conversationId}/artifacts/download`, {
+    responseType: 'blob'
+  })
+  return {
+    blob: response.data,
+    filename: filenameFromDisposition(response.headers['content-disposition']) || '全部文件.zip'
+  }
+}
+
 export async function deleteConversation(conversationId: number) {
   await http.delete(`/chat/conversations/${conversationId}`)
 }
@@ -283,6 +367,26 @@ export async function renameConversation(conversationId: number, title: string) 
 export async function fetchAvailableModels() {
   const response = await http.get<ApiResponse<AvailableModelRecord[]>>('/ai/models/available')
   return response.data.data
+}
+
+function filenameFromDisposition(disposition: string | undefined) {
+  if (!disposition) {
+    return ''
+  }
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch {
+      return utf8Match[1]
+    }
+  }
+  const quotedMatch = disposition.match(/filename="([^"]+)"/i)
+  if (quotedMatch?.[1]) {
+    return quotedMatch[1]
+  }
+  const plainMatch = disposition.match(/filename=([^;]+)/i)
+  return plainMatch?.[1]?.trim() ?? ''
 }
 
 export async function fetchAvailableAgents() {

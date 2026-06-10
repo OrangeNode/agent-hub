@@ -24,4 +24,6 @@ public interface SandboxToolService {
                     Long attachmentId, String targetPath);
 
     List<SandboxArtifactItem> artifacts(Long userId, Long conversationId, boolean latestOnly);
+
+    byte[] readArtifact(Long userId, Long conversationId, Long artifactId);
 }

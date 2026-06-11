@@ -2,9 +2,12 @@ package com.agenthub.sandbox.session.mapper;
 
 import com.agenthub.sandbox.session.entity.SandboxSession;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import java.time.OffsetDateTime;
+import java.util.List;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface SandboxSessionMapper extends BaseMapper<SandboxSession> {
@@ -27,4 +30,39 @@ public interface SandboxSessionMapper extends BaseMapper<SandboxSession> {
             limit 1
             """)
     SandboxSession selectActiveByConversation(@Param("userId") Long userId, @Param("conversationId") Long conversationId);
+
+    @Select("""
+            <script>
+            select *
+            from sandbox_session
+            where 1 = 1
+            <if test='status != null and status != ""'>
+                and upper(status) = upper(#{status})
+            </if>
+            <if test='conversationId != null'>
+                and conversation_id = #{conversationId}
+            </if>
+            <if test='sandboxSessionId != null and sandboxSessionId != ""'>
+                and sandbox_session_id = #{sandboxSessionId}
+            </if>
+            order by created_at desc, id desc
+            limit 500
+            </script>
+            """)
+    List<SandboxSession> selectAdminSessions(
+            @Param("status") String status,
+            @Param("conversationId") Long conversationId,
+            @Param("sandboxSessionId") String sandboxSessionId
+    );
+
+    @Update("""
+            update sandbox_session
+            set status = 'CLOSED',
+                closed_at = #{closedAt}
+            where sandbox_session_id = #{sandboxSessionId}
+            """)
+    void markClosedBySandboxSessionId(
+            @Param("sandboxSessionId") String sandboxSessionId,
+            @Param("closedAt") OffsetDateTime closedAt
+    );
 }

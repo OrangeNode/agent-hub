@@ -228,6 +228,9 @@ function resolveBreadcrumbSection(path: string) {
   if (path.startsWith('/agent/')) {
     return [{ path: '/agent', label: 'Agent 管理' }]
   }
+  if (path.startsWith('/sandbox/')) {
+    return [{ path: '/sandbox', label: 'Sandbox 管理' }]
+  }
   return []
 }
 

@@ -1334,7 +1334,7 @@ git commit -m "接入 sandbox 高危操作与操作日志页面"
 - Modify: `docs/superpowers/plans/2026-06-11-sandbox-admin-observability-and-operation-log.md`
 - Create: `docs/superpowers/plans/2026-06-11-sandbox-admin-observability-and-operation-log-verification.md`
 
-- [ ] **Step 1: Update sandbox-service README**
+- [x] **Step 1: Update sandbox-service README**
 
 Add a section `管理接口与资源回收`:
 
@@ -1343,7 +1343,7 @@ Add a section `管理接口与资源回收`:
 - Explain `SANDBOX_IDLE_TIMEOUT`, `SANDBOX_WARM_POOL_SIZE`, runDir cleanup.
 - Document that high-risk operations must go through Java admin API in normal deployment.
 
-- [ ] **Step 2: Create verification notes**
+- [x] **Step 2: Create verification notes**
 
 Create verification doc containing exact commands and results:
 
@@ -1362,7 +1362,7 @@ npm run build
 
 Record whether each passed. If a command fails because of local environment, record the exact failure and the next action.
 
-- [ ] **Step 3: Run Go verification**
+- [x] **Step 3: Run Go verification**
 
 Run:
 
@@ -1373,7 +1373,7 @@ go test ./...
 
 Expected: PASS.
 
-- [ ] **Step 4: Run backend verification**
+- [x] **Step 4: Run backend verification**
 
 Run:
 
@@ -1384,7 +1384,7 @@ mvn -pl agent-hub-system,agent-hub-sandbox,agent-hub-server -am test
 
 Expected: PASS.
 
-- [ ] **Step 5: Run admin-web verification**
+- [x] **Step 5: Run admin-web verification**
 
 Run:
 
@@ -1397,7 +1397,7 @@ npm run build
 
 Expected: PASS.
 
-- [ ] **Step 6: Review git diff**
+- [x] **Step 6: Review git diff**
 
 Run:
 

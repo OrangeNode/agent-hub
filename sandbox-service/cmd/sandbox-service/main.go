@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"agent-hub/sandbox-service/internal/auth"
 	"agent-hub/sandbox-service/internal/config"
@@ -28,6 +29,14 @@ func main() {
 	log.Printf("sandbox-service VM 工厂已初始化: mode=%s", cfg.VMMode)
 	warmPool := host.NewWarmPool(factory, cfg.WarmPoolSize)
 	manager := host.NewSessionManager(warmPoolFactory{pool: warmPool}, cfg.MaxActiveSessions, cfg.IdleTimeout)
+	go func() {
+		if err := warmPool.Fill(); err != nil {
+			log.Printf("sandbox warm pool 预热失败: %v", err)
+		}
+	}()
+	reaper := host.NewIdleReaper(manager, host.DefaultIdleReaperInterval(cfg.IdleTimeout))
+	reaper.Start()
+	defer reaper.Stop()
 	syncer := host.NewArtifactSyncer(cfg.ObjectBucket)
 	store, err := objectstore.NewDefaultStore(objectstore.DefaultStoreConfig{
 		Endpoint:  cfg.ObjectEndpoint,
@@ -39,11 +48,29 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	adminServer := &host.AdminServer{
+		Manager:   manager,
+		WarmPool:  warmPool,
+		StartedAt: time.Now(),
+		LogFile:   strings.TrimSpace(os.Getenv("SANDBOX_LOG_FILE")),
+		Scanner: host.ResourceScanner{
+			RunDir:              cfg.FirecrackerRunDir,
+			TapNamePrefix:       cfg.TapNamePrefix,
+			StartingGracePeriod: 30 * time.Second,
+		},
+		Config: host.AdminConfig{
+			RunDir:              cfg.FirecrackerRunDir,
+			TapNamePrefix:       cfg.TapNamePrefix,
+			StartingGracePeriod: 30 * time.Second,
+			MaxLogTailLines:     500,
+		},
+	}
 	handler := auth.RequireToken(cfg.InternalToken)(host.NewRouterWithManager(
 		manager,
 		host.WithArtifactSyncer(syncer),
 		host.WithUploader(store),
 		host.WithDownloader(store),
+		host.WithAdminServer(adminServer),
 	))
 	log.Printf("sandbox-service 开始监听: %s", cfg.ListenAddr)
 	if err := http.ListenAndServe(cfg.ListenAddr, handler); err != nil {
@@ -113,6 +140,13 @@ func (v staticAgentVM) ID() string {
 
 func (v staticAgentVM) AgentURL() string {
 	return v.agentURL
+}
+
+func (v staticAgentVM) Metadata() host.VMMetadata {
+	return host.VMMetadata{
+		ID:       v.id,
+		AgentURL: v.agentURL,
+	}
 }
 
 func (v staticAgentVM) Stop() error {

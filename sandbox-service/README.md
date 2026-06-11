@@ -97,6 +97,23 @@ export SANDBOX_SUDO_PASSWORD=123123
 
 `sandbox-service` 会为每个 microVM 创建独立运行目录、复制 rootfs 镜像、创建 tap 设备，通过 Firecracker API 配置 machine、boot source、root drive 和网络设备，然后等待 microVM 内 `sandbox-agent /health` 就绪。
 
+## 管理接口与资源回收
+
+`sandbox-service` 暴露内部管理接口 `/internal/admin/sandbox/**`，与普通执行接口共用 `SANDBOX_INTERNAL_TOKEN` 鉴权。正常部署中，admin-web 不直接访问该内部接口；管理端请求应先进入 Java 后端 `/api/sandbox/admin/**`，由 Java 完成 RBAC 鉴权、操作日志记录、请求聚合和内部 token 转发。
+
+运行态观测接口包含：
+
+- `GET /internal/admin/sandbox/status`：服务健康、内存会话和 warm pool 状态。
+- `GET /internal/admin/sandbox/sessions`：当前 Go 内存态 session 列表。
+- `GET /internal/admin/sandbox/resources`：扫描 Firecracker 进程、tap 设备、`run/fc-*` 运行目录和残留资源。
+- `GET /internal/admin/sandbox/logs/tail?lines=100`：读取服务日志尾部；需要配置 `SANDBOX_LOG_FILE` 才能返回日志内容。
+
+资源操作接口包含 idle 回收、关闭 session、终止 VM、清理残留资源、清空运行目录和重建 warm pool。高风险操作支持 `dryRun`，并要求从 Java 后端带上操作原因和确认文本，便于审计。
+
+后台 idle reaper 会按固定间隔扫描内存态 session，超过 `SANDBOX_IDLE_TIMEOUT` 且没有活跃执行的 session 会被关闭并释放对应 VM。该回收是兜底机制，创建或获取 session 时仍会进行一次轻量回收。`SANDBOX_WARM_POOL_SIZE` 控制预热 VM 目标数量，服务启动时会异步填充 warm pool；重建 warm pool 会先停止当前预热 VM，再按目标数量重新填充。
+
+运行目录清理只处理 `SANDBOX_FIRECRACKER_RUN_DIR` 下名称符合 `fc-*` 的子目录。普通 VM 停止时会清理自己的 runDir；孤儿目录清理和清空运行目录属于高风险操作，应优先通过 Java 管理 API 和操作日志链路执行。
+
 ## 开发联调模式
 
 仍可临时使用宿主机上的 agent：

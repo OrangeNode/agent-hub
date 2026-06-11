@@ -42,6 +42,18 @@ type SessionManager struct {
 	runtimeID      string
 }
 
+type ReapResult struct {
+	ClosedSessions []string `json:"closedSessions"`
+	StoppedVMs     []string `json:"stoppedVms"`
+	Errors         []string `json:"errors"`
+}
+
+type reapTarget struct {
+	sessionID string
+	vm        VM
+	vmID      string
+}
+
 func NewSessionManager(factory VMFactory, maxActive int, idleTimeout time.Duration) *SessionManager {
 	if idleTimeout <= 0 {
 		idleTimeout = 5 * time.Minute
@@ -117,27 +129,75 @@ func (m *SessionManager) GetOrCreate(conversationID string) (Session, error) {
 }
 
 func (m *SessionManager) ReapIdle(now time.Time) error {
+	result := m.ReapIdleWithResult(now)
+	if len(result.Errors) == 0 {
+		return nil
+	}
+	errs := make([]error, 0, len(result.Errors))
+	for _, message := range result.Errors {
+		errs = append(errs, errors.New(message))
+	}
+	return errors.Join(errs...)
+}
+
+func (m *SessionManager) ReapIdleWithResult(now time.Time) ReapResult {
 	m.mu.Lock()
-	idle := m.collectIdleLocked(now)
+	targets := m.collectIdleTargetsLocked(now)
 	m.mu.Unlock()
 
-	return stopVMs(idle)
+	return stopReapTargets(targets)
+}
+
+func (m *SessionManager) Close(sessionID string) ReapResult {
+	m.mu.Lock()
+	session, ok := m.sessions[sessionID]
+	if !ok {
+		m.mu.Unlock()
+		return ReapResult{Errors: []string{fmt.Sprintf("sandbox session 不存在: %s", sessionID)}}
+	}
+	delete(m.sessions, sessionID)
+	delete(m.byConversation, session.ConversationID)
+	delete(m.activeUses, sessionID)
+	target := reapTarget{
+		sessionID: session.ID,
+		vm:        session.VM,
+		vmID:      session.VM.ID(),
+	}
+	m.mu.Unlock()
+
+	return stopReapTargets([]reapTarget{target})
 }
 
 func (m *SessionManager) collectIdleLocked(now time.Time) []VM {
-	var idle []VM
+	targets := m.collectIdleTargetsLocked(now)
+	vms := make([]VM, 0, len(targets))
+	for _, target := range targets {
+		vms = append(vms, target.vm)
+	}
+	return vms
+}
+
+func (m *SessionManager) collectIdleTargetsLocked(now time.Time) []reapTarget {
+	if now.IsZero() {
+		now = m.nowLocked()
+	}
+	var targets []reapTarget
 	for id, session := range m.sessions {
 		if m.activeUses[id] > 0 {
 			continue
 		}
 		if now.Sub(session.LastActiveAt) >= m.idleTimeout {
-			idle = append(idle, session.VM)
+			targets = append(targets, reapTarget{
+				sessionID: id,
+				vm:        session.VM,
+				vmID:      session.VM.ID(),
+			})
 			delete(m.sessions, id)
 			delete(m.byConversation, session.ConversationID)
 			delete(m.activeUses, id)
 		}
 	}
-	return idle
+	return targets
 }
 
 func stopVMs(vms []VM) error {
@@ -148,6 +208,19 @@ func stopVMs(vms []VM) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func stopReapTargets(targets []reapTarget) ReapResult {
+	result := ReapResult{}
+	for _, target := range targets {
+		result.ClosedSessions = append(result.ClosedSessions, target.sessionID)
+		if err := target.vm.Stop(); err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("停止 VM %s 失败: %v", target.vmID, err))
+			continue
+		}
+		result.StoppedVMs = append(result.StoppedVMs, target.vmID)
+	}
+	return result
 }
 
 func (m *SessionManager) Get(sessionID string) (Session, bool) {

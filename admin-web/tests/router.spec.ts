@@ -16,4 +16,16 @@ describe('管理端路由', () => {
     expect(routeNames).toContain('system-roles')
     expect(routeNames).toContain('system-menus')
   })
+
+  it('应该提供 Sandbox 运维页面路由', () => {
+    const routeNames = router.getRoutes().map((route) => String(route.name ?? ''))
+
+    expect(routeNames).toContain('sandbox-monitor')
+  })
+
+  it('应该提供操作日志页面路由', () => {
+    const routeNames = router.getRoutes().map((route) => String(route.name ?? ''))
+
+    expect(routeNames).toContain('system-operation-logs')
+  })
 })

@@ -353,6 +353,22 @@ func (v *FirecrackerVM) AgentURL() string {
 	return v.agentURL
 }
 
+func (v *FirecrackerVM) Metadata() VMMetadata {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	pid := 0
+	if v.cmd != nil && v.cmd.Process != nil {
+		pid = v.cmd.Process.Pid
+	}
+	return VMMetadata{
+		ID:       v.id,
+		AgentURL: v.agentURL,
+		RunDir:   v.runDir,
+		TapName:  v.tapName,
+		PID:      pid,
+	}
+}
+
 func (v *FirecrackerVM) Stop() error {
 	log.Printf("Firecracker VM 准备停止: id=%s tap=%s runDir=%s", v.id, v.tapName, v.runDir)
 	v.mu.Lock()

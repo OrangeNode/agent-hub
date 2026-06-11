@@ -42,6 +42,14 @@ export const routeMenuDefinitions: RouteMenuDefinition[] = [
     component: () => import('../views/SystemMenusView.vue')
   },
   {
+    path: '/system/operation-logs',
+    name: 'system-operation-logs',
+    title: '操作日志',
+    icon: 'FileSearchOutlined',
+    permission: 'operation-log:view',
+    component: () => import('../views/OperationLogsView.vue')
+  },
+  {
     path: '/ai/providers',
     name: 'ai-providers',
     title: '供应商管理',
@@ -64,5 +72,13 @@ export const routeMenuDefinitions: RouteMenuDefinition[] = [
     icon: 'robot',
     permission: 'agent:list',
     component: () => import('../views/AgentsView.vue')
+  },
+  {
+    path: '/sandbox/monitor',
+    name: 'sandbox-monitor',
+    title: 'Sandbox 运维',
+    icon: 'cloud',
+    permission: 'sandbox:monitor:view',
+    component: () => import('../views/SandboxMonitorView.vue')
   }
 ]

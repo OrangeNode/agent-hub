@@ -86,6 +86,45 @@ func (p *WarmPool) Release(vm VM) error {
 	return vm.Stop()
 }
 
+func (p *WarmPool) StopAll() error {
+	p.mu.Lock()
+	vms := append([]VM(nil), p.pool...)
+	p.pool = nil
+	p.mu.Unlock()
+
+	return stopVMs(vms)
+}
+
+func (p *WarmPool) Rebuild() error {
+	if err := p.StopAll(); err != nil {
+		return err
+	}
+	return p.Fill()
+}
+
+func (p *WarmPool) StopByID(vmID string) (VMMetadata, bool, error) {
+	p.mu.Lock()
+	index := -1
+	var vm VM
+	for i, candidate := range p.pool {
+		if candidate.ID() == vmID {
+			index = i
+			vm = candidate
+			break
+		}
+	}
+	if index >= 0 {
+		p.pool = append(p.pool[:index], p.pool[index+1:]...)
+	}
+	p.mu.Unlock()
+	if vm == nil {
+		return VMMetadata{}, false, nil
+	}
+
+	metadata := metadataForVM(vm)
+	return metadata, true, vm.Stop()
+}
+
 func (p *WarmPool) Size() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()

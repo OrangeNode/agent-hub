@@ -38,6 +38,7 @@ type apiServer struct {
 	syncer     *ArtifactSyncer
 	policy     policy.CommandPolicy
 	pathPolicy workspace.PathPolicy
+	admin      *AdminServer
 }
 
 type RouterOption func(*apiServer)
@@ -50,10 +51,10 @@ func NewRouter() http.Handler {
 
 func NewRouterWithManager(manager *SessionManager, options ...RouterOption) http.Handler {
 	server := &apiServer{
-		manager: manager,
-		client:  http.DefaultClient,
-		syncer:  NewArtifactSyncer("agent-hub-sandbox-artifacts"),
-		policy:  policy.NewCommandPolicy(8192, 300),
+		manager:    manager,
+		client:     http.DefaultClient,
+		syncer:     NewArtifactSyncer("agent-hub-sandbox-artifacts"),
+		policy:     policy.NewCommandPolicy(8192, 300),
 		pathPolicy: workspace.NewPathPolicy("/workspace"),
 	}
 	for _, option := range options {
@@ -67,6 +68,9 @@ func NewRouterWithManager(manager *SessionManager, options ...RouterOption) http
 	mux.HandleFunc("GET /internal/sandbox/sessions/{sessionId}/files", server.handleListFiles)
 	mux.HandleFunc("GET /internal/sandbox/sessions/{sessionId}/files/content", server.handleReadFile)
 	mux.HandleFunc("POST /internal/sandbox/sessions/{sessionId}/files/content", server.handleWriteFile)
+	if server.admin != nil {
+		server.admin.Register(mux)
+	}
 	return mux
 }
 
@@ -95,6 +99,12 @@ func WithArtifactSyncer(syncer *ArtifactSyncer) RouterOption {
 		if syncer != nil {
 			server.syncer = syncer
 		}
+	}
+}
+
+func WithAdminServer(admin *AdminServer) RouterOption {
+	return func(server *apiServer) {
+		server.admin = admin
 	}
 }
 
@@ -669,8 +679,8 @@ func (s *apiServer) restoreArtifacts(r *http.Request, session Session, artifacts
 		}
 		content, err := s.downloader.Download(objectstore.DownloadRequest{
 			Context: r.Context(),
-			Bucket: artifact.downloadBucket(),
-			Key:    artifact.downloadKey(),
+			Bucket:  artifact.downloadBucket(),
+			Key:     artifact.downloadKey(),
 		})
 		if err != nil {
 			return fmt.Errorf("下载恢复产物失败: %w", err)

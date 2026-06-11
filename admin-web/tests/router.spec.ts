@@ -22,4 +22,10 @@ describe('管理端路由', () => {
 
     expect(routeNames).toContain('sandbox-monitor')
   })
+
+  it('应该提供操作日志页面路由', () => {
+    const routeNames = router.getRoutes().map((route) => String(route.name ?? ''))
+
+    expect(routeNames).toContain('system-operation-logs')
+  })
 })

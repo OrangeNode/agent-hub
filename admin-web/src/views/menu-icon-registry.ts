@@ -61,6 +61,7 @@ const menuIcons: MenuIconOption[] = [
   { label: 'ExperimentOutlined', value: 'ExperimentOutlined', component: ExperimentOutlined },
   { label: 'DesktopOutlined', value: 'DesktopOutlined', component: DesktopOutlined },
   { label: 'CloudServerOutlined', value: 'CloudServerOutlined', component: CloudServerOutlined },
+  { label: 'cloud', value: 'cloud', component: CloudServerOutlined },
   { label: 'RobotOutlined', value: 'RobotOutlined', component: RobotOutlined },
   { label: 'MessageOutlined', value: 'MessageOutlined', component: MessageOutlined },
   { label: 'CommentOutlined', value: 'CommentOutlined', component: CommentOutlined },

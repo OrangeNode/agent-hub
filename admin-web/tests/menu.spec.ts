@@ -31,4 +31,15 @@ describe('动态菜单转换', () => {
     expect(options[0].label).toBe('系统管理')
     expect(options[0].children?.[0].key).toBe('system-users')
   })
+
+  it('应该把 Sandbox 后台页面归入 Sandbox 管理分组', () => {
+    const tree = buildMenuTree([
+      { path: '/sandbox/monitor', name: 'sandbox-monitor', title: 'Sandbox 运维', permission: 'sandbox:monitor:view' }
+    ])
+
+    expect(tree).toHaveLength(1)
+    expect(tree[0].label).toBe('Sandbox 管理')
+    expect(tree[0].routePath).toBe('/sandbox')
+    expect(tree[0].children?.[0].key).toBe('sandbox-monitor')
+  })
 })

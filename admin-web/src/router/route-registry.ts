@@ -64,5 +64,13 @@ export const routeMenuDefinitions: RouteMenuDefinition[] = [
     icon: 'robot',
     permission: 'agent:list',
     component: () => import('../views/AgentsView.vue')
+  },
+  {
+    path: '/sandbox/monitor',
+    name: 'sandbox-monitor',
+    title: 'Sandbox 运维',
+    icon: 'cloud',
+    permission: 'sandbox:monitor:view',
+    component: () => import('../views/SandboxMonitorView.vue')
   }
 ]

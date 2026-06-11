@@ -24,7 +24,9 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Locale;
 import java.util.Set;
+import org.springframework.stereotype.Component;
 
+@Component
 public class OperationLogSanitizer {
 
     private static final String MASK_VALUE = "******";

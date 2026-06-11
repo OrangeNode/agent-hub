@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildControlRequest,
+  buildOperationTitle,
   buildRiskTagType,
+  canSubmitOperation,
   expectedConfirmText,
   formatBytes,
   formatDurationSeconds,
@@ -25,5 +28,22 @@ describe('Sandbox 运维辅助函数', () => {
     expect(requiresStrongConfirm('REAP_IDLE')).toBe(false)
     expect(expectedConfirmText('CLEAR_RUN_DIR', 'ignored')).toBe('清空运行目录')
     expect(expectedConfirmText('KILL_VM', 'fc-1')).toBe('fc-1')
+  })
+
+  it('应该校验高风险操作的原因和确认文本', () => {
+    expect(canSubmitOperation('KILL_VM', '', 'fc-1', 'fc-1')).toBe(false)
+    expect(canSubmitOperation('KILL_VM', '异常进程残留', 'wrong', 'fc-1')).toBe(false)
+    expect(canSubmitOperation('KILL_VM', '异常进程残留', 'fc-1', 'fc-1')).toBe(true)
+    expect(canSubmitOperation('REAP_IDLE', '', '', null)).toBe(true)
+  })
+
+  it('应该构造控制请求和操作标题', () => {
+    expect(buildControlRequest('CLEAR_RUN_DIR', '释放磁盘', '清空运行目录', true)).toEqual({
+      reason: '释放磁盘',
+      confirmText: '清空运行目录',
+      dryRun: true
+    })
+    expect(buildOperationTitle('REBUILD_WARM_POOL')).toBe('重建预热池')
+    expect(buildOperationTitle('KILL_VM', 'fc-1')).toBe('终止 VM：fc-1')
   })
 })

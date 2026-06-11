@@ -22,6 +22,23 @@
           </template>
           刷新
         </n-button>
+        <n-popconfirm @positive-click="handleReapIdle">
+          <template #trigger>
+            <n-button tertiary type="warning" :loading="isActionLoading('REAP_IDLE')">
+              <template #icon>
+                <n-icon><ReloadOutlined /></n-icon>
+              </template>
+              回收空闲
+            </n-button>
+          </template>
+          回收超过 idle 阈值的运行时？
+        </n-popconfirm>
+        <n-button tertiary type="warning" :loading="isActionLoading('REBUILD_WARM_POOL')" @click="openControlDialog('REBUILD_WARM_POOL')">
+          <template #icon>
+            <n-icon><ToolOutlined /></n-icon>
+          </template>
+          重建预热池
+        </n-button>
       </n-space>
     </div>
 
@@ -149,6 +166,22 @@
       </n-tab-pane>
 
       <n-tab-pane name="resources" tab="资源">
+        <div class="operation-bar">
+          <n-space :wrap="true">
+            <n-button tertiary type="warning" :loading="isActionLoading('CLEANUP_ORPHANS')" @click="openControlDialog('CLEANUP_ORPHANS')">
+              <template #icon>
+                <n-icon><ClearOutlined /></n-icon>
+              </template>
+              清理残留
+            </n-button>
+            <n-button tertiary type="error" :loading="isActionLoading('CLEAR_RUN_DIR')" @click="openControlDialog('CLEAR_RUN_DIR')">
+              <template #icon>
+                <n-icon><DeleteOutlined /></n-icon>
+              </template>
+              清空运行目录
+            </n-button>
+          </n-space>
+        </div>
         <section class="resource-grid">
           <n-card :bordered="false" size="small" title="运行目录">
             <n-data-table
@@ -208,6 +241,49 @@
         </n-card>
       </n-tab-pane>
     </n-tabs>
+
+    <n-modal
+      v-model:show="controlDialogVisible"
+      preset="card"
+      :title="controlDialogTitle"
+      :style="{ width: 'min(560px, calc(100vw - 32px))' }"
+    >
+      <n-form label-placement="top">
+        <n-form-item label="操作对象">
+          <n-input :value="controlTargetText" readonly />
+        </n-form-item>
+        <n-form-item v-if="controlNeedsReason" label="操作原因">
+          <n-input
+            v-model:value="controlReason"
+            type="textarea"
+            :autosize="{ minRows: 3, maxRows: 5 }"
+            placeholder="请输入操作原因"
+          />
+        </n-form-item>
+        <n-form-item v-if="controlNeedsStrongConfirm" :label="`确认文本：${controlExpectedConfirmText}`">
+          <n-input v-model:value="controlConfirmText" placeholder="请输入确认文本" />
+        </n-form-item>
+        <n-form-item label="预演模式">
+          <n-switch v-model:value="controlDryRun">
+            <template #checked>只预演</template>
+            <template #unchecked>实际执行</template>
+          </n-switch>
+        </n-form-item>
+      </n-form>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="controlDialogVisible = false">取消</n-button>
+          <n-button
+            type="primary"
+            :disabled="!controlCanSubmit"
+            :loading="isActionLoading(controlAction)"
+            @click="submitControlOperation"
+          >
+            {{ controlDryRun ? '预演' : '执行' }}
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -220,9 +296,13 @@ import {
   NCard,
   NDataTable,
   NEmpty,
+  NForm,
+  NFormItem,
   NIcon,
   NInput,
   NInputNumber,
+  NModal,
+  NPopconfirm,
   NSelect,
   NSpace,
   NSwitch,
@@ -232,20 +312,29 @@ import {
   NThing,
   useMessage
 } from 'naive-ui'
-import { FileSearchOutlined, ReloadOutlined } from '@vicons/antd'
+import { ClearOutlined, DeleteOutlined, FileSearchOutlined, ReloadOutlined, StopOutlined, ToolOutlined } from '@vicons/antd'
 import {
+  cleanupSandboxOrphans,
+  clearSandboxRunDir,
+  closeSandboxSession,
   fetchSandboxArtifacts,
   fetchSandboxExecutions,
   fetchSandboxLogTail,
   fetchSandboxOverview,
   fetchSandboxResources,
-  fetchSandboxSessions
+  fetchSandboxSessions,
+  killSandboxVm,
+  reapSandboxIdle,
+  rebuildSandboxWarmPool
 } from '../api/sandbox-admin'
 import type {
   SandboxAdminArtifactItem,
   SandboxAdminExecutionItem,
   SandboxAdminSessionItem,
+  SandboxControlResult,
+  SandboxOperation,
   SandboxOverview,
+  SandboxOrphanResource,
   SandboxProcessInfo,
   SandboxResourceSnapshot,
   SandboxRunDirInfo,
@@ -253,13 +342,19 @@ import type {
   SandboxTapInfo
 } from '../types/sandbox-admin'
 import {
+  buildControlRequest,
+  buildOperationTitle,
   buildRiskTagType,
   buildStatusTagType,
+  canSubmitOperation,
+  expectedConfirmText,
   formatBytes,
   formatDateTime,
   formatDurationMs,
   formatDurationSeconds,
-  formatStatus
+  formatStatus,
+  requiresReason,
+  requiresStrongConfirm
 } from './sandbox-admin.helpers'
 
 const message = useMessage()
@@ -279,6 +374,15 @@ const sessionStatusFilter = ref<string | null>(null)
 const sessionKeyword = ref('')
 const executionStatusFilter = ref<string | null>(null)
 const executionKeyword = ref('')
+const operationLoading = ref(false)
+const operationAction = ref<SandboxOperation | null>(null)
+const operationTargetId = ref<string | null>(null)
+const controlDialogVisible = ref(false)
+const controlAction = ref<SandboxOperation>('KILL_VM')
+const controlTargetId = ref<string | null>(null)
+const controlReason = ref('')
+const controlConfirmText = ref('')
+const controlDryRun = ref(true)
 let refreshTimer: number | undefined
 
 const refreshIntervalOptions: SelectOption[] = [
@@ -387,6 +491,15 @@ const filteredExecutions = computed(() =>
   })
 )
 
+const controlDialogTitle = computed(() => buildOperationTitle(controlAction.value, controlTargetId.value))
+const controlExpectedConfirmText = computed(() => expectedConfirmText(controlAction.value, controlTargetId.value))
+const controlNeedsReason = computed(() => requiresReason(controlAction.value))
+const controlNeedsStrongConfirm = computed(() => requiresStrongConfirm(controlAction.value))
+const controlTargetText = computed(() => controlTargetId.value || buildOperationTitle(controlAction.value))
+const controlCanSubmit = computed(() =>
+  canSubmitOperation(controlAction.value, controlReason.value, controlConfirmText.value, controlTargetId.value)
+)
+
 const runtimeSessionColumns: DataTableColumns<SandboxRuntimeSession> = [
   { title: '会话', key: 'sandboxSessionId', width: 220, ellipsis: { tooltip: true } },
   { title: '对话', key: 'conversationId', width: 90, render: (row) => row.conversationId ?? '--' },
@@ -406,7 +519,14 @@ const sessionColumns: DataTableColumns<SandboxAdminSessionItem> = [
   { title: 'PID', key: 'firecrackerPid', width: 90, render: (row) => row.firecrackerPid ?? '--' },
   { title: '空闲', key: 'idleSeconds', width: 110, render: (row) => formatDurationSeconds(row.idleSeconds) },
   { title: '最后活跃', key: 'lastActiveAt', width: 180, render: (row) => formatDateTime(row.lastActiveAt) },
-  { title: '运行目录', key: 'runDir', ellipsis: { tooltip: true }, render: (row) => row.runDir ?? '--' }
+  { title: '运行目录', key: 'runDir', ellipsis: { tooltip: true }, render: (row) => row.runDir ?? '--' },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 180,
+    fixed: 'right',
+    render: (row) => renderSessionActions(row)
+  }
 ]
 
 const executionColumns: DataTableColumns<SandboxAdminExecutionItem> = [
@@ -446,7 +566,23 @@ const processColumns: DataTableColumns<SandboxProcessInfo> = [
   { title: 'Socket', key: 'apiSocket', width: 220, ellipsis: { tooltip: true }, render: (row) => row.apiSocket ?? '--' },
   { title: '绑定', key: 'bound', width: 90, render: (row) => (row.bound ? '是' : '否') },
   { title: '运行目录', key: 'runDir', width: 260, ellipsis: { tooltip: true }, render: (row) => row.runDir ?? '--' },
-  { title: '参数', key: 'args', ellipsis: { tooltip: true }, render: (row) => row.args ?? '--' }
+  { title: '参数', key: 'args', ellipsis: { tooltip: true }, render: (row) => row.args ?? '--' },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 110,
+    fixed: 'right',
+    render: (row) =>
+      row.vmId
+        ? h(NButton, {
+            size: 'small',
+            tertiary: true,
+            type: 'error',
+            loading: isActionLoading('KILL_VM', row.vmId),
+            onClick: () => openControlDialog('KILL_VM', row.vmId)
+          }, { default: () => '终止' })
+        : '--'
+  }
 ]
 
 const tapColumns: DataTableColumns<SandboxTapInfo> = [
@@ -456,10 +592,10 @@ const tapColumns: DataTableColumns<SandboxTapInfo> = [
   { title: '绑定', key: 'bound', width: 90, render: (row) => (row.bound ? '是' : '否') }
 ]
 
-const orphanColumns = [
+const orphanColumns: DataTableColumns<SandboxOrphanResource> = [
   { title: '类型', key: 'type', width: 140 },
   { title: '标识', key: 'id', width: 220, ellipsis: { tooltip: true } },
-  { title: '路径', key: 'path', width: 260, ellipsis: { tooltip: true }, render: (row: { path?: string | null }) => row.path ?? '--' },
+  { title: '路径', key: 'path', width: 260, ellipsis: { tooltip: true }, render: (row) => row.path ?? '--' },
   { title: '原因', key: 'reason', ellipsis: { tooltip: true } }
 ]
 
@@ -467,6 +603,143 @@ function renderStatusTag(status?: string | null) {
   return h(NTag, { type: buildStatusTagType(status), bordered: false, size: 'small' }, {
     default: () => formatStatus(status)
   })
+}
+
+function renderSessionActions(row: SandboxAdminSessionItem) {
+  const actions = [
+    h(
+      NPopconfirm,
+      { onPositiveClick: () => handleCloseSession(row) },
+      {
+        trigger: () =>
+          h(NButton, {
+            size: 'small',
+            tertiary: true,
+            type: 'warning',
+            loading: isActionLoading('CLOSE_SESSION', row.sandboxSessionId)
+          }, { default: () => '关闭' }),
+        default: () => '关闭当前 sandbox 会话？'
+      }
+    )
+  ]
+
+  if (row.vmId) {
+    actions.push(
+      h(NButton, {
+        size: 'small',
+        tertiary: true,
+        type: 'error',
+        loading: isActionLoading('KILL_VM', row.vmId),
+        onClick: () => openControlDialog('KILL_VM', row.vmId)
+      }, { default: () => '终止 VM' })
+    )
+  }
+
+  return h(NSpace, { wrap: false, size: 6 }, { default: () => actions })
+}
+
+function isActionLoading(action: SandboxOperation, targetId?: string | null) {
+  if (!operationLoading.value || operationAction.value !== action) {
+    return false
+  }
+  return !targetId || operationTargetId.value === targetId
+}
+
+function openControlDialog(action: SandboxOperation, targetId?: string | null) {
+  controlAction.value = action
+  controlTargetId.value = targetId ?? null
+  controlReason.value = ''
+  controlConfirmText.value = ''
+  controlDryRun.value = true
+  controlDialogVisible.value = true
+}
+
+async function handleReapIdle() {
+  await executeOperation('REAP_IDLE', () => reapSandboxIdle())
+}
+
+async function handleCloseSession(row: SandboxAdminSessionItem) {
+  await executeOperation(
+    'CLOSE_SESSION',
+    () => closeSandboxSession(row.sandboxSessionId),
+    row.sandboxSessionId
+  )
+}
+
+async function submitControlOperation() {
+  if (!controlCanSubmit.value) {
+    message.warning('请补全操作原因和确认文本')
+    return
+  }
+
+  const action = controlAction.value
+  const targetId = controlTargetId.value
+  const payload = buildControlRequest(
+    action,
+    controlReason.value,
+    controlConfirmText.value,
+    controlDryRun.value,
+    targetId
+  )
+
+  const request = () => {
+    if (action === 'KILL_VM' && targetId) {
+      return killSandboxVm(targetId, payload)
+    }
+    if (action === 'CLEANUP_ORPHANS') {
+      return cleanupSandboxOrphans(payload)
+    }
+    if (action === 'CLEAR_RUN_DIR') {
+      return clearSandboxRunDir(payload)
+    }
+    return rebuildSandboxWarmPool(payload)
+  }
+
+  await executeOperation(action, request, targetId, payload.dryRun)
+  controlDialogVisible.value = false
+}
+
+async function executeOperation(
+  action: SandboxOperation,
+  request: () => Promise<SandboxControlResult>,
+  targetId?: string | null,
+  dryRun = false
+) {
+  operationLoading.value = true
+  operationAction.value = action
+  operationTargetId.value = targetId ?? null
+  try {
+    const result = await request()
+    showControlResult(action, result, targetId, dryRun)
+    await loadAll()
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : `${buildOperationTitle(action, targetId)}失败`)
+  } finally {
+    operationLoading.value = false
+    operationAction.value = null
+    operationTargetId.value = null
+  }
+}
+
+function showControlResult(
+  action: SandboxOperation,
+  result: SandboxControlResult,
+  targetId?: string | null,
+  dryRun = false
+) {
+  const title = buildOperationTitle(action, targetId)
+  const actionText = dryRun ? '预演完成' : '已执行'
+  const affectedText = result.affected.length ? `，影响 ${result.affected.length} 项` : ''
+
+  if (result.success) {
+    message.success(`${title}${actionText}${affectedText}`)
+  } else {
+    message.warning(`${title}未完全成功${affectedText}`)
+  }
+
+  if (result.errors.length) {
+    message.error(result.errors.join('；').slice(0, 160))
+  }
 }
 
 async function loadAll() {

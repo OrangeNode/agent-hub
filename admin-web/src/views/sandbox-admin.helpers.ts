@@ -130,6 +130,10 @@ export function requiresStrongConfirm(action: SandboxOperation): boolean {
   return ['KILL_VM', 'CLEANUP_ORPHANS', 'CLEAR_RUN_DIR', 'REBUILD_WARM_POOL'].includes(action)
 }
 
+export function requiresReason(action: SandboxOperation): boolean {
+  return requiresStrongConfirm(action)
+}
+
 export function expectedConfirmText(action: SandboxOperation, targetId?: string | null): string {
   if (action === 'KILL_VM') {
     return targetId || '终止VM'
@@ -147,4 +151,54 @@ export function expectedConfirmText(action: SandboxOperation, targetId?: string 
     return '重建预热池'
   }
   return '回收空闲运行时'
+}
+
+export function buildOperationTitle(action: SandboxOperation, targetId?: string | null): string {
+  if (action === 'KILL_VM') {
+    return `终止 VM${targetId ? `：${targetId}` : ''}`
+  }
+  if (action === 'CLOSE_SESSION') {
+    return `关闭会话${targetId ? `：${targetId}` : ''}`
+  }
+  if (action === 'CLEAR_RUN_DIR') {
+    return '清空运行目录'
+  }
+  if (action === 'CLEANUP_ORPHANS') {
+    return '清理残留资源'
+  }
+  if (action === 'REBUILD_WARM_POOL') {
+    return '重建预热池'
+  }
+  return '回收空闲运行时'
+}
+
+export function canSubmitOperation(
+  action: SandboxOperation,
+  reason: string,
+  confirmText: string,
+  targetId?: string | null
+): boolean {
+  if (requiresReason(action) && !reason.trim()) {
+    return false
+  }
+
+  if (requiresStrongConfirm(action)) {
+    return confirmText.trim() === expectedConfirmText(action, targetId)
+  }
+
+  return true
+}
+
+export function buildControlRequest(
+  action: SandboxOperation,
+  reason: string,
+  confirmText: string,
+  dryRun: boolean,
+  targetId?: string | null
+) {
+  return {
+    reason: reason.trim(),
+    confirmText: requiresStrongConfirm(action) ? confirmText.trim() : expectedConfirmText(action, targetId),
+    dryRun
+  }
 }

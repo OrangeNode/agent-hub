@@ -11,6 +11,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         "com.agenthub.system.user.mapper",
         "com.agenthub.system.role.mapper",
         "com.agenthub.system.menu.mapper",
+        "com.agenthub.system.operationlog.mapper",
         "com.agenthub.ai.provider.mapper",
         "com.agenthub.ai.model.mapper",
         "com.agenthub.agent.mapper",

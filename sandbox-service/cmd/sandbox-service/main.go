@@ -115,6 +115,13 @@ func (v staticAgentVM) AgentURL() string {
 	return v.agentURL
 }
 
+func (v staticAgentVM) Metadata() host.VMMetadata {
+	return host.VMMetadata{
+		ID:       v.id,
+		AgentURL: v.agentURL,
+	}
+}
+
 func (v staticAgentVM) Stop() error {
 	return nil
 }

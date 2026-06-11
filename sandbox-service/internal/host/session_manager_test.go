@@ -339,10 +339,13 @@ func TestSessionManagerReturnsFactoryError(t *testing.T) {
 }
 
 type fakeVM struct {
-	mu    sync.Mutex
-	id    string
-	url   string
-	stops int
+	mu      sync.Mutex
+	id      string
+	url     string
+	runDir  string
+	tapName string
+	pid     int
+	stops   int
 }
 
 func (v *fakeVM) ID() string {
@@ -367,6 +370,16 @@ func (v *fakeVM) StopCount() int {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return v.stops
+}
+
+func (v *fakeVM) Metadata() VMMetadata {
+	return VMMetadata{
+		ID:       v.id,
+		AgentURL: v.AgentURL(),
+		RunDir:   v.runDir,
+		TapName:  v.tapName,
+		PID:      v.pid,
+	}
 }
 
 type fakeVMFactory struct {

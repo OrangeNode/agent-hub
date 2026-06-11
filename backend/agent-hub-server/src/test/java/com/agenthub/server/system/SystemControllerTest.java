@@ -3,6 +3,7 @@ package com.agenthub.server.system;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -125,7 +126,7 @@ class SystemControllerTest {
                 "平台管理员",
                 true,
                 List.of("ADMIN"),
-                List.of("system:user:create")
+                List.of("system:user:list", "system:user:create")
         );
         UserProfile createdUser = new UserProfile(
                 2L,
@@ -208,6 +209,33 @@ class SystemControllerTest {
         verify(userService).findAccountById(1L);
         verify(authService).currentUser("admin");
         verify(userService).list(eq(new UserQuery("zhang", "张三", true, "USER")));
+    }
+
+    @Test
+    void shouldRejectUserManagementWhenCurrentUserDoesNotHavePermission() throws Exception {
+        UserAccount account = new UserAccount(2L, "user", "普通用户", "ignored", true, List.of("USER"));
+        UserProfile currentUser = new UserProfile(
+                2L,
+                "user",
+                "普通用户",
+                true,
+                List.of("USER"),
+                List.of("dashboard:view")
+        );
+        String token = createToken(2L, "user", List.of("USER"));
+
+        when(userService.findAccountById(2L)).thenReturn(Optional.of(account));
+        when(authService.currentUser("user")).thenReturn(currentUser);
+
+        mockMvc.perform(get("/api/system/users")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value(403))
+                .andExpect(jsonPath("$.data").doesNotExist());
+
+        verify(userService).findAccountById(2L);
+        verify(authService).currentUser("user");
+        verify(userService, never()).list(any(UserQuery.class));
     }
 
     private String createToken(Long userId, String username, List<String> roles) {

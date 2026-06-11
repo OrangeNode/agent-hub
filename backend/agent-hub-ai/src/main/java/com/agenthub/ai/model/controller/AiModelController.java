@@ -10,6 +10,7 @@ import com.agenthub.common.api.ApiResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
 import java.util.List;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -35,6 +36,7 @@ public class AiModelController {
      * 查询 AI 模型管理列表。
      */
     @GetMapping
+    @PreAuthorize("hasAuthority('ai:model:list')")
     public ApiResponse<List<AiModelItem>> listModels() {
         return ApiResponse.success(modelService.list());
     }
@@ -43,6 +45,7 @@ public class AiModelController {
      * 创建 AI 模型配置。
      */
     @PostMapping
+    @PreAuthorize("hasAuthority('ai:model:list')")
     public ApiResponse<AiModelItem> createModel(@Valid @RequestBody CreateModelRequest request) {
         return ApiResponse.success(modelService.create(new CreateModelCommand(
                 request.providerId(),
@@ -65,6 +68,7 @@ public class AiModelController {
      * 更新 AI 模型配置。
      */
     @PutMapping("/{modelId}")
+    @PreAuthorize("hasAuthority('ai:model:list')")
     public ApiResponse<AiModelItem> updateModel(
             @PathVariable @Positive(message = "模型必须为正数") Long modelId,
             @Valid @RequestBody UpdateModelRequest request
@@ -90,6 +94,7 @@ public class AiModelController {
      * 删除 AI 模型配置。
      */
     @DeleteMapping("/{modelId}")
+    @PreAuthorize("hasAuthority('ai:model:list')")
     public ApiResponse<Void> deleteModel(
             @PathVariable @Positive(message = "模型必须为正数") Long modelId
     ) {

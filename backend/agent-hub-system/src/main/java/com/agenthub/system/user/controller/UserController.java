@@ -10,6 +10,7 @@ import com.agenthub.system.user.dto.UserProfile;
 import com.agenthub.system.user.service.UserService;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/system/users")
+@PreAuthorize("hasAuthority('system:user:list')")
 public class UserController {
 
     private final UserService userService;

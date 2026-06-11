@@ -14,6 +14,7 @@ import com.agenthub.system.menu.service.MenuService;
 import com.agenthub.system.user.dto.UserProfile;
 import jakarta.validation.Valid;
 import java.util.List;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -41,6 +42,7 @@ public class MenuController {
      * 查询菜单管理平铺列表。
      */
     @GetMapping
+    @PreAuthorize("hasAuthority('system:menu:list')")
     public ApiResponse<List<MenuItem>> listMenus() {
         return ApiResponse.success(menuService.listFlat());
     }
@@ -49,6 +51,7 @@ public class MenuController {
      * 查询菜单管理树形列表。
      */
     @GetMapping("/tree")
+    @PreAuthorize("hasAuthority('system:menu:list')")
     public ApiResponse<List<MenuItem>> listMenuTree() {
         return ApiResponse.success(menuService.listTree());
     }
@@ -67,6 +70,7 @@ public class MenuController {
      * 创建系统菜单。
      */
     @PostMapping
+    @PreAuthorize("hasAuthority('system:menu:list')")
     public ApiResponse<MenuItem> createMenu(@Valid @RequestBody CreateMenuRequest request) {
         return ApiResponse.success(menuService.create(new CreateMenuCommand(
                 request.parentId(),
@@ -86,6 +90,7 @@ public class MenuController {
      * 更新系统菜单展示和权限配置。
      */
     @PutMapping("/{menuId}")
+    @PreAuthorize("hasAuthority('system:menu:list')")
     public ApiResponse<MenuItem> updateMenu(@PathVariable Long menuId, @Valid @RequestBody UpdateMenuRequest request) {
         return ApiResponse.success(menuService.update(menuId, new UpdateMenuCommand(
                 request.title(),
@@ -103,6 +108,7 @@ public class MenuController {
      * 批量更新菜单排序。
      */
     @PutMapping("/order")
+    @PreAuthorize("hasAuthority('system:menu:list')")
     public ApiResponse<Void> updateMenuOrders(@RequestBody List<MenuOrderRequest> requests) {
         menuService.updateOrders(requests.stream().map(request -> new MenuOrderCommand(request.menuId(), request.sort())).toList());
         return ApiResponse.success();
@@ -112,6 +118,7 @@ public class MenuController {
      * 删除系统菜单及其子菜单。
      */
     @DeleteMapping("/{menuId}")
+    @PreAuthorize("hasAuthority('system:menu:list')")
     public ApiResponse<Void> deleteMenu(@PathVariable Long menuId) {
         menuService.delete(menuId);
         return ApiResponse.success();

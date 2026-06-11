@@ -11,6 +11,7 @@ import com.agenthub.common.api.ApiResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
 import java.util.List;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -33,6 +34,7 @@ public class AgentController {
     }
 
     @GetMapping
+    @PreAuthorize("hasAuthority('agent:list')")
     public ApiResponse<List<AgentItem>> listAgents() {
         return ApiResponse.success(agentService.list());
     }
@@ -43,6 +45,7 @@ public class AgentController {
     }
 
     @PostMapping
+    @PreAuthorize("hasAuthority('agent:list')")
     public ApiResponse<AgentItem> createAgent(@Valid @RequestBody CreateAgentRequest request) {
         return ApiResponse.success(agentService.create(new CreateAgentCommand(
                 request.agentKey(),
@@ -57,6 +60,7 @@ public class AgentController {
     }
 
     @PutMapping("/{agentId}")
+    @PreAuthorize("hasAuthority('agent:list')")
     public ApiResponse<AgentItem> updateAgent(
             @PathVariable @Positive(message = "Agent 必须为正数") Long agentId,
             @Valid @RequestBody UpdateAgentRequest request
@@ -74,6 +78,7 @@ public class AgentController {
     }
 
     @DeleteMapping("/{agentId}")
+    @PreAuthorize("hasAuthority('agent:list')")
     public ApiResponse<Void> deleteAgent(@PathVariable @Positive(message = "Agent 必须为正数") Long agentId) {
         agentService.delete(agentId);
         return ApiResponse.success();

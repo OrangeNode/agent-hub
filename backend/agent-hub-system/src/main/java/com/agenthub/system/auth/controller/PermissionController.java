@@ -4,12 +4,14 @@ import com.agenthub.common.api.ApiResponse;
 import com.agenthub.system.auth.service.AuthService;
 import com.agenthub.system.permission.PermissionItem;
 import java.util.List;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/system/permissions")
+@PreAuthorize("hasAuthority('system:role:list')")
 public class PermissionController {
 
     private final AuthService authService;

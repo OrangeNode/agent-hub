@@ -71,22 +71,20 @@ public class HttpSandboxClient implements SandboxClient {
         }
         try {
             HttpResponse<String> response = httpClient.send(
-                    requestBuilder("/internal/admin/sandbox/status").GET().build(),
+                    requestBuilder("/internal/sandbox/sessions/" + encodePath(sandboxSessionId) + "/health").GET().build(),
                     HttpResponse.BodyHandlers.ofString()
             );
-            requireSuccess(response.statusCode(), "查询沙箱运行态失败");
-            JsonNode root = OBJECT_MAPPER.readTree(response.body());
-            for (JsonNode item : root.path("sessions")) {
-                if (sandboxSessionId.equals(text(item, "sandboxSessionId"))) {
-                    return true;
-                }
+            int statusCode = response.statusCode();
+            if (statusCode == 404 || statusCode == 503) {
+                return false;
             }
-            return false;
+            requireSuccess(statusCode, "查询沙箱会话健康状态失败");
+            return true;
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "查询沙箱运行态被中断");
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "查询沙箱会话健康状态被中断");
         } catch (IOException exception) {
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "查询沙箱运行态失败");
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "查询沙箱会话健康状态失败");
         }
     }
 

@@ -611,6 +611,27 @@ func TestWriteFileSyncsArtifactsAfterSuccessfulArtifactWrite(t *testing.T) {
 	}
 }
 
+func TestSessionHealthClosesRuntimeSessionWhenGuestUnavailable(t *testing.T) {
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: "http://guest.internal:7070"}}}, 1, 5*time.Minute)
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	client := &http.Client{Transport: failingRoundTripper{}}
+	router := NewRouterWithManager(manager, WithHTTPClient(client))
+
+	req := httptest.NewRequest(http.MethodGet, "/internal/sandbox/sessions/"+session.ID+"/health", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if manager.HasSession(session.ID) {
+		t.Fatal("unhealthy runtime session should be closed")
+	}
+}
+
 func TestCreateSessionRejectsEscapingRestoreArtifact(t *testing.T) {
 	manager := NewSessionManager(&fakeVMFactory{}, 1, 5*time.Minute)
 	body := bytes.NewBufferString(`{"conversationId":"conversation-1","artifacts":[{"relativePath":"../secret.txt","bucket":"bucket","key":"k"}]}`)

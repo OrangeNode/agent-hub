@@ -80,13 +80,14 @@ class HttpSandboxClientTest {
         properties.setInternalToken("token");
         HttpClient httpClient = mock(HttpClient.class);
         @SuppressWarnings("unchecked")
-        HttpResponse<String> response = mock(HttpResponse.class);
-        when(response.statusCode()).thenReturn(200);
-        when(response.body()).thenReturn("""
-                {"sessions":[{"sandboxSessionId":"sbx_1"},{"sandboxSessionId":"sbx_2"}]}
-                """);
+        HttpResponse<String> okResponse = mock(HttpResponse.class);
+        @SuppressWarnings("unchecked")
+        HttpResponse<String> missingResponse = mock(HttpResponse.class);
+        when(okResponse.statusCode()).thenReturn(200);
+        when(missingResponse.statusCode()).thenReturn(404);
         when(httpClient.send(any(HttpRequest.class), org.mockito.Mockito.<HttpResponse.BodyHandler<String>>any()))
-                .thenReturn(response);
+                .thenReturn(okResponse)
+                .thenReturn(missingResponse);
         HttpSandboxClient client = new HttpSandboxClient(properties, httpClient);
 
         boolean exists = client.sessionExists("sbx_2");
@@ -99,9 +100,26 @@ class HttpSandboxClientTest {
                 requestCaptor.capture(),
                 org.mockito.Mockito.<HttpResponse.BodyHandler<String>>any()
         );
-        assertThat(requestCaptor.getValue().uri().toString())
-                .isEqualTo("http://sandbox-service/internal/admin/sandbox/status");
+        assertThat(requestCaptor.getAllValues().get(0).uri().toString())
+                .isEqualTo("http://sandbox-service/internal/sandbox/sessions/sbx_2/health");
+        assertThat(requestCaptor.getAllValues().get(1).uri().toString())
+                .isEqualTo("http://sandbox-service/internal/sandbox/sessions/sbx_missing/health");
         assertThat(requestCaptor.getValue().headers().firstValue("Authorization"))
                 .contains("Bearer token");
+    }
+
+    @Test
+    void shouldTreatUnhealthyRuntimeSessionAsMissing() throws Exception {
+        SandboxProperties properties = new SandboxProperties();
+        properties.setBaseUrl("http://sandbox-service");
+        HttpClient httpClient = mock(HttpClient.class);
+        @SuppressWarnings("unchecked")
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(503);
+        when(httpClient.send(any(HttpRequest.class), org.mockito.Mockito.<HttpResponse.BodyHandler<String>>any()))
+                .thenReturn(response);
+        HttpSandboxClient client = new HttpSandboxClient(properties, httpClient);
+
+        assertThat(client.sessionExists("sbx_unhealthy")).isFalse();
     }
 }

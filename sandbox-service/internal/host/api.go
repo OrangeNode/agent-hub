@@ -3,6 +3,7 @@ package host
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"agent-hub/sandbox-service/internal/objectstore"
 	"agent-hub/sandbox-service/internal/policy"
@@ -23,6 +25,7 @@ const (
 	defaultArtifactPath = "/workspace/artifacts"
 	defaultContentType  = "application/octet-stream"
 	maxArtifactBytes    = 10 * 1024 * 1024
+	guestHealthTimeout  = 2 * time.Second
 )
 
 const (
@@ -64,6 +67,7 @@ func NewRouterWithManager(manager *SessionManager, options ...RouterOption) http
 	mux := http.NewServeMux()
 	registerHealth(mux)
 	mux.HandleFunc("POST /internal/sandbox/sessions", server.handleCreateSession)
+	mux.HandleFunc("GET /internal/sandbox/sessions/{sessionId}/health", server.handleSessionHealth)
 	mux.HandleFunc("POST /internal/sandbox/sessions/{sessionId}/exec/stream", server.handleExecStream)
 	mux.HandleFunc("GET /internal/sandbox/sessions/{sessionId}/files", server.handleListFiles)
 	mux.HandleFunc("GET /internal/sandbox/sessions/{sessionId}/files/content", server.handleReadFile)
@@ -178,6 +182,21 @@ func (s *apiServer) handleCreateSession(w http.ResponseWriter, r *http.Request) 
 		SandboxSessionID: session.ID,
 		Status:           "ready",
 	})
+}
+
+func (s *apiServer) handleSessionHealth(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.beginSessionUse(w, r.PathValue("sessionId"))
+	if !ok {
+		return
+	}
+	err := s.probeGuestHealth(r, session)
+	s.manager.EndUse(session.ID)
+	if err != nil {
+		_ = s.manager.Close(session.ID)
+		writeError(w, http.StatusServiceUnavailable, "沙箱会话不可用，请重新创建")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "UP"})
 }
 
 func (s *apiServer) handleExecStream(w http.ResponseWriter, r *http.Request) {
@@ -386,6 +405,28 @@ func (s *apiServer) proxyJSONResponse(r *http.Request, method string, targetURL 
 		return 0, nil, err
 	}
 	return resp.StatusCode, responseBody, nil
+}
+
+func (s *apiServer) probeGuestHealth(r *http.Request, session Session) error {
+	ctx, cancel := context.WithTimeout(r.Context(), guestHealthTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, joinAgentURL(session.AgentURL, "/health"), nil)
+	if err != nil {
+		return err
+	}
+	client := s.client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("guest-agent 健康检查返回异常状态: %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (s *apiServer) proxyExecStream(r *http.Request, w http.ResponseWriter, session Session, req execRequest) (bool, error) {

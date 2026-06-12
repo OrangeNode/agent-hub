@@ -1,11 +1,19 @@
 package com.agenthub.sandbox.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.agenthub.sandbox.client.dto.SandboxEvent;
 import com.agenthub.sandbox.client.dto.SandboxFileItem;
+import com.agenthub.sandbox.config.SandboxProperties;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class HttpSandboxClientTest {
 
@@ -63,5 +71,37 @@ class HttpSandboxClientTest {
         assertThat(item.path()).isEqualTo("/workspace/input/data.csv");
         assertThat(item.size()).isEqualTo(10L);
         assertThat(item.directory()).isFalse();
+    }
+
+    @Test
+    void shouldCheckWhetherRuntimeSessionExists() throws Exception {
+        SandboxProperties properties = new SandboxProperties();
+        properties.setBaseUrl("http://sandbox-service");
+        properties.setInternalToken("token");
+        HttpClient httpClient = mock(HttpClient.class);
+        @SuppressWarnings("unchecked")
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("""
+                {"sessions":[{"sandboxSessionId":"sbx_1"},{"sandboxSessionId":"sbx_2"}]}
+                """);
+        when(httpClient.send(any(HttpRequest.class), org.mockito.Mockito.<HttpResponse.BodyHandler<String>>any()))
+                .thenReturn(response);
+        HttpSandboxClient client = new HttpSandboxClient(properties, httpClient);
+
+        boolean exists = client.sessionExists("sbx_2");
+        boolean missing = client.sessionExists("sbx_missing");
+
+        assertThat(exists).isTrue();
+        assertThat(missing).isFalse();
+        ArgumentCaptor<HttpRequest> requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
+        org.mockito.Mockito.verify(httpClient, org.mockito.Mockito.times(2)).send(
+                requestCaptor.capture(),
+                org.mockito.Mockito.<HttpResponse.BodyHandler<String>>any()
+        );
+        assertThat(requestCaptor.getValue().uri().toString())
+                .isEqualTo("http://sandbox-service/internal/admin/sandbox/status");
+        assertThat(requestCaptor.getValue().headers().firstValue("Authorization"))
+                .contains("Bearer token");
     }
 }

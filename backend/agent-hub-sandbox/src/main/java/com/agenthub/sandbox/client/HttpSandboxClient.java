@@ -65,6 +65,32 @@ public class HttpSandboxClient implements SandboxClient {
     }
 
     @Override
+    public boolean sessionExists(String sandboxSessionId) {
+        if (sandboxSessionId == null || sandboxSessionId.isBlank()) {
+            return false;
+        }
+        try {
+            HttpResponse<String> response = httpClient.send(
+                    requestBuilder("/internal/admin/sandbox/status").GET().build(),
+                    HttpResponse.BodyHandlers.ofString()
+            );
+            requireSuccess(response.statusCode(), "查询沙箱运行态失败");
+            JsonNode root = OBJECT_MAPPER.readTree(response.body());
+            for (JsonNode item : root.path("sessions")) {
+                if (sandboxSessionId.equals(text(item, "sandboxSessionId"))) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "查询沙箱运行态被中断");
+        } catch (IOException exception) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "查询沙箱运行态失败");
+        }
+    }
+
+    @Override
     public void streamExec(String sandboxSessionId, ExecSandboxRequest request, Consumer<SandboxEvent> eventConsumer) {
         try {
             HttpRequest httpRequest = requestBuilder("/internal/sandbox/sessions/" + encodePath(sandboxSessionId) + "/exec/stream")

@@ -91,6 +91,24 @@ class SandboxAdminServiceImplTest {
     }
 
     @Test
+    void shouldSyncDbClosedAfterReapingIdleRuntimeSessions() {
+        SandboxAdminClient client = mock(SandboxAdminClient.class);
+        SandboxSessionMapper sessionMapper = mock(SandboxSessionMapper.class);
+        SandboxExecutionMapper executionMapper = mock(SandboxExecutionMapper.class);
+        SandboxAdminServiceImpl service = newService(client, sessionMapper, executionMapper);
+        SandboxControlResult reapResult = new SandboxControlResult(true, List.of("sbx-expired"), List.of());
+        when(client.reapIdle()).thenReturn(reapResult);
+        when(client.status()).thenReturn(runtimeStatus());
+        when(sessionMapper.markOpenSessionsMissingRuntimeClosed(eq(List.of()), any(OffsetDateTime.class))).thenReturn(1);
+
+        SandboxControlResult result = service.reapIdle();
+
+        assertThat(result).isEqualTo(reapResult);
+        verify(client).reapIdle();
+        verify(sessionMapper).markOpenSessionsMissingRuntimeClosed(eq(List.of()), any(OffsetDateTime.class));
+    }
+
+    @Test
     void shouldCloseSessionAndMarkDbClosed() {
         SandboxAdminClient client = mock(SandboxAdminClient.class);
         SandboxSessionMapper sessionMapper = mock(SandboxSessionMapper.class);

@@ -1,5 +1,9 @@
 <template>
-  <div class="chat-shell" :class="{ 'panel-open': workPanelOpen, 'sidebar-collapsed': sidebarCollapsed }" @click="openConversationMenuId = null">
+  <div
+    class="chat-shell"
+    :class="{ 'panel-open': workPanelOpen, 'preview-open': artifactPreviewOpen, 'sidebar-collapsed': sidebarCollapsed }"
+    @click="openConversationMenuId = null"
+  >
     <aside class="sidebar">
       <div class="sidebar-header">
         <strong>Agent Hub</strong>
@@ -294,7 +298,15 @@
                 class="assistant-markdown"
                 v-html="renderAssistantMarkdown(messageItem.content || '正在生成回复...')"
               />
-              <div v-if="shouldShowArtifactBundle(messageItem)" class="artifact-bundle-card">
+              <div
+                v-if="shouldShowArtifactBundle(messageItem)"
+                class="artifact-bundle-card"
+                role="button"
+                tabindex="0"
+                @click="openArtifactPanel()"
+                @keydown.enter.prevent="openArtifactPanel()"
+                @keydown.space.prevent="openArtifactPanel()"
+              >
                 <span class="artifact-bundle-icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24">
                     <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H10l2 2h6.5A2.5 2.5 0 0 1 21 9.5v7A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5z" />
@@ -305,7 +317,7 @@
                   <strong>全部文件</strong>
                   <small>预览或者下载文件</small>
                 </span>
-                <button type="button" @click="openArtifactPanel()">预览</button>
+                <button type="button" @click.stop="openArtifactPanel()">预览</button>
               </div>
               <div class="message-tools">
                 <button type="button" title="复制" @click="copyMessage(messageItem.content)">
@@ -470,7 +482,7 @@
               <path d="M5 21h14" />
             </svg>
           </button>
-          <button type="button" class="panel-icon-button" title="关闭" aria-label="关闭" @click="workPanelOpen = false">
+          <button type="button" class="panel-icon-button" title="关闭" aria-label="关闭" @click="closeArtifactPanel">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
@@ -521,13 +533,8 @@
       </section>
     </aside>
 
-    <n-modal
-      v-model:show="artifactPreviewOpen"
-      class="artifact-preview-modal"
-      to="body"
-      transform-origin="center"
-    >
-      <section class="artifact-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="artifact-preview-title">
+    <aside v-if="artifactPreviewOpen" class="artifact-preview-panel" aria-label="文件预览">
+      <section class="artifact-preview-dialog" role="dialog" aria-modal="false" aria-labelledby="artifact-preview-title">
         <header class="artifact-preview-dialog-header">
           <div>
             <h3 id="artifact-preview-title">{{ selectedArtifact?.fileName || '文件预览' }}</h3>
@@ -543,7 +550,7 @@
             >
               下载
             </button>
-            <button type="button" class="panel-icon-button" title="关闭" aria-label="关闭" @click="artifactPreviewOpen = false">
+            <button type="button" class="panel-icon-button" title="关闭" aria-label="关闭" @click="closeArtifactPreview">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M18 6 6 18M6 6l12 12" />
               </svg>
@@ -573,7 +580,7 @@
           </div>
         </div>
       </section>
-    </n-modal>
+    </aside>
 
     <n-modal
       v-model:show="deleteConfirmOpen"
@@ -1542,6 +1549,15 @@ function shouldShowArtifactBundle(messageItem: ChatMessageItem) {
   return assistantMessages[assistantMessages.length - 1]?.id === messageItem.id
 }
 
+function closeArtifactPanel() {
+  workPanelOpen.value = false
+  artifactPreviewOpen.value = false
+}
+
+function closeArtifactPreview() {
+  artifactPreviewOpen.value = false
+}
+
 async function openArtifactPanel(artifact?: ChatArtifactItem) {
   workPanelOpen.value = true
   const conversationId = activeConversationId.value
@@ -1960,10 +1976,16 @@ onMounted(() => {
 </script>
 
 <style scoped>
+:global(html),
+:global(body) {
+  overflow-x: hidden;
+}
+
 .chat-shell {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
   height: 100vh;
+  overflow-x: hidden;
   background: #ffffff;
   color: #111827;
   transition: grid-template-columns 0.25s ease;
@@ -1973,12 +1995,28 @@ onMounted(() => {
   grid-template-columns: 240px minmax(0, 1fr) 340px;
 }
 
+.chat-shell.preview-open {
+  grid-template-columns: 240px minmax(0, 1fr) minmax(420px, 48vw);
+}
+
+.chat-shell.panel-open.preview-open {
+  grid-template-columns: 240px minmax(320px, 1fr) 340px minmax(420px, 48vw);
+}
+
 .chat-shell.sidebar-collapsed {
   grid-template-columns: 0px minmax(0, 1fr);
 }
 
 .chat-shell.sidebar-collapsed.panel-open {
   grid-template-columns: 0px minmax(0, 1fr) 340px;
+}
+
+.chat-shell.sidebar-collapsed.preview-open {
+  grid-template-columns: 0px minmax(0, 1fr) minmax(420px, 48vw);
+}
+
+.chat-shell.sidebar-collapsed.panel-open.preview-open {
+  grid-template-columns: 0px minmax(320px, 1fr) 340px minmax(420px, 48vw);
 }
 
 .chat-shell.sidebar-collapsed .sidebar {
@@ -2689,14 +2727,47 @@ svg {
 }
 
 .conversation-view {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .message-list {
-  overflow-y: auto;
+  flex: 1 0 auto;
+  min-height: 0;
   padding: 70px 24px 24px;
+}
+
+.recent-section,
+.conversation-view {
+  scrollbar-width: thin;
+  scrollbar-color: #cfd4dc transparent;
+}
+
+.recent-section::-webkit-scrollbar,
+.conversation-view::-webkit-scrollbar {
+  width: 8px;
+}
+
+.recent-section::-webkit-scrollbar-track,
+.conversation-view::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.recent-section::-webkit-scrollbar-thumb,
+.conversation-view::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #cfd4dc;
+  background-clip: content-box;
+}
+
+.recent-section::-webkit-scrollbar-thumb:hover,
+.conversation-view::-webkit-scrollbar-thumb:hover {
+  background: #c6ccd6;
+  background-clip: content-box;
 }
 
 .message-row {
@@ -2976,6 +3047,21 @@ svg {
   border: 1px solid #d9dce3;
   border-radius: 8px;
   background: #ffffff;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.artifact-bundle-card:hover,
+.artifact-bundle-card:focus-visible {
+  border-color: #cfd4dc;
+  background: #fafafa;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.05);
+}
+
+.artifact-bundle-card:focus-visible {
+  outline: 2px solid #d1d5db;
+  outline-offset: 2px;
 }
 
 .artifact-bundle-icon {
@@ -3061,14 +3147,40 @@ svg {
   text-align: center;
 }
 
-.work-panel {
+.work-panel,
+.artifact-preview-panel {
   display: grid;
-  align-content: start;
-  gap: 12px;
-  min-height: 100vh;
+  height: 100vh;
+  min-width: 0;
+  min-height: 0;
   padding: 14px;
   border-left: 1px solid #ececf1;
   background: #fbfbfb;
+  animation: side-panel-enter 0.18s ease-out;
+}
+
+.work-panel {
+  align-content: start;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.artifact-preview-panel {
+  align-content: stretch;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+@keyframes side-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .delete-conversation-modal {
@@ -3418,13 +3530,14 @@ svg {
 .artifact-preview-dialog {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  width: min(1120px, calc(100vw - 48px));
-  height: min(760px, calc(100vh - 48px));
+  width: 100%;
+  height: 100%;
+  min-width: 0;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   background: #ffffff;
   overflow: hidden;
-  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.18);
+  box-shadow: none;
 }
 
 .artifact-preview-dialog-header {
@@ -3607,11 +3720,15 @@ svg {
 
 @media (max-width: 1020px) {
   .chat-shell.panel-open,
+  .chat-shell.preview-open,
+  .chat-shell.panel-open.preview-open,
   .chat-shell {
     grid-template-columns: 240px minmax(0, 1fr);
   }
 
-  .chat-shell.sidebar-collapsed {
+  .chat-shell.sidebar-collapsed,
+  .chat-shell.sidebar-collapsed.preview-open,
+  .chat-shell.sidebar-collapsed.panel-open.preview-open {
     grid-template-columns: 0px minmax(0, 1fr);
   }
 
@@ -3619,21 +3736,36 @@ svg {
     grid-template-columns: 0px minmax(0, 1fr);
   }
 
-  .work-panel {
-    grid-column: 1 / -1;
-    min-height: auto;
-    border-top: 1px solid #ececf1;
-    border-left: 0;
+  .work-panel,
+  .artifact-preview-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    width: min(340px, calc(100vw - 32px));
+    height: 100vh;
+    border-left: 1px solid #ececf1;
+    box-shadow: -18px 0 46px rgba(15, 23, 42, 0.14);
+  }
+
+  .artifact-preview-panel {
+    z-index: 31;
+    width: min(620px, calc(100vw - 32px));
   }
 }
 
 @media (max-width: 640px) {
   .chat-shell,
-  .chat-shell.panel-open {
+  .chat-shell.panel-open,
+  .chat-shell.preview-open,
+  .chat-shell.panel-open.preview-open {
     grid-template-columns: 1fr;
   }
 
-  .chat-shell.sidebar-collapsed {
+  .chat-shell.sidebar-collapsed,
+  .chat-shell.sidebar-collapsed.preview-open,
+  .chat-shell.sidebar-collapsed.panel-open.preview-open {
     grid-template-columns: 1fr;
   }
 
@@ -3645,6 +3777,14 @@ svg {
 
   .recent-section {
     max-height: 180px;
+  }
+
+  .work-panel {
+    width: min(360px, calc(100vw - 16px));
+  }
+
+  .artifact-preview-panel {
+    width: min(560px, calc(100vw - 16px));
   }
 
   .landing-composer {

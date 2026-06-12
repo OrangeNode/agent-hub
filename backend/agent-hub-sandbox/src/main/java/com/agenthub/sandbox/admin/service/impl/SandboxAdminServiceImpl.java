@@ -154,7 +154,9 @@ public class SandboxAdminServiceImpl implements com.agenthub.sandbox.admin.servi
 
     @Override
     public SandboxControlResult reapIdle() {
-        return client.reapIdle();
+        SandboxControlResult result = client.reapIdle();
+        syncOpenSessionsWithRuntime();
+        return result;
     }
 
     @Override
@@ -166,12 +168,7 @@ public class SandboxAdminServiceImpl implements com.agenthub.sandbox.admin.servi
 
     @Override
     public SandboxControlResult closeMissingRuntimeSessions() {
-        SandboxRuntimeStatus runtime = client.status();
-        List<String> runtimeSessionIds = runtime.sessions().stream()
-                .map(SandboxRuntimeSession::sandboxSessionId)
-                .filter(value -> value != null && !value.isBlank())
-                .toList();
-        int closed = sessionMapper.markOpenSessionsMissingRuntimeClosed(runtimeSessionIds, OffsetDateTime.now());
+        int closed = syncOpenSessionsWithRuntime();
         String message = "已关闭 " + closed + " 条缺失运行态的数据库会话";
         return new SandboxControlResult(true, List.of(message), List.of());
     }
@@ -292,6 +289,15 @@ public class SandboxAdminServiceImpl implements com.agenthub.sandbox.admin.servi
 
     private boolean isOpenSession(SandboxSession session) {
         return sameStatus(session.getStatus(), "READY") || sameStatus(session.getStatus(), "RUNNING");
+    }
+
+    private int syncOpenSessionsWithRuntime() {
+        SandboxRuntimeStatus runtime = client.status();
+        List<String> runtimeSessionIds = runtime.sessions().stream()
+                .map(SandboxRuntimeSession::sandboxSessionId)
+                .filter(value -> value != null && !value.isBlank())
+                .toList();
+        return sessionMapper.markOpenSessionsMissingRuntimeClosed(runtimeSessionIds, OffsetDateTime.now());
     }
 
     private boolean sameStatus(String actual, String expected) {

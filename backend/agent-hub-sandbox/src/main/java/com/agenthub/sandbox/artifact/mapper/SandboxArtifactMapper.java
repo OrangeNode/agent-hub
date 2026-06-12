@@ -24,6 +24,22 @@ public interface SandboxArtifactMapper extends BaseMapper<SandboxArtifact> {
     );
 
     @Select("""
+            select *
+            from (
+                select a.*,
+                       row_number() over (
+                           partition by a.relative_path
+                           order by a.version desc, a.id desc
+                       ) as rn
+                from sandbox_artifact a
+                where a.conversation_id = #{conversationId}
+            ) ranked
+            where rn = 1
+            order by relative_path
+            """)
+    List<SandboxArtifact> selectLatestByConversation(@Param("conversationId") Long conversationId);
+
+    @Select("""
             <script>
             select *
             from sandbox_artifact

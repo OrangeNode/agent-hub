@@ -13,6 +13,8 @@ public interface SandboxClient {
 
     CreateSandboxSessionResponse createSession(CreateSandboxSessionRequest request);
 
+    boolean sessionExists(String sandboxSessionId);
+
     void streamExec(String sandboxSessionId, ExecSandboxRequest request, Consumer<SandboxEvent> eventConsumer);
 
     List<SandboxFileItem> listFiles(String sandboxSessionId, String path, boolean recursive);

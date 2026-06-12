@@ -25,12 +25,34 @@ public interface SandboxExecutionMapper extends BaseMapper<SandboxExecution> {
                 and upper(status) = upper(#{status})
             </if>
             order by started_at desc, id desc
-            limit 500
+            limit #{limit}
+            offset #{offset}
             </script>
             """)
     List<SandboxExecution> selectAdminExecutions(
             @Param("conversationId") Long conversationId,
             @Param("sandboxSessionDbId") Long sandboxSessionDbId,
-            @Param("status") String status
+            @Param("status") String status,
+            @Param("limit") int limit,
+            @Param("offset") int offset
     );
+
+    @Select("""
+            select count(*)
+            from sandbox_execution
+            where upper(status) = upper(#{status})
+            """)
+    long countAdminExecutionsByStatus(@Param("status") String status);
+
+    @Select("""
+            <script>
+            select count(*)
+            from sandbox_execution
+            where upper(status) in
+            <foreach collection='statuses' item='status' open='(' separator=',' close=')'>
+                upper(#{status})
+            </foreach>
+            </script>
+            """)
+    long countAdminExecutionsByStatuses(@Param("statuses") List<String> statuses);
 }

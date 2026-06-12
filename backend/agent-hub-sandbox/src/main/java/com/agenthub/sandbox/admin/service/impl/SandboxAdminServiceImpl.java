@@ -37,6 +37,8 @@ public class SandboxAdminServiceImpl implements com.agenthub.sandbox.admin.servi
     private static final String CONFIRM_REBUILD_WARM_POOL = "重建预热池";
     private static final int DEFAULT_LOG_LINES = 100;
     private static final int MAX_LOG_LINES = 500;
+    private static final int DEFAULT_LIST_LIMIT = 5;
+    private static final int MAX_LIST_LIMIT = 50;
 
     private final SandboxAdminClient client;
     private final SandboxSessionMapper sessionMapper;
@@ -64,16 +66,13 @@ public class SandboxAdminServiceImpl implements com.agenthub.sandbox.admin.servi
             return new SandboxOverview(false, 0, 0, 0, 0, 0, 0, 0, 0, List.of(
                     new SandboxRisk("CRITICAL", "SERVICE_UNAVAILABLE", "Sandbox 服务不可用",
                             "无法连接 sandbox-service: " + exception.getMessage(), "SERVICE", "sandbox-service", "检查服务进程和内部 token")
-            ));
+            ), List.of());
         }
-        List<SandboxSession> dbSessions = sessionMapper.selectAdminSessions(null, null, null);
-        List<SandboxExecution> executions = executionMapper.selectAdminExecutions(null, null, null);
-        List<SandboxRisk> risks = buildRisks(runtime, dbSessions);
-        long dbOpenSessions = dbSessions.stream().filter(this::isOpenSession).count();
-        long runningExecutions = executions.stream().filter(item -> sameStatus(item.getStatus(), "RUNNING")).count();
-        long failedExecutions = executions.stream()
-                .filter(item -> sameStatus(item.getStatus(), "FAILED") || sameStatus(item.getStatus(), "TIMEOUT"))
-                .count();
+        List<SandboxSession> dbSessions = sessionMapper.selectAdminOpenSessions(DEFAULT_LIST_LIMIT);
+        List<SandboxRisk> risks = buildRisks(runtime, dbSessions, DEFAULT_LIST_LIMIT);
+        long dbOpenSessions = sessionMapper.countOpenSessions();
+        long runningExecutions = executionMapper.countAdminExecutionsByStatus("RUNNING");
+        long failedExecutions = executionMapper.countAdminExecutionsByStatuses(List.of("FAILED", "TIMEOUT"));
         return new SandboxOverview(
                 runtime.serviceHealthy(),
                 runtime.activeSessions(),
@@ -84,31 +83,66 @@ public class SandboxAdminServiceImpl implements com.agenthub.sandbox.admin.servi
                 runtime.resourceSummary().tapDevices(),
                 runtime.resourceSummary().runDirBytes(),
                 runtime.resourceSummary().orphanResources(),
-                risks
+                risks,
+                limitItems(runtime.sessions(), DEFAULT_LIST_LIMIT)
         );
     }
 
     @Override
-    public List<SandboxAdminSessionItem> sessions(String status, Long conversationId, String sandboxSessionId) {
+    public List<SandboxAdminSessionItem> sessions(
+            String status,
+            Long conversationId,
+            String sandboxSessionId,
+            Integer limit,
+            Integer offset
+    ) {
         Map<String, SandboxRuntimeSession> runtimeBySessionId = new HashMap<>();
         for (SandboxRuntimeSession session : client.status().sessions()) {
             runtimeBySessionId.put(session.sandboxSessionId(), session);
         }
-        return sessionMapper.selectAdminSessions(status, conversationId, sandboxSessionId).stream()
+        return sessionMapper.selectAdminSessions(
+                        status,
+                        conversationId,
+                        sandboxSessionId,
+                        normalizeLimit(limit),
+                        normalizeOffset(offset)
+                ).stream()
                 .map(session -> toSessionItem(session, runtimeBySessionId.get(session.getSandboxSessionId())))
                 .toList();
     }
 
     @Override
-    public List<SandboxAdminExecutionItem> executions(Long conversationId, Long sandboxSessionDbId, String status) {
-        return executionMapper.selectAdminExecutions(conversationId, sandboxSessionDbId, status).stream()
+    public List<SandboxAdminExecutionItem> executions(
+            Long conversationId,
+            Long sandboxSessionDbId,
+            String status,
+            Integer limit,
+            Integer offset
+    ) {
+        return executionMapper.selectAdminExecutions(
+                        conversationId,
+                        sandboxSessionDbId,
+                        status,
+                        normalizeLimit(limit),
+                        normalizeOffset(offset)
+                ).stream()
                 .map(this::toExecutionItem)
                 .toList();
     }
 
     @Override
-    public List<SandboxAdminArtifactItem> artifacts(Long conversationId, Long sandboxSessionDbId) {
-        return artifactMapper.selectAdminArtifacts(conversationId, sandboxSessionDbId).stream()
+    public List<SandboxAdminArtifactItem> artifacts(
+            Long conversationId,
+            Long sandboxSessionDbId,
+            Integer limit,
+            Integer offset
+    ) {
+        return artifactMapper.selectAdminArtifacts(
+                        conversationId,
+                        sandboxSessionDbId,
+                        normalizeLimit(limit),
+                        normalizeOffset(offset)
+                ).stream()
                 .map(this::toArtifactItem)
                 .toList();
     }
@@ -131,12 +165,24 @@ public class SandboxAdminServiceImpl implements com.agenthub.sandbox.admin.servi
     }
 
     @Override
+    public SandboxControlResult closeMissingRuntimeSessions() {
+        SandboxRuntimeStatus runtime = client.status();
+        List<String> runtimeSessionIds = runtime.sessions().stream()
+                .map(SandboxRuntimeSession::sandboxSessionId)
+                .filter(value -> value != null && !value.isBlank())
+                .toList();
+        int closed = sessionMapper.markOpenSessionsMissingRuntimeClosed(runtimeSessionIds, OffsetDateTime.now());
+        String message = "已关闭 " + closed + " 条缺失运行态的数据库会话";
+        return new SandboxControlResult(true, List.of(message), List.of());
+    }
+
+    @Override
     public SandboxControlResult killVm(String vmId, SandboxControlRequest request) {
         requireReason(request);
         if (request == null || !vmId.equals(request.confirmText())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "确认文本必须等于 VM ID");
         }
-        return client.killVm(vmId);
+        return client.killVm(vmId, request.dryRun());
     }
 
     @Override
@@ -150,14 +196,14 @@ public class SandboxAdminServiceImpl implements com.agenthub.sandbox.admin.servi
     public SandboxControlResult clearRunDir(SandboxControlRequest request) {
         requireReason(request);
         requireConfirmText(request, CONFIRM_CLEAR_RUN_DIR);
-        return client.clearRunDir();
+        return client.clearRunDir(request.dryRun());
     }
 
     @Override
     public SandboxControlResult rebuildWarmPool(SandboxControlRequest request) {
         requireReason(request);
         requireConfirmText(request, CONFIRM_REBUILD_WARM_POOL);
-        return client.rebuildWarmPool();
+        return client.rebuildWarmPool(request.dryRun());
     }
 
     @Override
@@ -165,23 +211,29 @@ public class SandboxAdminServiceImpl implements com.agenthub.sandbox.admin.servi
         return client.tailLogs(normalizeLogLines(lines));
     }
 
-    private List<SandboxRisk> buildRisks(SandboxRuntimeStatus runtime, List<SandboxSession> dbSessions) {
+    private List<SandboxRisk> buildRisks(SandboxRuntimeStatus runtime, List<SandboxSession> dbSessions, int limit) {
         Set<String> runtimeSessionIds = new HashSet<>();
         java.util.ArrayList<SandboxRisk> risks = new java.util.ArrayList<>();
         for (SandboxRuntimeSession session : runtime.sessions()) {
             runtimeSessionIds.add(session.sandboxSessionId());
-            if (sameStatus(session.runtimeStatus(), "IDLE")) {
+            if (risks.size() < limit && sameStatus(session.runtimeStatus(), "IDLE")) {
                 risks.add(new SandboxRisk("WARN", "IDLE_TIMEOUT", "运行时已空闲超时",
                         "运行态 session 已达到 idle timeout，可执行空闲回收", "SESSION", session.sandboxSessionId(), "执行回收空闲运行时"));
             }
         }
         for (SandboxSession session : dbSessions) {
+            if (risks.size() >= limit) {
+                break;
+            }
             if (isOpenSession(session) && !runtimeSessionIds.contains(session.getSandboxSessionId())) {
                 risks.add(new SandboxRisk("WARN", "DB_SESSION_MISSING_RUNTIME", "数据库会话缺少运行态",
                         "数据库中存在未关闭会话，但 Go 运行态没有对应 session", "SESSION", session.getSandboxSessionId(), "关闭数据库会话或检查运行态同步"));
             }
         }
         for (SandboxOrphanResource orphan : runtime.resources().orphans()) {
+            if (risks.size() >= limit) {
+                break;
+            }
             risks.add(new SandboxRisk("WARN", orphan.type(), "发现残留资源", orphan.reason(),
                     orphan.type(), orphan.id(), "确认后清理残留资源"));
         }
@@ -263,5 +315,26 @@ public class SandboxAdminServiceImpl implements com.agenthub.sandbox.admin.servi
             return DEFAULT_LOG_LINES;
         }
         return Math.min(lines, MAX_LOG_LINES);
+    }
+
+    private int normalizeLimit(Integer limit) {
+        if (limit == null || limit <= 0) {
+            return DEFAULT_LIST_LIMIT;
+        }
+        return Math.min(limit, MAX_LIST_LIMIT);
+    }
+
+    private int normalizeOffset(Integer offset) {
+        if (offset == null || offset <= 0) {
+            return 0;
+        }
+        return offset;
+    }
+
+    private <T> List<T> limitItems(List<T> items, int limit) {
+        if (items == null || items.isEmpty()) {
+            return List.of();
+        }
+        return items.stream().limit(limit).toList();
     }
 }

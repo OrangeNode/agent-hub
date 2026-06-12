@@ -64,6 +64,11 @@ export async function closeSandboxSession(sessionId: string) {
   return response.data.data
 }
 
+export async function closeSandboxMissingRuntimeSessions() {
+  const response = await http.post<ApiResponse<SandboxControlResult>>(`${basePath}/sessions/close-missing-runtime`)
+  return response.data.data
+}
+
 export async function killSandboxVm(vmId: string, payload: SandboxControlRequest) {
   const response = await http.post<ApiResponse<SandboxControlResult>>(
     `${basePath}/vms/${encodeURIComponent(vmId)}/kill`,

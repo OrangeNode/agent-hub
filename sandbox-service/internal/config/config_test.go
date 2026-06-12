@@ -26,6 +26,9 @@ func TestLoadUsesDefaults(t *testing.T) {
 	if cfg.IdleTimeout != 5*time.Minute {
 		t.Fatalf("IdleTimeout = %s", cfg.IdleTimeout)
 	}
+	if cfg.StartingGracePeriod != 10*time.Minute {
+		t.Fatalf("StartingGracePeriod = %s", cfg.StartingGracePeriod)
+	}
 	if cfg.InternalToken != "secret" {
 		t.Fatalf("InternalToken = %q", cfg.InternalToken)
 	}
@@ -106,6 +109,7 @@ func TestLoadUsesOverrides(t *testing.T) {
 	t.Setenv("SANDBOX_OBJECT_SECURE", "true")
 	t.Setenv("SANDBOX_NETWORK_ALLOW_CIDRS", "10.0.0.0/8, 192.168.0.0/16")
 	t.Setenv("SANDBOX_IDLE_TIMEOUT", "30s")
+	t.Setenv("SANDBOX_STARTING_GRACE_PERIOD", "12m")
 	t.Setenv("SANDBOX_EXEC_TIMEOUT_SECONDS", "15")
 	t.Setenv("SANDBOX_VM_MODE", "dev-agent")
 	t.Setenv("SANDBOX_FIRECRACKER_BIN", "/usr/local/bin/firecracker")
@@ -130,6 +134,9 @@ func TestLoadUsesOverrides(t *testing.T) {
 	}
 	if cfg.IdleTimeout != 30*time.Second {
 		t.Fatalf("IdleTimeout = %s", cfg.IdleTimeout)
+	}
+	if cfg.StartingGracePeriod != 12*time.Minute {
+		t.Fatalf("StartingGracePeriod = %s", cfg.StartingGracePeriod)
 	}
 	if cfg.ExecTimeout != 15*time.Second {
 		t.Fatalf("ExecTimeout = %s", cfg.ExecTimeout)
@@ -245,6 +252,26 @@ func TestLoadRejectsNonPositiveIdleTimeoutWithVariableName(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsNonPositiveStartingGracePeriodWithVariableName(t *testing.T) {
+	cases := []string{"0s", "-1s"}
+
+	for _, value := range cases {
+		t.Run(value, func(t *testing.T) {
+			clearConfigEnv(t)
+			t.Setenv("SANDBOX_INTERNAL_TOKEN", "secret")
+			t.Setenv("SANDBOX_STARTING_GRACE_PERIOD", value)
+
+			_, err := Load()
+			if err == nil {
+				t.Fatal("expected error for non-positive duration")
+			}
+			if err.Error() != "SANDBOX_STARTING_GRACE_PERIOD 配置必须大于 0" {
+				t.Fatalf("error = %q", err.Error())
+			}
+		})
+	}
+}
+
 func TestLoadRejectsMalformedCIDRWithVariableName(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("SANDBOX_INTERNAL_TOKEN", "secret")
@@ -282,6 +309,7 @@ func clearConfigEnv(t *testing.T) {
 		"SANDBOX_WARM_POOL_SIZE",
 		"SANDBOX_MAX_ACTIVE_SESSIONS",
 		"SANDBOX_IDLE_TIMEOUT",
+		"SANDBOX_STARTING_GRACE_PERIOD",
 		"SANDBOX_VM_CPU",
 		"SANDBOX_VM_MEMORY_MB",
 		"SANDBOX_VM_DISK_GB",

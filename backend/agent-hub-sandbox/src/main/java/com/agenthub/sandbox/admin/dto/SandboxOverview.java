@@ -12,9 +12,11 @@ public record SandboxOverview(
         int tapDevices,
         long runDirBytes,
         int orphanResources,
-        List<SandboxRisk> risks
+        List<SandboxRisk> risks,
+        List<SandboxRuntimeSession> runtimeSessions
 ) {
     public SandboxOverview {
         risks = risks == null ? List.of() : List.copyOf(risks);
+        runtimeSessions = runtimeSessions == null ? List.of() : List.copyOf(runtimeSessions);
     }
 }

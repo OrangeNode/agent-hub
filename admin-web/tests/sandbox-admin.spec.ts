@@ -43,6 +43,7 @@ describe('Sandbox 运维辅助函数', () => {
       confirmText: '清空运行目录',
       dryRun: true
     })
+    expect(buildOperationTitle('CLOSE_MISSING_RUNTIME')).toBe('关闭缺失运行态会话')
     expect(buildOperationTitle('REBUILD_WARM_POOL')).toBe('重建预热池')
     expect(buildOperationTitle('KILL_VM', 'fc-1')).toBe('终止 VM：fc-1')
   })

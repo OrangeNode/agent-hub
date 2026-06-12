@@ -141,6 +141,9 @@ export function expectedConfirmText(action: SandboxOperation, targetId?: string 
   if (action === 'CLOSE_SESSION') {
     return targetId || '关闭会话'
   }
+  if (action === 'CLOSE_MISSING_RUNTIME') {
+    return '关闭缺失运行态会话'
+  }
   if (action === 'CLEAR_RUN_DIR') {
     return '清空运行目录'
   }
@@ -159,6 +162,9 @@ export function buildOperationTitle(action: SandboxOperation, targetId?: string 
   }
   if (action === 'CLOSE_SESSION') {
     return `关闭会话${targetId ? `：${targetId}` : ''}`
+  }
+  if (action === 'CLOSE_MISSING_RUNTIME') {
+    return '关闭缺失运行态会话'
   }
   if (action === 'CLEAR_RUN_DIR') {
     return '清空运行目录'

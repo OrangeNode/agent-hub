@@ -226,6 +226,56 @@ func TestResourceScannerTreatsRecentUnboundRunDirAsStartingNotOrphan(t *testing.
 	}
 }
 
+func TestResourceScannerTreatsResourcesForStartingRunDirAsStarting(t *testing.T) {
+	runDir := t.TempDir()
+	startingDir := filepath.Join(runDir, "fc-starting")
+	if err := os.MkdirAll(startingDir, 0o755); err != nil {
+		t.Fatalf("mkdir startingDir: %v", err)
+	}
+	socketPath := filepath.Join(startingDir, "firecracker.socket")
+	if err := os.WriteFile(socketPath, []byte{}, 0o644); err != nil {
+		t.Fatalf("write socket: %v", err)
+	}
+	now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(startingDir, now.Add(-2*time.Minute), now.Add(-2*time.Minute)); err != nil {
+		t.Fatalf("chtimes startingDir: %v", err)
+	}
+
+	scanner := ResourceScanner{
+		RunDir:              runDir,
+		TapNamePrefix:       "tap-ah",
+		StartingGracePeriod: 10 * time.Minute,
+		Clock: func() time.Time {
+			return now
+		},
+		ProcessLister: func() ([]ProcessInfo, error) {
+			return []ProcessInfo{
+				{PID: 4004, Args: "firecracker --api-sock " + socketPath},
+			}, nil
+		},
+		TapLister: func() ([]TapInfo, error) {
+			return []TapInfo{{Name: "tap-ah000001"}}, nil
+		},
+	}
+
+	snapshot, err := scanner.Scan(nil, WarmPoolSnapshot{})
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+
+	process := snapshot.FirecrackerProcesses[0]
+	if process.ResourceStatus != "STARTING" {
+		t.Fatalf("process ResourceStatus = %q", process.ResourceStatus)
+	}
+	tap := findTap(snapshot.Taps, "tap-ah000001")
+	if tap == nil || tap.ResourceStatus != "STARTING" {
+		t.Fatalf("tap = %#v", tap)
+	}
+	if len(snapshot.Orphans) != 0 {
+		t.Fatalf("starting resources should not be actionable orphans: %#v", snapshot.Orphans)
+	}
+}
+
 func TestIsFirecrackerCommandRequiresExecutableName(t *testing.T) {
 	tests := []struct {
 		name string

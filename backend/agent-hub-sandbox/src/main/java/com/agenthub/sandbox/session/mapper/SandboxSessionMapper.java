@@ -46,14 +46,33 @@ public interface SandboxSessionMapper extends BaseMapper<SandboxSession> {
                 and sandbox_session_id = #{sandboxSessionId}
             </if>
             order by created_at desc, id desc
-            limit 500
+            limit #{limit}
+            offset #{offset}
             </script>
             """)
     List<SandboxSession> selectAdminSessions(
             @Param("status") String status,
             @Param("conversationId") Long conversationId,
-            @Param("sandboxSessionId") String sandboxSessionId
+            @Param("sandboxSessionId") String sandboxSessionId,
+            @Param("limit") int limit,
+            @Param("offset") int offset
     );
+
+    @Select("""
+            select *
+            from sandbox_session
+            where upper(status) in ('READY', 'RUNNING')
+            order by created_at desc, id desc
+            limit #{limit}
+            """)
+    List<SandboxSession> selectAdminOpenSessions(@Param("limit") int limit);
+
+    @Select("""
+            select count(*)
+            from sandbox_session
+            where upper(status) in ('READY', 'RUNNING')
+            """)
+    long countOpenSessions();
 
     @Update("""
             update sandbox_session
@@ -63,6 +82,25 @@ public interface SandboxSessionMapper extends BaseMapper<SandboxSession> {
             """)
     void markClosedBySandboxSessionId(
             @Param("sandboxSessionId") String sandboxSessionId,
+            @Param("closedAt") OffsetDateTime closedAt
+    );
+
+    @Update("""
+            <script>
+            update sandbox_session
+            set status = 'CLOSED',
+                closed_at = #{closedAt}
+            where upper(status) in ('READY', 'RUNNING')
+            <if test='runtimeSessionIds != null and runtimeSessionIds.size() > 0'>
+                and sandbox_session_id not in
+                <foreach collection='runtimeSessionIds' item='sessionId' open='(' separator=',' close=')'>
+                    #{sessionId}
+                </foreach>
+            </if>
+            </script>
+            """)
+    int markOpenSessionsMissingRuntimeClosed(
+            @Param("runtimeSessionIds") List<String> runtimeSessionIds,
             @Param("closedAt") OffsetDateTime closedAt
     );
 }

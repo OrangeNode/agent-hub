@@ -93,6 +93,7 @@ func (s ResourceScanner) Scan(sessions []RuntimeSessionSnapshot, warmPool WarmPo
 	boundRunDirs := make(map[string]string)
 	boundTaps := make(map[string]string)
 	boundPIDs := make(map[int]string)
+	startingRunDirs := make(map[string]string)
 	for _, session := range sessions {
 		if session.RunDir != "" {
 			if abs, err := filepath.Abs(session.RunDir); err == nil {
@@ -133,6 +134,9 @@ func (s ResourceScanner) Scan(sessions []RuntimeSessionSnapshot, warmPool WarmPo
 	snapshot.RunDirs = runDirs
 	for _, item := range runDirs {
 		snapshot.RunDirBytes += item.SizeBytes
+		if item.ResourceStatus == ResourceStatusStarting {
+			startingRunDirs[item.Path] = item.VMID
+		}
 		if item.ResourceStatus == ResourceStatusOrphanRunDir {
 			snapshot.Orphans = append(snapshot.Orphans, OrphanResource{
 				Type:   ResourceStatusOrphanRunDir,
@@ -162,6 +166,8 @@ func (s ResourceScanner) Scan(sessions []RuntimeSessionSnapshot, warmPool WarmPo
 		}
 		if process.Bound {
 			process.ResourceStatus = ResourceStatusActive
+		} else if process.RunDir != "" && isStartingRunDirPath(process.RunDir, startingRunDirs) {
+			process.ResourceStatus = ResourceStatusStarting
 		} else if process.RunDir != "" && strings.HasPrefix(process.VMID, "fc-") {
 			process.ResourceStatus = ResourceStatusOrphanProcess
 			snapshot.Orphans = append(snapshot.Orphans, OrphanResource{
@@ -184,6 +190,8 @@ func (s ResourceScanner) Scan(sessions []RuntimeSessionSnapshot, warmPool WarmPo
 			tap.Bound = true
 			tap.VMID = vmID
 			tap.ResourceStatus = ResourceStatusActive
+		} else if len(startingRunDirs) > 0 {
+			tap.ResourceStatus = ResourceStatusStarting
 		} else {
 			tap.ResourceStatus = ResourceStatusOrphanTap
 			snapshot.Orphans = append(snapshot.Orphans, OrphanResource{
@@ -289,6 +297,18 @@ func isStartingRunDir(createdAt time.Time, now time.Time, startingGracePeriod ti
 	}
 	age := now.Sub(createdAt)
 	return age >= 0 && age < startingGracePeriod
+}
+
+func isStartingRunDirPath(path string, startingRunDirs map[string]string) bool {
+	if len(startingRunDirs) == 0 {
+		return false
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	_, ok := startingRunDirs[absPath]
+	return ok
 }
 
 func dirSize(path string) (int64, error) {

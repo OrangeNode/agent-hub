@@ -3,6 +3,7 @@ export type SandboxRiskLevel = 'CRITICAL' | 'WARN' | 'INFO' | string
 export type SandboxOperation =
   | 'REAP_IDLE'
   | 'CLOSE_SESSION'
+  | 'CLOSE_MISSING_RUNTIME'
   | 'KILL_VM'
   | 'CLEANUP_ORPHANS'
   | 'CLEAR_RUN_DIR'
@@ -29,6 +30,7 @@ export interface SandboxOverview {
   runDirBytes: number
   orphanResources: number
   risks: SandboxRisk[]
+  runtimeSessions: SandboxRuntimeSession[]
 }
 
 export interface SandboxRuntimeSession {
@@ -172,17 +174,23 @@ export interface SandboxSessionQuery {
   status?: string | null
   conversationId?: number | null
   sandboxSessionId?: string | null
+  limit?: number | null
+  offset?: number | null
 }
 
 export interface SandboxExecutionQuery {
   conversationId?: number | null
   sandboxSessionDbId?: number | null
   status?: string | null
+  limit?: number | null
+  offset?: number | null
 }
 
 export interface SandboxArtifactQuery {
   conversationId?: number | null
   sandboxSessionDbId?: number | null
+  limit?: number | null
+  offset?: number | null
 }
 
 export interface SandboxControlRequest {

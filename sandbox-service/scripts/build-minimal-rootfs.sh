@@ -160,11 +160,30 @@ mount -t proc proc /proc 2>/dev/null || true
 mount -t sysfs sysfs /sys 2>/dev/null || true
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 
+configure_network_from_cmdline() {
+  for arg in $(cat /proc/cmdline); do
+    case "${arg}" in
+      ip=*)
+        value="${arg#ip=}"
+        client_ip="$(printf '%s' "${value}" | cut -d: -f1)"
+        gateway_ip="$(printf '%s' "${value}" | cut -d: -f3)"
+        iface="$(printf '%s' "${value}" | cut -d: -f6)"
+        if [ -n "${client_ip}" ] && [ -n "${gateway_ip}" ] && [ -n "${iface}" ]; then
+          ip link set "${iface}" up 2>/dev/null || true
+          ip addr replace "${client_ip}/30" dev "${iface}" 2>/dev/null || true
+          ip route replace default via "${gateway_ip}" dev "${iface}" 2>/dev/null || true
+        fi
+        ;;
+    esac
+  done
+}
+
 mkdir -p /workspace/input /workspace/artifacts /tmp
 chmod 1777 /tmp
 chown -R sandbox:sandbox /workspace
 ip link set lo up 2>/dev/null || true
 ip link set eth0 up 2>/dev/null || true
+configure_network_from_cmdline
 
 exec su -s /bin/sh sandbox -c 'SANDBOX_WORKSPACE=/workspace SANDBOX_AGENT_ADDR=0.0.0.0:8081 /usr/local/bin/sandbox-agent'
 EOF

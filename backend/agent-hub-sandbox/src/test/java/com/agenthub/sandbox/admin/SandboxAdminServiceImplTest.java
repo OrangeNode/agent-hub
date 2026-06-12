@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -35,8 +36,10 @@ class SandboxAdminServiceImplTest {
         SandboxExecutionMapper executionMapper = mock(SandboxExecutionMapper.class);
         SandboxAdminServiceImpl service = newService(client, sessionMapper, executionMapper);
         when(client.status()).thenReturn(runtimeStatus());
-        when(sessionMapper.selectAdminSessions(null, null, null)).thenReturn(List.of(dbSession("sbx-db")));
-        when(executionMapper.selectAdminExecutions(null, null, null)).thenReturn(List.of());
+        when(sessionMapper.selectAdminOpenSessions(5)).thenReturn(List.of(dbSession("sbx-db")));
+        when(sessionMapper.countOpenSessions()).thenReturn(1L);
+        when(executionMapper.countAdminExecutionsByStatus("RUNNING")).thenReturn(0L);
+        when(executionMapper.countAdminExecutionsByStatuses(List.of("FAILED", "TIMEOUT"))).thenReturn(0L);
 
         SandboxOverview overview = service.overview();
 
@@ -47,6 +50,44 @@ class SandboxAdminServiceImplTest {
                     assertThat(risk.code()).isEqualTo("DB_SESSION_MISSING_RUNTIME");
                     assertThat(risk.targetId()).isEqualTo("sbx-db");
                 });
+    }
+
+    @Test
+    void shouldDefaultAdminListsToLatestFiveRows() {
+        SandboxAdminClient client = mock(SandboxAdminClient.class);
+        SandboxSessionMapper sessionMapper = mock(SandboxSessionMapper.class);
+        SandboxExecutionMapper executionMapper = mock(SandboxExecutionMapper.class);
+        SandboxArtifactMapper artifactMapper = mock(SandboxArtifactMapper.class);
+        SandboxAdminServiceImpl service = new SandboxAdminServiceImpl(client, sessionMapper, executionMapper, artifactMapper);
+        when(client.status()).thenReturn(runtimeStatus());
+        when(sessionMapper.selectAdminSessions(null, null, null, 5, 0)).thenReturn(List.of());
+        when(executionMapper.selectAdminExecutions(null, null, null, 5, 0)).thenReturn(List.of());
+        when(artifactMapper.selectAdminArtifacts(null, null, 5, 0)).thenReturn(List.of());
+
+        service.sessions(null, null, null, null, null);
+        service.executions(null, null, null, null, null);
+        service.artifacts(null, null, null, null);
+
+        verify(sessionMapper).selectAdminSessions(null, null, null, 5, 0);
+        verify(executionMapper).selectAdminExecutions(null, null, null, 5, 0);
+        verify(artifactMapper).selectAdminArtifacts(null, null, 5, 0);
+    }
+
+    @Test
+    void shouldMarkMissingRuntimeSessionsClosedWithoutCallingRuntimeClose() {
+        SandboxAdminClient client = mock(SandboxAdminClient.class);
+        SandboxSessionMapper sessionMapper = mock(SandboxSessionMapper.class);
+        SandboxExecutionMapper executionMapper = mock(SandboxExecutionMapper.class);
+        SandboxAdminServiceImpl service = newService(client, sessionMapper, executionMapper);
+        when(client.status()).thenReturn(runtimeStatus());
+        when(sessionMapper.markOpenSessionsMissingRuntimeClosed(eq(List.of()), any(OffsetDateTime.class))).thenReturn(3);
+
+        SandboxControlResult result = service.closeMissingRuntimeSessions();
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.affected()).containsExactly("已关闭 3 条缺失运行态的数据库会话");
+        verify(client, never()).closeSession(any());
+        verify(sessionMapper).markOpenSessionsMissingRuntimeClosed(eq(List.of()), any(OffsetDateTime.class));
     }
 
     @Test
@@ -91,6 +132,28 @@ class SandboxAdminServiceImplTest {
 
         assertThat(logs).isEqualTo("line");
         verify(client).tailLogs(500);
+    }
+
+    @Test
+    void shouldForwardDryRunToDangerousRuntimeOperations() {
+        SandboxAdminClient client = mock(SandboxAdminClient.class);
+        SandboxAdminServiceImpl service = newService(
+                client,
+                mock(SandboxSessionMapper.class),
+                mock(SandboxExecutionMapper.class)
+        );
+        SandboxControlResult result = new SandboxControlResult(true, List.of(), List.of());
+        when(client.killVm("vm-1", true)).thenReturn(result);
+        when(client.clearRunDir(true)).thenReturn(result);
+        when(client.rebuildWarmPool(true)).thenReturn(result);
+
+        service.killVm("vm-1", new SandboxControlRequest("释放资源", "vm-1", true));
+        service.clearRunDir(new SandboxControlRequest("释放磁盘", "清空运行目录", true));
+        service.rebuildWarmPool(new SandboxControlRequest("恢复预热", "重建预热池", true));
+
+        verify(client).killVm("vm-1", true);
+        verify(client).clearRunDir(true);
+        verify(client).rebuildWarmPool(true);
     }
 
     private SandboxAdminServiceImpl newService(

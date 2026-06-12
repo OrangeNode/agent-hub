@@ -40,26 +40,32 @@ public class SandboxAdminController {
     public ApiResponse<List<SandboxAdminSessionItem>> sessions(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) Long conversationId,
-            @RequestParam(required = false) String sandboxSessionId
+            @RequestParam(required = false) String sandboxSessionId,
+            @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) Integer offset
     ) {
-        return ApiResponse.success(sandboxAdminService.sessions(status, conversationId, sandboxSessionId));
+        return ApiResponse.success(sandboxAdminService.sessions(status, conversationId, sandboxSessionId, limit, offset));
     }
 
     @GetMapping("/executions")
     public ApiResponse<List<SandboxAdminExecutionItem>> executions(
             @RequestParam(required = false) Long conversationId,
             @RequestParam(required = false) Long sandboxSessionDbId,
-            @RequestParam(required = false) String status
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) Integer offset
     ) {
-        return ApiResponse.success(sandboxAdminService.executions(conversationId, sandboxSessionDbId, status));
+        return ApiResponse.success(sandboxAdminService.executions(conversationId, sandboxSessionDbId, status, limit, offset));
     }
 
     @GetMapping("/artifacts")
     public ApiResponse<List<SandboxAdminArtifactItem>> artifacts(
             @RequestParam(required = false) Long conversationId,
-            @RequestParam(required = false) Long sandboxSessionDbId
+            @RequestParam(required = false) Long sandboxSessionDbId,
+            @RequestParam(required = false) Integer limit,
+            @RequestParam(required = false) Integer offset
     ) {
-        return ApiResponse.success(sandboxAdminService.artifacts(conversationId, sandboxSessionDbId));
+        return ApiResponse.success(sandboxAdminService.artifacts(conversationId, sandboxSessionDbId, limit, offset));
     }
 
     @GetMapping("/resources")
@@ -79,6 +85,13 @@ public class SandboxAdminController {
     @OperationLog(module = "Sandbox运维", action = "关闭会话", target = "#sessionId", targetType = "SESSION", recordResult = true)
     public ApiResponse<SandboxControlResult> closeSession(@PathVariable String sessionId) {
         return ApiResponse.success(sandboxAdminService.closeSession(sessionId));
+    }
+
+    @PostMapping("/sessions/close-missing-runtime")
+    @PreAuthorize("hasAuthority('sandbox:session:close')")
+    @OperationLog(module = "Sandbox运维", action = "关闭缺失运行态会话", targetType = "SESSION", recordResult = true)
+    public ApiResponse<SandboxControlResult> closeMissingRuntimeSessions() {
+        return ApiResponse.success(sandboxAdminService.closeMissingRuntimeSessions());
     }
 
     @PostMapping("/vms/{vmId}/kill")

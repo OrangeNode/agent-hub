@@ -70,8 +70,9 @@ public class HttpSandboxAdminClient implements SandboxAdminClient {
     }
 
     @Override
-    public SandboxControlResult killVm(String vmId) {
-        return post("/internal/admin/sandbox/vms/" + encodePath(vmId) + "/kill", "{}", "终止沙箱 VM 失败");
+    public SandboxControlResult killVm(String vmId, boolean dryRun) {
+        return post("/internal/admin/sandbox/vms/" + encodePath(vmId) + "/kill", dryRunBody(dryRun),
+                "终止沙箱 VM 失败");
     }
 
     @Override
@@ -81,13 +82,13 @@ public class HttpSandboxAdminClient implements SandboxAdminClient {
     }
 
     @Override
-    public SandboxControlResult clearRunDir() {
-        return post("/internal/admin/sandbox/run-dir/clear", "{}", "清空沙箱运行目录失败");
+    public SandboxControlResult clearRunDir(boolean dryRun) {
+        return post("/internal/admin/sandbox/run-dir/clear", dryRunBody(dryRun), "清空沙箱运行目录失败");
     }
 
     @Override
-    public SandboxControlResult rebuildWarmPool() {
-        return post("/internal/admin/sandbox/warm-pool/rebuild", "{}", "重建沙箱预热池失败");
+    public SandboxControlResult rebuildWarmPool(boolean dryRun) {
+        return post("/internal/admin/sandbox/warm-pool/rebuild", dryRunBody(dryRun), "重建沙箱预热池失败");
     }
 
     @Override
@@ -136,6 +137,10 @@ public class HttpSandboxAdminClient implements SandboxAdminClient {
         } catch (IOException exception) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, errorMessage);
         }
+    }
+
+    private String dryRunBody(boolean dryRun) {
+        return "{\"dryRun\":" + dryRun + "}";
     }
 
     private HttpRequest.Builder requestBuilder(String pathAndQuery) {

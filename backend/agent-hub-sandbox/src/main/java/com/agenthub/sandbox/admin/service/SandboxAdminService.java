@@ -13,17 +13,36 @@ public interface SandboxAdminService {
 
     SandboxOverview overview();
 
-    List<SandboxAdminSessionItem> sessions(String status, Long conversationId, String sandboxSessionId);
+    List<SandboxAdminSessionItem> sessions(
+            String status,
+            Long conversationId,
+            String sandboxSessionId,
+            Integer limit,
+            Integer offset
+    );
 
-    List<SandboxAdminExecutionItem> executions(Long conversationId, Long sandboxSessionDbId, String status);
+    List<SandboxAdminExecutionItem> executions(
+            Long conversationId,
+            Long sandboxSessionDbId,
+            String status,
+            Integer limit,
+            Integer offset
+    );
 
-    List<SandboxAdminArtifactItem> artifacts(Long conversationId, Long sandboxSessionDbId);
+    List<SandboxAdminArtifactItem> artifacts(
+            Long conversationId,
+            Long sandboxSessionDbId,
+            Integer limit,
+            Integer offset
+    );
 
     SandboxResourceSnapshot resources();
 
     SandboxControlResult reapIdle();
 
     SandboxControlResult closeSession(String sessionId);
+
+    SandboxControlResult closeMissingRuntimeSessions();
 
     SandboxControlResult killVm(String vmId, SandboxControlRequest request);
 

@@ -297,12 +297,23 @@ func (s *AdminServer) handleClearRunDir(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (s *AdminServer) handleRebuildWarmPool(w http.ResponseWriter, _ *http.Request) {
+func (s *AdminServer) handleRebuildWarmPool(w http.ResponseWriter, r *http.Request) {
+	req, err := decodeControlRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if s.WarmPool == nil {
 		writeError(w, http.StatusServiceUnavailable, "warm pool 未初始化")
 		return
 	}
-	result := ControlResult{}
+	result := ControlResult{DryRun: req.DryRun}
+	if req.DryRun {
+		result.addItem("WARM_POOL", "default", "", "REBUILD", "DRY_RUN", "")
+		result.finish()
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
 	if err := s.WarmPool.Rebuild(); err != nil {
 		result.addItem("WARM_POOL", "default", "", "REBUILD", "FAILED", err.Error())
 	} else {

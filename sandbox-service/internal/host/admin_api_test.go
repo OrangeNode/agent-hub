@@ -194,6 +194,38 @@ func TestKillWarmPoolVMDryRunDoesNotRemoveVM(t *testing.T) {
 	}
 }
 
+func TestRebuildWarmPoolDryRunDoesNotRebuild(t *testing.T) {
+	warmPool := NewWarmPool(&fakeVMFactory{}, 1)
+	handler := adminTestHandler(&AdminServer{
+		Manager:  NewSessionManager(&fakeVMFactory{}, 1, time.Minute),
+		WarmPool: warmPool,
+		Scanner: ResourceScanner{
+			RunDir:        mustCreateRunDir(t),
+			ProcessLister: emptyProcessLister,
+			TapLister:     emptyTapLister,
+		},
+	}, "secret")
+
+	req := httptest.NewRequest(http.MethodPost, "/internal/admin/sandbox/warm-pool/rebuild", strings.NewReader(`{"dryRun":true}`))
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if warmPool.Size() != 0 {
+		t.Fatalf("warm pool size = %d, want 0", warmPool.Size())
+	}
+	var result ControlResult
+	if err := json.NewDecoder(rec.Body).Decode(&result); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if !result.DryRun || !result.Success || len(result.Items) != 1 || result.Items[0].Status != "DRY_RUN" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestClearRunDirRejectsUnsafePath(t *testing.T) {
 	unsafeDir := filepath.Join(t.TempDir(), "sandbox")
 	child := filepath.Join(unsafeDir, "fc-unsafe")

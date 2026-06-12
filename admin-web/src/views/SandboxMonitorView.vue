@@ -33,6 +33,17 @@
           </template>
           回收超过 idle 阈值的运行时？
         </n-popconfirm>
+        <n-popconfirm @positive-click="handleCloseMissingRuntimeSessions">
+          <template #trigger>
+            <n-button tertiary type="warning" :loading="isActionLoading('CLOSE_MISSING_RUNTIME')">
+              <template #icon>
+                <n-icon><StopOutlined /></n-icon>
+              </template>
+              清理缺失运行态会话
+            </n-button>
+          </template>
+          将数据库中未关闭但 Go 运行态不存在的会话标记为已关闭？
+        </n-popconfirm>
         <n-button tertiary type="warning" :loading="isActionLoading('REBUILD_WARM_POOL')" @click="openControlDialog('REBUILD_WARM_POOL')">
           <template #icon>
             <n-icon><ToolOutlined /></n-icon>
@@ -78,7 +89,7 @@
               size="small"
               :columns="runtimeSessionColumns"
               :data="runtimeSessions"
-              :pagination="false"
+              :pagination="{ pageSize: PAGE_SIZE }"
               :bordered="false"
               :scroll-x="860"
             />
@@ -86,7 +97,7 @@
 
           <n-card :bordered="false" size="small" title="风险">
             <div v-if="overview?.risks.length" class="risk-list">
-              <n-thing v-for="risk in overview.risks" :key="`${risk.code}-${risk.targetId ?? ''}`">
+              <n-thing v-for="risk in visibleRisks" :key="`${risk.code}-${risk.targetId ?? ''}`">
                 <template #header>
                   <n-space align="center" :wrap="false">
                     <n-tag :type="buildRiskTagType(risk.level)" :bordered="false" size="small">
@@ -102,6 +113,13 @@
                   </div>
                 </template>
               </n-thing>
+              <n-pagination
+                v-if="(overview?.risks.length ?? 0) > PAGE_SIZE"
+                v-model:page="riskPage"
+                :page-size="PAGE_SIZE"
+                :item-count="overview?.risks.length ?? 0"
+                size="small"
+              />
             </div>
             <n-empty v-else description="暂无风险" />
           </n-card>
@@ -124,7 +142,7 @@
             :columns="sessionColumns"
             :data="filteredSessions"
             :loading="loading"
-            :pagination="{ pageSize: 12 }"
+            :pagination="{ pageSize: PAGE_SIZE }"
             :scroll-x="1240"
           />
         </n-card>
@@ -147,7 +165,7 @@
               :columns="executionColumns"
               :data="filteredExecutions"
               :loading="loading"
-              :pagination="{ pageSize: 10 }"
+              :pagination="{ pageSize: PAGE_SIZE }"
               :scroll-x="1280"
             />
           </n-card>
@@ -158,7 +176,7 @@
               :columns="artifactColumns"
               :data="artifacts"
               :loading="loading"
-              :pagination="{ pageSize: 10 }"
+              :pagination="{ pageSize: PAGE_SIZE }"
               :scroll-x="900"
             />
           </n-card>
@@ -302,6 +320,7 @@ import {
   NInput,
   NInputNumber,
   NModal,
+  NPagination,
   NPopconfirm,
   NSelect,
   NSpace,
@@ -316,6 +335,7 @@ import { ClearOutlined, DeleteOutlined, FileSearchOutlined, ReloadOutlined, Stop
 import {
   cleanupSandboxOrphans,
   clearSandboxRunDir,
+  closeSandboxMissingRuntimeSessions,
   closeSandboxSession,
   fetchSandboxArtifacts,
   fetchSandboxExecutions,
@@ -358,6 +378,7 @@ import {
 } from './sandbox-admin.helpers'
 
 const message = useMessage()
+const PAGE_SIZE = 5
 const loading = ref(false)
 const logsLoading = ref(false)
 const activeTab = ref('overview')
@@ -374,6 +395,7 @@ const sessionStatusFilter = ref<string | null>(null)
 const sessionKeyword = ref('')
 const executionStatusFilter = ref<string | null>(null)
 const executionKeyword = ref('')
+const riskPage = ref(1)
 const operationLoading = ref(false)
 const operationAction = ref<SandboxOperation | null>(null)
 const operationTargetId = ref<string | null>(null)
@@ -405,21 +427,13 @@ const executionStatusOptions: SelectOption[] = [
   { label: '超时', value: 'TIMEOUT' }
 ]
 
-const runtimeSessions = computed<SandboxRuntimeSession[]>(() =>
-  sessions.value.map((item) => ({
-    sandboxSessionId: item.sandboxSessionId,
-    conversationId: item.conversationId ? String(item.conversationId) : null,
-    vmId: item.vmId,
-    lastActiveAt: item.lastActiveAt,
-    activeUses: 0,
-    idleSeconds: item.idleSeconds,
-    idleTimeoutSeconds: 0,
-    runDir: item.runDir,
-    tapName: item.tapName,
-    firecrackerPid: item.firecrackerPid,
-    runtimeStatus: item.runtimeStatus
-  }))
-)
+const runtimeSessions = computed<SandboxRuntimeSession[]>(() => overview.value?.runtimeSessions ?? [])
+
+const visibleRisks = computed(() => {
+  const risks = overview.value?.risks ?? []
+  const start = (riskPage.value - 1) * PAGE_SIZE
+  return risks.slice(start, start + PAGE_SIZE)
+})
 
 const metrics = computed(() => [
   {
@@ -658,6 +672,10 @@ async function handleReapIdle() {
   await executeOperation('REAP_IDLE', () => reapSandboxIdle())
 }
 
+async function handleCloseMissingRuntimeSessions() {
+  await executeOperation('CLOSE_MISSING_RUNTIME', () => closeSandboxMissingRuntimeSessions())
+}
+
 async function handleCloseSession(row: SandboxAdminSessionItem) {
   await executeOperation(
     'CLOSE_SESSION',
@@ -748,11 +766,12 @@ async function loadAll() {
     const [overviewData, resourceData, sessionData, executionData, artifactData] = await Promise.all([
       fetchSandboxOverview(),
       fetchSandboxResources(),
-      fetchSandboxSessions(),
-      fetchSandboxExecutions(),
-      fetchSandboxArtifacts()
+      fetchSandboxSessions({ limit: PAGE_SIZE, offset: 0 }),
+      fetchSandboxExecutions({ limit: PAGE_SIZE, offset: 0 }),
+      fetchSandboxArtifacts({ limit: PAGE_SIZE, offset: 0 })
     ])
     overview.value = overviewData
+    riskPage.value = 1
     resources.value = resourceData
     sessions.value = sessionData
     executions.value = executionData

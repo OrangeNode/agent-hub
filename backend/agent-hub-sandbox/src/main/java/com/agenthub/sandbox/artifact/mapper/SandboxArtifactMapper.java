@@ -35,11 +35,14 @@ public interface SandboxArtifactMapper extends BaseMapper<SandboxArtifact> {
                 and sandbox_session_id = #{sandboxSessionDbId}
             </if>
             order by created_at desc, id desc
-            limit 500
+            limit #{limit}
+            offset #{offset}
             </script>
             """)
     List<SandboxArtifact> selectAdminArtifacts(
             @Param("conversationId") Long conversationId,
-            @Param("sandboxSessionDbId") Long sandboxSessionDbId
+            @Param("sandboxSessionDbId") Long sandboxSessionDbId,
+            @Param("limit") int limit,
+            @Param("offset") int offset
     );
 }

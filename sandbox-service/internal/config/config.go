@@ -17,6 +17,7 @@ type Config struct {
 	WarmPoolSize          int
 	MaxActiveSessions     int
 	IdleTimeout           time.Duration
+	StartingGracePeriod   time.Duration
 	VMCpu                 int
 	VMMemoryMB            int
 	VMDiskGB              int
@@ -85,6 +86,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	startingGracePeriod, err := positiveDurationEnv("SANDBOX_STARTING_GRACE_PERIOD", 10*time.Minute)
+	if err != nil {
+		return Config{}, err
+	}
 	execTimeoutSeconds, err := positiveIntEnv("SANDBOX_EXEC_TIMEOUT_SECONDS", 60)
 	if err != nil {
 		return Config{}, err
@@ -105,6 +110,7 @@ func Load() (Config, error) {
 		WarmPoolSize:          warmPoolSize,
 		MaxActiveSessions:     maxActiveSessions,
 		IdleTimeout:           idleTimeout,
+		StartingGracePeriod:   startingGracePeriod,
 		VMCpu:                 vmCpu,
 		VMMemoryMB:            vmMemoryMB,
 		VMDiskGB:              vmDiskGB,

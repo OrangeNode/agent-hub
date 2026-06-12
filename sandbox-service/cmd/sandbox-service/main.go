@@ -56,12 +56,12 @@ func main() {
 		Scanner: host.ResourceScanner{
 			RunDir:              cfg.FirecrackerRunDir,
 			TapNamePrefix:       cfg.TapNamePrefix,
-			StartingGracePeriod: 30 * time.Second,
+			StartingGracePeriod: cfg.StartingGracePeriod,
 		},
 		Config: host.AdminConfig{
 			RunDir:              cfg.FirecrackerRunDir,
 			TapNamePrefix:       cfg.TapNamePrefix,
-			StartingGracePeriod: 30 * time.Second,
+			StartingGracePeriod: cfg.StartingGracePeriod,
 			MaxLogTailLines:     500,
 		},
 	}

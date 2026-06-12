@@ -99,6 +99,7 @@ class SandboxAdminControllerTest {
                 4,
                 1024L,
                 1,
+                List.of(),
                 List.of()
         ));
 
@@ -108,6 +109,46 @@ class SandboxAdminControllerTest {
                 .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.data.activeSessions").value(1))
                 .andExpect(jsonPath("$.data.firecrackerProcesses").value(3));
+    }
+
+    @Test
+    void shouldPassLimitAndOffsetToSandboxListEndpoints() throws Exception {
+        String token = loginUser(1L, "admin", List.of("sandbox:monitor:view"));
+        when(sandboxAdminService.sessions(null, null, null, 5, 10)).thenReturn(List.of());
+        when(sandboxAdminService.executions(null, null, null, 5, 10)).thenReturn(List.of());
+        when(sandboxAdminService.artifacts(null, null, 5, 10)).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/sandbox/admin/sessions?limit=5&offset=10")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+        mockMvc.perform(get("/api/sandbox/admin/executions?limit=5&offset=10")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+        mockMvc.perform(get("/api/sandbox/admin/artifacts?limit=5&offset=10")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200));
+
+        verify(sandboxAdminService).sessions(null, null, null, 5, 10);
+        verify(sandboxAdminService).executions(null, null, null, 5, 10);
+        verify(sandboxAdminService).artifacts(null, null, 5, 10);
+    }
+
+    @Test
+    void shouldCloseMissingRuntimeSessionsWhenUserHasClosePermission() throws Exception {
+        String token = loginUser(1L, "admin", List.of("sandbox:monitor:view", "sandbox:session:close"));
+        when(sandboxAdminService.closeMissingRuntimeSessions())
+                .thenReturn(new SandboxControlResult(true, List.of("已关闭 2 条缺失运行态的数据库会话"), List.of()));
+
+        mockMvc.perform(post("/api/sandbox/admin/sessions/close-missing-runtime")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.success").value(true));
+
+        verify(sandboxAdminService).closeMissingRuntimeSessions();
     }
 
     @Test

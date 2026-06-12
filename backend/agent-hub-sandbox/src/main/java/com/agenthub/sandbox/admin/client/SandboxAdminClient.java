@@ -18,13 +18,13 @@ public interface SandboxAdminClient {
 
     SandboxControlResult closeSession(String sessionId);
 
-    SandboxControlResult killVm(String vmId);
+    SandboxControlResult killVm(String vmId, boolean dryRun);
 
     SandboxControlResult cleanupOrphans(boolean dryRun);
 
-    SandboxControlResult clearRunDir();
+    SandboxControlResult clearRunDir(boolean dryRun);
 
-    SandboxControlResult rebuildWarmPool();
+    SandboxControlResult rebuildWarmPool(boolean dryRun);
 
     String tailLogs(int lines);
 }

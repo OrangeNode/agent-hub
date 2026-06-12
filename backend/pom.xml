@@ -30,6 +30,7 @@
         <module>agent-hub-ai</module>
         <module>agent-hub-agent</module>
         <module>agent-hub-sandbox</module>
+        <module>agent-hub-tool</module>
         <module>agent-hub-storage</module>
         <module>agent-hub-sse</module>
         <module>agent-hub-chat</module>

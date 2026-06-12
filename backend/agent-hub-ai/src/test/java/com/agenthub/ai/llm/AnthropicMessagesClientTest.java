@@ -17,12 +17,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Flow;
+import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 class AnthropicMessagesClientTest {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final Pattern MODEL_SAFE_TOOL_NAME = Pattern.compile("^[a-zA-Z0-9_-]{1,64}$");
 
     private final AnthropicMessagesClient client = new AnthropicMessagesClient();
 
@@ -235,6 +238,38 @@ class AnthropicMessagesClientTest {
     }
 
     @Test
+    void shouldSerializeUnsafeToolDefinitionNameAsModelSafeName() throws Exception {
+        CapturingAnthropicClient capturingClient = new CapturingAnthropicClient();
+
+        capturingClient.stream(requestWithTool("sandbox.exec"), ignored -> {
+        });
+
+        String name = OBJECT_MAPPER.readTree(readBody(capturingClient.capturedRequest))
+                .path("tools")
+                .get(0)
+                .path("name")
+                .asText();
+        assertThat(name).isNotEqualTo("sandbox.exec");
+        assertThat(name).doesNotContain(".");
+        assertThat(MODEL_SAFE_TOOL_NAME.matcher(name).matches()).isTrue();
+    }
+
+    @Test
+    void shouldKeepSafeToolDefinitionNameUnchanged() throws Exception {
+        CapturingAnthropicClient capturingClient = new CapturingAnthropicClient();
+
+        capturingClient.stream(requestWithTool("exec"), ignored -> {
+        });
+
+        String name = OBJECT_MAPPER.readTree(readBody(capturingClient.capturedRequest))
+                .path("tools")
+                .get(0)
+                .path("name")
+                .asText();
+        assertThat(name).isEqualTo("exec");
+    }
+
+    @Test
     void shouldSerializeToolResultMessage() throws Exception {
         CapturingAnthropicClient capturingClient = new CapturingAnthropicClient();
         LlmStreamRequest request = new LlmStreamRequest(
@@ -289,6 +324,66 @@ class AnthropicMessagesClientTest {
         assertThat(block.path("input").path("command").asText()).isEqualTo("python3 main.py");
     }
 
+    @Test
+    void shouldSerializeUnsafeAssistantToolUseNameAsModelSafeName() throws Exception {
+        CapturingAnthropicClient capturingClient = new CapturingAnthropicClient();
+        LlmStreamRequest request = new LlmStreamRequest(
+                "https://api.anthropic.com",
+                "test-api-key",
+                null,
+                "test-model",
+                List.of(LlmMessage.assistantToolCalls(List.of(new LlmToolCall(
+                        "toolu_1",
+                        "sandbox.exec",
+                        Map.of("command", "python3 main.py")
+                )))),
+                1024,
+                false,
+                List.of(tool("sandbox.exec")));
+
+        capturingClient.stream(request, ignored -> {
+        });
+
+        String name = OBJECT_MAPPER.readTree(readBody(capturingClient.capturedRequest))
+                .path("messages")
+                .get(0)
+                .path("content")
+                .get(0)
+                .path("name")
+                .asText();
+        assertThat(name).isNotEqualTo("sandbox.exec");
+        assertThat(MODEL_SAFE_TOOL_NAME.matcher(name).matches()).isTrue();
+    }
+
+    @Test
+    void shouldRestoreUnsafeToolUseNameFromStream() {
+        CapturingAnthropicClient capturingClient = new CapturingAnthropicClient(request -> {
+            String safeName = anthropicToolName(request);
+            return Stream.of(
+                    "event: content_block_start",
+                    "data: {\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"" + safeName + "\",\"input\":{}}}",
+                    "",
+                    "event: content_block_delta",
+                    "data: {\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\":\\\"python3 main.py\\\"}\"}}",
+                    "",
+                    "event: content_block_stop",
+                    "data: {\"index\":0}",
+                    "",
+                    "event: message_stop",
+                    "data: {}");
+        });
+        List<LlmStreamChunk> chunks = new java.util.ArrayList<>();
+
+        capturingClient.stream(requestWithTool("sandbox.exec"), chunks::add);
+
+        assertThat(chunks).containsExactly(
+                LlmStreamChunk.toolCall(new LlmToolCall(
+                        "toolu_1",
+                        "sandbox.exec",
+                        Map.of("command", "python3 main.py"))),
+                LlmStreamChunk.done());
+    }
+
     private LlmStreamRequest request(String baseUrl, Integer maxOutputTokens) {
         return new LlmStreamRequest(
                 baseUrl,
@@ -300,6 +395,38 @@ class AnthropicMessagesClientTest {
                 false);
     }
 
+    private LlmStreamRequest requestWithTool(String toolName) {
+        return new LlmStreamRequest(
+                "https://api.anthropic.com",
+                "test-api-key",
+                null,
+                "test-model",
+                List.of(new LlmMessage("user", "运行脚本")),
+                1024,
+                false,
+                List.of(tool(toolName)));
+    }
+
+    private LlmToolDefinition tool(String name) {
+        return new LlmToolDefinition(
+                name,
+                "执行命令",
+                Map.of("type", "object", "properties", Map.of("command", Map.of("type", "string")))
+        );
+    }
+
+    private static String anthropicToolName(HttpRequest request) {
+        try {
+            return OBJECT_MAPPER.readTree(readBody(request))
+                    .path("tools")
+                    .get(0)
+                    .path("name")
+                    .asText();
+        } catch (Exception exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
     private static String readBody(HttpRequest request) {
         ByteArraySubscriber subscriber = new ByteArraySubscriber();
         request.bodyPublisher().orElseThrow().subscribe(subscriber);
@@ -308,7 +435,7 @@ class AnthropicMessagesClientTest {
 
     private static class CapturingAnthropicClient extends AnthropicMessagesClient {
 
-        private final Stream<String> responseLines;
+        private final Function<HttpRequest, Stream<String>> responseLines;
         private HttpRequest capturedRequest;
 
         private CapturingAnthropicClient() {
@@ -316,13 +443,17 @@ class AnthropicMessagesClientTest {
         }
 
         private CapturingAnthropicClient(Stream<String> responseLines) {
+            this(ignored -> responseLines);
+        }
+
+        private CapturingAnthropicClient(Function<HttpRequest, Stream<String>> responseLines) {
             this.responseLines = responseLines;
         }
 
         @Override
         protected HttpResponse<Stream<String>> send(HttpRequest request) throws IOException, InterruptedException {
             this.capturedRequest = request;
-            return new TestStreamResponse(responseLines);
+            return new TestStreamResponse(responseLines.apply(request));
         }
     }
 

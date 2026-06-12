@@ -20,12 +20,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Flow;
+import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 class OpenAiCompatibleClientTest {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final Pattern MODEL_SAFE_TOOL_NAME = Pattern.compile("^[a-zA-Z0-9_-]{1,64}$");
 
     private final OpenAiCompatibleClient client = new OpenAiCompatibleClient();
 
@@ -281,6 +284,39 @@ class OpenAiCompatibleClientTest {
     }
 
     @Test
+    void shouldSerializeUnsafeToolDefinitionNameAsModelSafeName() throws Exception {
+        CapturingOpenAiClient capturingClient = new CapturingOpenAiClient();
+
+        capturingClient.stream(requestWithTool("sandbox.exec"), ignored -> {
+        });
+
+        JsonNode function = OBJECT_MAPPER.readTree(readBody(capturingClient.capturedRequest))
+                .path("tools")
+                .get(0)
+                .path("function");
+        String name = function.path("name").asText();
+        assertThat(name).isNotEqualTo("sandbox.exec");
+        assertThat(name).doesNotContain(".");
+        assertThat(MODEL_SAFE_TOOL_NAME.matcher(name).matches()).isTrue();
+    }
+
+    @Test
+    void shouldKeepSafeToolDefinitionNameUnchanged() throws Exception {
+        CapturingOpenAiClient capturingClient = new CapturingOpenAiClient();
+
+        capturingClient.stream(requestWithTool("exec"), ignored -> {
+        });
+
+        String name = OBJECT_MAPPER.readTree(readBody(capturingClient.capturedRequest))
+                .path("tools")
+                .get(0)
+                .path("function")
+                .path("name")
+                .asText();
+        assertThat(name).isEqualTo("exec");
+    }
+
+    @Test
     void shouldSerializeToolResultMessage() throws Exception {
         CapturingOpenAiClient capturingClient = new CapturingOpenAiClient();
         LlmStreamRequest request = new LlmStreamRequest(
@@ -333,6 +369,60 @@ class OpenAiCompatibleClientTest {
     }
 
     @Test
+    void shouldSerializeUnsafeAssistantToolCallNameAsModelSafeName() throws Exception {
+        CapturingOpenAiClient capturingClient = new CapturingOpenAiClient();
+        LlmStreamRequest request = new LlmStreamRequest(
+                "http://localhost:3000/v1",
+                "test-api-key",
+                null,
+                "test-model",
+                List.of(LlmMessage.assistantToolCalls(List.of(new LlmToolCall(
+                        "call_1",
+                        "sandbox.exec",
+                        Map.of("command", "python3 main.py")
+                )))),
+                null,
+                false,
+                List.of(tool("sandbox.exec")));
+
+        capturingClient.stream(request, ignored -> {
+        });
+
+        String name = OBJECT_MAPPER.readTree(readBody(capturingClient.capturedRequest))
+                .path("messages")
+                .get(0)
+                .path("tool_calls")
+                .get(0)
+                .path("function")
+                .path("name")
+                .asText();
+        assertThat(name).isNotEqualTo("sandbox.exec");
+        assertThat(MODEL_SAFE_TOOL_NAME.matcher(name).matches()).isTrue();
+    }
+
+    @Test
+    void shouldRestoreUnsafeToolCallNameFromSplitStreamingAccumulator() {
+        CapturingOpenAiClient capturingClient = new CapturingOpenAiClient(request -> {
+            String safeName = openAiToolName(request);
+            return Stream.of(
+                    "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"" + safeName + "\",\"arguments\":\"{\\\"command\\\"\"}}]}}]}",
+                    "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\":\\\"python3 \"}}]}}]}",
+                    "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"main.py\\\"}\"}}]}}]}",
+                    "data: [DONE]");
+        });
+        List<LlmStreamChunk> chunks = new ArrayList<>();
+
+        capturingClient.stream(requestWithTool("sandbox.exec"), chunks::add);
+
+        assertThat(chunks).containsExactly(
+                LlmStreamChunk.toolCall(new LlmToolCall(
+                        "call_1",
+                        "sandbox.exec",
+                        Map.of("command", "python3 main.py"))),
+                LlmStreamChunk.done());
+    }
+
+    @Test
     void shouldParseSplitThinkTagFromStreamingContent() {
         CapturingOpenAiClient capturingClient = new CapturingOpenAiClient(
                 Stream.of(
@@ -372,6 +462,39 @@ class OpenAiCompatibleClientTest {
                 true);
     }
 
+    private LlmStreamRequest requestWithTool(String toolName) {
+        return new LlmStreamRequest(
+                "http://localhost:3000/v1",
+                "test-api-key",
+                null,
+                "test-model",
+                List.of(new LlmMessage("user", "运行脚本")),
+                null,
+                false,
+                List.of(tool(toolName)));
+    }
+
+    private LlmToolDefinition tool(String name) {
+        return new LlmToolDefinition(
+                name,
+                "执行命令",
+                Map.of("type", "object", "properties", Map.of("command", Map.of("type", "string")))
+        );
+    }
+
+    private static String openAiToolName(HttpRequest request) {
+        try {
+            return OBJECT_MAPPER.readTree(readBody(request))
+                    .path("tools")
+                    .get(0)
+                    .path("function")
+                    .path("name")
+                    .asText();
+        } catch (Exception exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
     private static String readBody(HttpRequest request) {
         ByteArraySubscriber subscriber = new ByteArraySubscriber();
         request.bodyPublisher().orElseThrow().subscribe(subscriber);
@@ -380,7 +503,7 @@ class OpenAiCompatibleClientTest {
 
     private static class CapturingOpenAiClient extends OpenAiCompatibleClient {
 
-        private final Stream<String> responseLines;
+        private final Function<HttpRequest, Stream<String>> responseLines;
         private HttpRequest capturedRequest;
 
         private CapturingOpenAiClient() {
@@ -388,13 +511,17 @@ class OpenAiCompatibleClientTest {
         }
 
         private CapturingOpenAiClient(Stream<String> responseLines) {
+            this(ignored -> responseLines);
+        }
+
+        private CapturingOpenAiClient(Function<HttpRequest, Stream<String>> responseLines) {
             this.responseLines = responseLines;
         }
 
         @Override
         protected HttpResponse<Stream<String>> send(HttpRequest request) throws IOException, InterruptedException {
             this.capturedRequest = request;
-            return new TestStreamResponse(responseLines);
+            return new TestStreamResponse(responseLines.apply(request));
         }
     }
 

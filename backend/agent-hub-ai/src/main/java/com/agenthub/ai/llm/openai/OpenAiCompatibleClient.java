@@ -7,6 +7,7 @@ import com.agenthub.ai.llm.LlmStreamChunk;
 import com.agenthub.ai.llm.LlmStreamRequest;
 import com.agenthub.ai.llm.tool.LlmToolCall;
 import com.agenthub.ai.llm.tool.LlmToolDefinition;
+import com.agenthub.ai.llm.tool.LlmToolNameMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -50,17 +51,18 @@ public class OpenAiCompatibleClient implements LlmClient {
     @Override
     public void stream(LlmStreamRequest request, Consumer<LlmStreamChunk> chunkConsumer) {
         try {
-            HttpResponse<Stream<String>> response = send(buildRequest(request));
+            LlmToolNameMapper toolNameMapper = LlmToolNameMapper.from(request.tools());
+            HttpResponse<Stream<String>> response = send(buildRequest(request, toolNameMapper));
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 chunkConsumer.accept(LlmStreamChunk.error("OpenAI Compatible 流式请求失败，HTTP 状态码: " + response.statusCode()));
                 return;
             }
             ThinkTagSplitter thinkTagSplitter = new ThinkTagSplitter();
-            ToolCallAccumulator toolCallAccumulator = new ToolCallAccumulator();
+            ToolCallAccumulator toolCallAccumulator = new ToolCallAccumulator(toolNameMapper);
             try (Stream<String> lines = response.body()) {
                 lines.filter(line -> line.startsWith("data:"))
                         .map(line -> line.substring("data:".length()).trim())
-                        .flatMap(payload -> parseDataLine(payload, toolCallAccumulator).stream())
+                        .flatMap(payload -> parseDataLine(payload, toolCallAccumulator, toolNameMapper).stream())
                         .forEach(chunk -> emitChunk(chunk, thinkTagSplitter, chunkConsumer));
                 thinkTagSplitter.flush(chunkConsumer);
             }
@@ -94,10 +96,15 @@ public class OpenAiCompatibleClient implements LlmClient {
      * 解析单行 data 负载，兼容不同 OpenAI-like 服务的推理字段。
      */
     public List<LlmStreamChunk> parseDataLine(String payload) {
-        return parseDataLine(payload, new ToolCallAccumulator());
+        LlmToolNameMapper toolNameMapper = LlmToolNameMapper.from(List.of());
+        return parseDataLine(payload, new ToolCallAccumulator(toolNameMapper), toolNameMapper);
     }
 
-    private List<LlmStreamChunk> parseDataLine(String payload, ToolCallAccumulator toolCallAccumulator) {
+    private List<LlmStreamChunk> parseDataLine(
+            String payload,
+            ToolCallAccumulator toolCallAccumulator,
+            LlmToolNameMapper toolNameMapper
+    ) {
         if (payload == null || payload.isBlank()) {
             return List.of();
         }
@@ -113,7 +120,7 @@ public class OpenAiCompatibleClient implements LlmClient {
             JsonNode message = choice.path("message");
 
             List<LlmStreamChunk> chunks = new ArrayList<>();
-            addToolCallChunks(chunks, delta.path("tool_calls"), toolCallAccumulator);
+            addToolCallChunks(chunks, delta.path("tool_calls"), toolCallAccumulator, toolNameMapper);
             addTextChunk(chunks, firstText(delta.path("reasoning"),
                     delta.path("reasoning_content"),
                     message.path("reasoning"),
@@ -133,8 +140,8 @@ public class OpenAiCompatibleClient implements LlmClient {
         return httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
     }
 
-    private HttpRequest buildRequest(LlmStreamRequest request) throws IOException {
-        String body = OBJECT_MAPPER.writeValueAsString(buildRequestBody(request));
+    private HttpRequest buildRequest(LlmStreamRequest request, LlmToolNameMapper toolNameMapper) throws IOException {
+        String body = OBJECT_MAPPER.writeValueAsString(buildRequestBody(request, toolNameMapper));
         return HttpRequest.newBuilder()
                 .uri(URI.create(endpoint(request.baseUrl(), "/chat/completions")))
                 .timeout(STREAM_REQUEST_TIMEOUT)
@@ -147,10 +154,10 @@ public class OpenAiCompatibleClient implements LlmClient {
     /**
      * 构造兼容协议请求体，推理开关同时写入常见扩展字段。
      */
-    private Map<String, Object> buildRequestBody(LlmStreamRequest request) {
+    private Map<String, Object> buildRequestBody(LlmStreamRequest request, LlmToolNameMapper toolNameMapper) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", request.model());
-        body.put("messages", toMessages(request.messages()));
+        body.put("messages", toMessages(request.messages(), toolNameMapper));
         body.put("stream", true);
         if (request.maxOutputTokens() != null) {
             body.put("max_tokens", request.maxOutputTokens());
@@ -158,7 +165,7 @@ public class OpenAiCompatibleClient implements LlmClient {
         body.put("enable_thinking", request.reasoningRequested());
         body.put("chat_template_kwargs", Map.of("enable_thinking", request.reasoningRequested()));
         if (request.tools() != null && !request.tools().isEmpty()) {
-            body.put("tools", request.tools().stream().map(this::toOpenAiTool).toList());
+            body.put("tools", request.tools().stream().map(tool -> toOpenAiTool(tool, toolNameMapper)).toList());
             body.put("tool_choice", "auto");
         }
         return body;
@@ -176,7 +183,7 @@ public class OpenAiCompatibleClient implements LlmClient {
         splitter.flush(chunks::add);
     }
 
-    private List<Map<String, Object>> toMessages(List<LlmMessage> messages) {
+    private List<Map<String, Object>> toMessages(List<LlmMessage> messages, LlmToolNameMapper toolNameMapper) {
         if (messages == null) {
             return List.of();
         }
@@ -186,7 +193,9 @@ public class OpenAiCompatibleClient implements LlmClient {
                     item.put("role", message.role());
                     item.put("content", message.hasParts() ? toContentParts(message.parts()) : message.content());
                     if (message.hasToolCalls()) {
-                        item.put("tool_calls", message.toolCalls().stream().map(this::toOpenAiToolCall).toList());
+                        item.put("tool_calls", message.toolCalls().stream()
+                                .map(toolCall -> toOpenAiToolCall(toolCall, toolNameMapper))
+                                .toList());
                     }
                     if ("tool".equals(message.role())) {
                         item.put("tool_call_id", message.toolCallId());
@@ -196,22 +205,22 @@ public class OpenAiCompatibleClient implements LlmClient {
                 .toList();
     }
 
-    private Map<String, Object> toOpenAiToolCall(LlmToolCall toolCall) {
+    private Map<String, Object> toOpenAiToolCall(LlmToolCall toolCall, LlmToolNameMapper toolNameMapper) {
         return Map.of(
                 "id", toolCall.id(),
                 "type", "function",
                 "function", Map.of(
-                        "name", toolCall.name(),
+                        "name", toolNameMapper.toModelName(toolCall.name()),
                         "arguments", writeJson(toolCall.arguments())
                 )
         );
     }
 
-    private Map<String, Object> toOpenAiTool(LlmToolDefinition tool) {
+    private Map<String, Object> toOpenAiTool(LlmToolDefinition tool, LlmToolNameMapper toolNameMapper) {
         return Map.of(
                 "type", "function",
                 "function", Map.of(
-                        "name", tool.name(),
+                        "name", toolNameMapper.toModelName(tool.name()),
                         "description", tool.description(),
                         "parameters", tool.parameters()
                 )
@@ -251,7 +260,8 @@ public class OpenAiCompatibleClient implements LlmClient {
     private void addToolCallChunks(
             List<LlmStreamChunk> chunks,
             JsonNode toolCalls,
-            ToolCallAccumulator toolCallAccumulator
+            ToolCallAccumulator toolCallAccumulator,
+            LlmToolNameMapper toolNameMapper
     ) {
         if (toolCalls == null || !toolCalls.isArray()) {
             return;
@@ -268,7 +278,7 @@ public class OpenAiCompatibleClient implements LlmClient {
             }
             chunks.add(LlmStreamChunk.toolCall(new LlmToolCall(
                     toolCall.path("id").asText(null),
-                    name,
+                    toolNameMapper.toInternalName(name),
                     parseArguments(function.path("arguments").asText(""))
             )));
         }
@@ -332,6 +342,11 @@ public class OpenAiCompatibleClient implements LlmClient {
     private class ToolCallAccumulator {
 
         private final Map<String, PendingToolCall> pendingToolCalls = new LinkedHashMap<>();
+        private final LlmToolNameMapper toolNameMapper;
+
+        private ToolCallAccumulator(LlmToolNameMapper toolNameMapper) {
+            this.toolNameMapper = toolNameMapper;
+        }
 
         private Optional<LlmStreamChunk> accept(JsonNode toolCall) {
             JsonNode function = toolCall.path("function");
@@ -353,7 +368,7 @@ public class OpenAiCompatibleClient implements LlmClient {
             pendingToolCalls.remove(key);
             return Optional.of(LlmStreamChunk.toolCall(new LlmToolCall(
                     pendingToolCall.id,
-                    pendingToolCall.name,
+                    toolNameMapper.toInternalName(pendingToolCall.name),
                     arguments.get()
             )));
         }
@@ -364,7 +379,7 @@ public class OpenAiCompatibleClient implements LlmClient {
                     .filter(pendingToolCall -> pendingToolCall.name != null)
                     .map(pendingToolCall -> LlmStreamChunk.toolCall(new LlmToolCall(
                             pendingToolCall.id,
-                            pendingToolCall.name,
+                            toolNameMapper.toInternalName(pendingToolCall.name),
                             parseArguments(pendingToolCall.arguments.toString())
                     )))
                     .forEach(chunks::add);

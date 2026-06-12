@@ -12,6 +12,7 @@ import com.agenthub.tool.runtime.ToolProvider;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
@@ -23,6 +24,14 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
     private static final int DEFAULT_READ_MAX_BYTES = 4096;
     private static final String DEFAULT_OUTPUT_PATH = "/workspace/artifacts/output.txt";
     private static final String DEFAULT_UPLOAD_PATH = "/workspace/input/upload.bin";
+    private static final int WRITE_FILE_PREVIEW_MAX_LENGTH = 4000;
+    private static final Set<String> SUPPORTED_TOOL_NAMES = Set.of(
+            "sandbox.exec",
+            "sandbox.read_file",
+            "sandbox.write_file",
+            "sandbox.list_files",
+            "sandbox.upload_file"
+    );
 
     private static final List<LlmToolDefinition> TOOLS = List.of(
             new LlmToolDefinition(
@@ -102,7 +111,7 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
 
     @Override
     public boolean supports(String toolName) {
-        return toolName != null && toolName.startsWith("sandbox.");
+        return toolName != null && SUPPORTED_TOOL_NAMES.contains(toolName);
     }
 
     @Override
@@ -165,13 +174,15 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
             String sandboxSessionId
     ) {
         String path = stringArg(request, "path", DEFAULT_OUTPUT_PATH);
-        context.eventSink().output(request.toolCallId(), request.toolName(), "stdout", "准备写入文件: " + path + "\n");
+        String content = stringArg(request, "content", "");
+        context.eventSink().output(request.toolCallId(), request.toolName(), "stdout",
+                formatWriteFilePreview(path, content));
         sandboxToolService.writeFile(
                 context.userId(),
                 context.conversationId(),
                 sandboxSessionId,
                 path,
-                stringArg(request, "content", ""),
+                content,
                 booleanArg(request, "append", false)
         );
         return "文件写入完成: " + path;
@@ -230,12 +241,19 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
 
     private static String formatFiles(List<SandboxFileItem> files) {
         if (files == null || files.isEmpty()) {
-            return "未找到文件";
+            return "没有文件";
         }
         return files.stream()
-                .map(file -> (file.directory() ? "[DIR] " : "[FILE] ")
-                        + file.path() + " " + defaultSize(file.size()) + " bytes")
+                .map(file -> (file.directory() ? "dir " : "file ") + file.path())
                 .collect(Collectors.joining("\n"));
+    }
+
+    private static String formatWriteFilePreview(String path, String content) {
+        String value = defaultString(content);
+        String excerpt = value.length() > WRITE_FILE_PREVIEW_MAX_LENGTH
+                ? value.substring(0, WRITE_FILE_PREVIEW_MAX_LENGTH) + "\n...（内容已截断）"
+                : value;
+        return "写入文件: " + path + "\n" + excerpt;
     }
 
     private static String stringArg(ToolExecutionRequest request, String name, String defaultValue) {
@@ -245,25 +263,52 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
 
     private static int intArg(ToolExecutionRequest request, String name, int defaultValue) {
         Object value = request.arguments().get(name);
-        return value instanceof Number number ? number.intValue() : defaultValue;
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value instanceof String text) {
+            try {
+                return Integer.parseInt(text.trim());
+            } catch (NumberFormatException ignored) {
+                return defaultValue;
+            }
+        }
+        return defaultValue;
     }
 
     private static Long longArg(ToolExecutionRequest request, String name, Long defaultValue) {
         Object value = request.arguments().get(name);
-        return value instanceof Number number ? number.longValue() : defaultValue;
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        if (value instanceof String text) {
+            try {
+                return Long.parseLong(text.trim());
+            } catch (NumberFormatException ignored) {
+                return defaultValue;
+            }
+        }
+        return defaultValue;
     }
 
     private static boolean booleanArg(ToolExecutionRequest request, String name, boolean defaultValue) {
         Object value = request.arguments().get(name);
-        return value instanceof Boolean bool ? bool : defaultValue;
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        if (value instanceof String text) {
+            if ("true".equalsIgnoreCase(text)) {
+                return true;
+            }
+            if ("false".equalsIgnoreCase(text)) {
+                return false;
+            }
+        }
+        return defaultValue;
     }
 
     private static String defaultString(String value) {
         return value == null ? "" : value;
-    }
-
-    private static long defaultSize(Long size) {
-        return size == null ? 0L : size;
     }
 
     @SafeVarargs

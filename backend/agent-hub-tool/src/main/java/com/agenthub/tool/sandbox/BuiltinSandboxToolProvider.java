@@ -117,6 +117,9 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
     @Override
     public ToolExecutionResult execute(ToolExecutionRequest request, ToolExecutionContext context) {
         String toolName = request.toolName();
+        if (!supports(toolName)) {
+            return ToolExecutionResult.failed("不支持的工具: " + toolName);
+        }
         try {
             String sandboxSessionId = sandboxSessionService.ensureSession(context.userId(), context.conversationId());
             String result = switch (toolName) {
@@ -125,7 +128,7 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
                 case "sandbox.write_file" -> writeFile(request, context, sandboxSessionId);
                 case "sandbox.list_files" -> listFiles(request, context, sandboxSessionId);
                 case "sandbox.upload_file" -> uploadFile(request, context, sandboxSessionId);
-                default -> "不支持的工具: " + toolName;
+                default -> throw new IllegalStateException("不支持的工具: " + toolName);
             };
             return ToolExecutionResult.completed(result);
         } catch (Exception exception) {

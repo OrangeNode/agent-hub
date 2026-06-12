@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -54,6 +55,18 @@ class BuiltinSandboxToolProviderTest {
         assertThat(provider.supports("mcp.x.y")).isFalse();
         assertThat(provider.supports("sandbox.unknown")).isFalse();
         assertThat(provider.supports(null)).isFalse();
+    }
+
+    @Test
+    void shouldReturnFailedResultWhenExecutingUnsupportedTool() {
+        ToolExecutionResult result = provider.execute(
+                request("call-1", "sandbox.unknown", Map.of()),
+                context(ToolEventSink.noop())
+        );
+
+        assertThat(result.status()).isEqualTo("failed");
+        assertThat(result.content()).isEqualTo("不支持的工具: sandbox.unknown");
+        verifyNoInteractions(sandboxSessionService, sandboxToolService);
     }
 
     @Test

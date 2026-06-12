@@ -680,11 +680,18 @@ class ChatServiceImplTest {
 
         assertThat(llmClient.requests).hasSize(2);
         assertThat(llmClient.requests.getFirst().tools()).containsExactly(githubSearchTool);
+        assertThat(llmClient.requests.get(1).tools()).containsExactly(githubSearchTool);
         assertThat(llmClient.requests.get(1).messages()).anySatisfy(message -> {
             assertThat(message.role()).isEqualTo("tool");
             assertThat(message.toolCallId()).isEqualTo("call_1");
             assertThat(message.content()).isEqualTo("repo: agent-hub");
         });
+        ArgumentCaptor<ToolExecutionContext> listContextCaptor = ArgumentCaptor.forClass(ToolExecutionContext.class);
+        verify(toolRegistry).listTools(listContextCaptor.capture());
+        assertThat(listContextCaptor.getValue().userId()).isEqualTo(7L);
+        assertThat(listContextCaptor.getValue().conversationId()).isEqualTo(100L);
+        assertThat(listContextCaptor.getValue().assistantMessageId()).isEqualTo(2L);
+        assertThat(listContextCaptor.getValue().agentKey()).isEqualTo("official-writing");
         ArgumentCaptor<ToolExecutionRequest> requestCaptor = ArgumentCaptor.forClass(ToolExecutionRequest.class);
         ArgumentCaptor<ToolExecutionContext> contextCaptor = ArgumentCaptor.forClass(ToolExecutionContext.class);
         verify(toolRegistry).execute(requestCaptor.capture(), contextCaptor.capture());
@@ -716,6 +723,129 @@ class ChatServiceImplTest {
         assertThat(updatedMessageCaptor.getValue().getProcessEvents())
                 .contains("\"type\":\"tool\"", "\"name\":\"mcp.github.search_repositories\"",
                         "\"result\":\"repo: agent-hub\"");
+    }
+
+    @Test
+    void shouldRecordFailedToolResultWhenRegistryExecutionThrows() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        RetryingLlmClient llmClient = new RetryingLlmClient(List.of(
+                List.of(LlmStreamChunk.toolCall(new LlmToolCall(
+                        "call_1",
+                        "mcp.github.search_repositories",
+                        Map.of("query", "agent hub")
+                )), LlmStreamChunk.done())
+        ));
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                sender,
+                mock(AttachmentService.class),
+                null,
+                contextBuilder(messageMapper, mock(AttachmentService.class), llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                mock(SandboxToolService.class),
+                toolRegistry
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        ChatConversation conversation = conversation(100L, 7L, "ACTIVE");
+        conversation.setAgentKey("official-writing");
+        when(conversationMapper.selectById(100L)).thenReturn(conversation);
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(toolRegistry.listTools(any(ToolExecutionContext.class))).thenReturn(List.of(new LlmToolDefinition(
+                "mcp.github.search_repositories",
+                "搜索 GitHub 仓库",
+                Map.of("type", "object")
+        )));
+        when(toolRegistry.execute(any(ToolExecutionRequest.class), any(ToolExecutionContext.class)))
+                .thenThrow(new RuntimeException("远程工具异常"));
+
+        service.stream(7L, 100L, 10L, null, "搜索仓库", false, List.of(), List.of());
+
+        assertThat(sender.eventTypes()).containsExactly(
+                SseEventType.CONVERSATION,
+                SseEventType.MESSAGE,
+                SseEventType.TOOL_CALL,
+                SseEventType.TOOL_RESULT,
+                SseEventType.ERROR,
+                SseEventType.DONE
+        );
+        SseEventData.ToolResult toolResult = sender.eventDataOf(SseEventData.ToolResult.class);
+        assertThat(toolResult.toolCallId()).isEqualTo("call_1");
+        assertThat(toolResult.name()).isEqualTo("mcp.github.search_repositories");
+        assertThat(toolResult.status()).isEqualTo("failed");
+        assertThat(toolResult.content()).isEqualTo("远程工具异常");
+        ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        ChatMessage failedAssistantMessage = updatedMessageCaptor.getValue();
+        assertThat(failedAssistantMessage.getStatus()).isEqualTo("FAILED");
+        assertThat(failedAssistantMessage.getErrorMessage()).isEqualTo("远程工具异常");
+        assertThat(failedAssistantMessage.getProcessEvents())
+                .contains("\"status\":\"failed\"", "\"result\":\"远程工具异常\"");
+    }
+
+    @Test
+    void shouldDefaultToolOutputStreamAndContentWhenRegistryEmitsNullOutput() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        RetryingLlmClient llmClient = new RetryingLlmClient(List.of(
+                List.of(LlmStreamChunk.toolCall(new LlmToolCall(
+                        "call_1",
+                        "sandbox.exec",
+                        Map.of("command", "python main.py")
+                )), LlmStreamChunk.done()),
+                List.of(LlmStreamChunk.answer("完成"), LlmStreamChunk.done())
+        ));
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                sender,
+                mock(AttachmentService.class),
+                null,
+                contextBuilder(messageMapper, mock(AttachmentService.class), llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                mock(SandboxToolService.class),
+                toolRegistry
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(toolRegistry.listTools(any(ToolExecutionContext.class))).thenReturn(List.of(new LlmToolDefinition(
+                "sandbox.exec",
+                "执行命令",
+                Map.of("type", "object")
+        )));
+        when(toolRegistry.execute(any(ToolExecutionRequest.class), any(ToolExecutionContext.class)))
+                .thenAnswer(invocation -> {
+                    ToolExecutionContext context = invocation.getArgument(1);
+                    context.eventSink().output("call_1", "sandbox.exec", null, null);
+                    return ToolExecutionResult.completed("ok");
+                });
+
+        service.stream(7L, 100L, 10L, null, "运行脚本", false, List.of(), List.of());
+
+        SseEventData.ToolOutput toolOutput = sender.eventDataOf(SseEventData.ToolOutput.class);
+        assertThat(toolOutput.toolCallId()).isEqualTo("call_1");
+        assertThat(toolOutput.stream()).isEqualTo("stdout");
+        assertThat(toolOutput.content()).isEmpty();
+        ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        assertThat(updatedMessageCaptor.getValue().getProcessEvents())
+                .contains("\"stdout\":\"\"", "\"stderr\":\"\"");
     }
 
     @Test
@@ -806,7 +936,9 @@ class ChatServiceImplTest {
         assertThat(llmClient.lastRequest).isNotNull();
         assertThat(llmClient.lastRequest.messages().getFirst().role()).isEqualTo("system");
         assertThat(llmClient.lastRequest.messages().getFirst().content())
-                .contains("/workspace/input", "/workspace/artifacts", "相对路径", "write_file", "下载", "exec");
+                .contains("/workspace/input", "/workspace/artifacts", "相对路径",
+                        "sandbox.write_file", "下载", "sandbox.exec")
+                .doesNotContain("调用 write_file", "- exec 可以");
     }
 
     @Test

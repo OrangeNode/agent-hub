@@ -91,8 +91,8 @@ public class ChatServiceImpl implements ChatService {
             - 所有工具路径必须位于 /workspace 内，不能访问 /workspace 之外的路径。
             - 用户上传或导入的文件位于 /workspace/input，请从这里读取输入材料。
             - 需要交付给用户的输出文件必须写入 /workspace/artifacts，例如 /workspace/artifacts/作文.txt。
-            - 用户要求下载代码、input、output 或其他文件时，优先调用 write_file 逐个写入 /workspace/artifacts，文件名要清晰可识别。
-            - exec 可以用于复杂任务编排、脚本执行、重定向、管道和 here-doc；所有需要用户下载的最终文件仍应写入 /workspace/artifacts。
+            - 用户要求下载代码、input、output 或其他文件时，优先调用 sandbox.write_file 逐个写入 /workspace/artifacts，文件名要清晰可识别。
+            - sandbox.exec 可以用于复杂任务编排、脚本执行、重定向、管道和 here-doc；所有需要用户下载的最终文件仍应写入 /workspace/artifacts。
             - 如果工具参数使用相对路径，服务端会按工具类型统一归一到 /workspace/input 或 /workspace/artifacts；不要尝试使用 ..、/etc、/root 等越界路径。
             """;
     private static final String CONTEXT_LENGTH_RETRY_FAILED_MESSAGE =
@@ -510,21 +510,7 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private String systemPrompt(AgentRuntimeConfig agentRuntime) {
-        String basePrompt = agentRuntime == null ? null : agentRuntime.systemPrompt();
-        ToolExecutionContext toolContext = new ToolExecutionContext(
-                null,
-                null,
-                null,
-                agentRuntime == null ? null : agentRuntime.agentKey(),
-                null
-        );
-        if (!toolsAvailable(toolContext)) {
-            return basePrompt;
-        }
-        if (!hasText(basePrompt)) {
-            return SANDBOX_PATH_RULES.strip();
-        }
-        return basePrompt.strip() + "\n\n" + SANDBOX_PATH_RULES.strip();
+        return agentRuntime == null ? null : agentRuntime.systemPrompt();
     }
 
     /**
@@ -681,24 +667,29 @@ public class ChatServiceImpl implements ChatService {
                 assistantMessage.getId(),
                 agentKey,
                 (toolCallId, toolName, stream, output) -> {
-                    processRecorder.appendToolOutput(toolCallId, toolName, stream, output);
+                    String safeStream = hasText(stream) ? stream : "stdout";
+                    String safeOutput = defaultString(output);
+                    processRecorder.appendToolOutput(toolCallId, toolName, safeStream, safeOutput);
                     send(emitter, SseEventType.TOOL_OUTPUT,
-                            new SseEventData.ToolOutput(toolCallId, stream, defaultString(output)));
+                            new SseEventData.ToolOutput(toolCallId, safeStream, safeOutput));
                 }
         );
         AtomicBoolean finished = new AtomicBoolean(false);
         // 只有用户开启思考且模型声明支持时，才向前端透出推理片段。
         boolean reasoningRequested = thinkingEnabled && runtimeConfig.reasoningSupported();
+        List<LlmToolDefinition> availableTools = List.of();
+        List<LlmMessage> loopMessages = new ArrayList<>(messages);
         try {
+            availableTools = listTools(toolContext);
             LlmClient client = llmClientFactory.apply(runtimeConfig.protocolType());
-            List<LlmMessage> loopMessages = new ArrayList<>(messages);
+            loopMessages = withSandboxPathRules(messages, availableTools);
             int toolCallCount = 0;
             while (!finished.get()) {
                 StreamAttemptOutcome outcome = streamOnce(client, runtimeConfig, loopMessages, reasoningRequested,
-                        toolContext, emitter, assistantMessage, content, reasoningContent, processRecorder, finished);
+                        availableTools, emitter, assistantMessage, content, reasoningContent, processRecorder, finished);
                 if (outcome.retryRequested() && !finished.get()) {
                     StreamAttemptOutcome retryOutcome = streamOnce(client, runtimeConfig, compactMessagesForRetry(loopMessages),
-                            reasoningRequested, toolContext, emitter, assistantMessage, content, reasoningContent,
+                            reasoningRequested, availableTools, emitter, assistantMessage, content, reasoningContent,
                             processRecorder, finished);
                     if (retryOutcome.retryRequested() && finished.compareAndSet(false, true)) {
                         failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent,
@@ -709,8 +700,8 @@ public class ChatServiceImpl implements ChatService {
                 if (finished.get() || outcome.toolCalls().isEmpty()) {
                     return;
                 }
-                if (!toolsAvailable(toolContext)) {
-                    throw new BusinessException(ErrorCode.INTERNAL_ERROR, "沙箱工具服务不可用");
+                if (availableTools.isEmpty()) {
+                    throw new BusinessException(ErrorCode.INTERNAL_ERROR, "工具服务不可用");
                 }
                 if (toolCallCount + outcome.toolCalls().size() > TOOL_CALL_MAX_COUNT) {
                     failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent,
@@ -730,8 +721,8 @@ public class ChatServiceImpl implements ChatService {
             }
         } catch (Exception exception) {
             if (isRetryableBeforeDelta(content, reasoningContent) && isContextLengthError(exception.getMessage())) {
-                retryAfterContextLengthException(emitter, runtimeConfig, messages, assistantMessage, reasoningRequested,
-                        content, reasoningContent, processRecorder, finished, exception, toolContext);
+                retryAfterContextLengthException(emitter, runtimeConfig, loopMessages, assistantMessage, reasoningRequested,
+                        availableTools, content, reasoningContent, processRecorder, finished, exception);
             } else if (finished.compareAndSet(false, true)) {
                 failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent,
                         exception.getMessage(), processRecorder);
@@ -746,7 +737,7 @@ public class ChatServiceImpl implements ChatService {
             AiModelRuntimeConfig runtimeConfig,
             List<LlmMessage> messages,
             boolean reasoningRequested,
-            ToolExecutionContext toolContext
+            List<LlmToolDefinition> availableTools
     ) {
         return new LlmStreamRequest(
                 runtimeConfig.baseUrl(),
@@ -756,7 +747,7 @@ public class ChatServiceImpl implements ChatService {
                 messages,
                 runtimeConfig.maxOutputTokens(),
                 reasoningRequested,
-                listTools(toolContext)
+                availableTools
         );
     }
 
@@ -765,7 +756,7 @@ public class ChatServiceImpl implements ChatService {
             AiModelRuntimeConfig runtimeConfig,
             List<LlmMessage> messages,
             boolean reasoningRequested,
-            ToolExecutionContext toolContext,
+            List<LlmToolDefinition> availableTools,
             SseEmitter emitter,
             ChatMessage assistantMessage,
             StringBuilder content,
@@ -776,7 +767,7 @@ public class ChatServiceImpl implements ChatService {
         AtomicBoolean retryRequested = new AtomicBoolean(false);
         AtomicBoolean sawDelta = new AtomicBoolean(false);
         List<LlmToolCall> toolCalls = new ArrayList<>();
-        client.stream(buildRequest(runtimeConfig, messages, reasoningRequested, toolContext), chunk -> {
+        client.stream(buildRequest(runtimeConfig, messages, reasoningRequested, availableTools), chunk -> {
             if (retryRequested.get()) {
                 return;
             }
@@ -805,15 +796,48 @@ public class ChatServiceImpl implements ChatService {
         return new StreamAttemptOutcome(retryRequested.get(), toolCalls);
     }
 
-    private boolean toolsAvailable(ToolExecutionContext toolContext) {
-        return !listTools(toolContext).isEmpty();
-    }
-
     private List<LlmToolDefinition> listTools(ToolExecutionContext toolContext) {
         if (toolRegistry == null) {
             return List.of();
         }
         return toolRegistry.listTools(toolContext);
+    }
+
+    private List<LlmMessage> withSandboxPathRules(List<LlmMessage> messages, List<LlmToolDefinition> availableTools) {
+        List<LlmMessage> resolvedMessages = messages == null ? new ArrayList<>() : new ArrayList<>(messages);
+        if (!hasSandboxTools(availableTools)) {
+            return resolvedMessages;
+        }
+        String rules = SANDBOX_PATH_RULES.strip();
+        for (int index = 0; index < resolvedMessages.size(); index++) {
+            LlmMessage message = resolvedMessages.get(index);
+            if (!"system".equals(message.role())) {
+                continue;
+            }
+            String content = hasText(message.content()) ? message.content().strip() + "\n\n" + rules : rules;
+            resolvedMessages.set(index, new LlmMessage(
+                    message.role(),
+                    content,
+                    message.parts(),
+                    message.toolCallId(),
+                    message.toolName(),
+                    message.toolCalls()
+            ));
+            return resolvedMessages;
+        }
+        resolvedMessages.addFirst(new LlmMessage("system", rules));
+        return resolvedMessages;
+    }
+
+    private boolean hasSandboxTools(List<LlmToolDefinition> availableTools) {
+        if (availableTools == null || availableTools.isEmpty()) {
+            return false;
+        }
+        return availableTools.stream()
+                .filter(Objects::nonNull)
+                .map(LlmToolDefinition::name)
+                .filter(Objects::nonNull)
+                .anyMatch(name -> name.startsWith("sandbox."));
     }
 
     private String executeToolCall(
@@ -822,10 +846,20 @@ public class ChatServiceImpl implements ChatService {
             ProcessEventRecorder processRecorder,
             ToolExecutionContext toolContext
     ) {
-        ToolExecutionResult result = toolRegistry.execute(
-                new ToolExecutionRequest(toolCall.id(), toolCall.name(), toolCall.arguments()),
-                toolContext
-        );
+        ToolExecutionResult result;
+        try {
+            result = toolRegistry.execute(
+                    new ToolExecutionRequest(toolCall.id(), toolCall.name(), toolCall.arguments()),
+                    toolContext
+            );
+        } catch (RuntimeException exception) {
+            String message = hasText(exception.getMessage()) ? exception.getMessage() : "工具调用失败";
+            result = ToolExecutionResult.failed(message);
+            processRecorder.completeTool(toolCall.id(), toolCall.name(), result.status(), result.content());
+            send(emitter, SseEventType.TOOL_RESULT,
+                    new SseEventData.ToolResult(toolCall.id(), toolCall.name(), result.status(), result.content()));
+            throw exception;
+        }
         processRecorder.completeTool(toolCall.id(), toolCall.name(), result.status(), result.content());
         send(emitter, SseEventType.TOOL_RESULT,
                 new SseEventData.ToolResult(toolCall.id(), toolCall.name(), result.status(), result.content()));
@@ -837,17 +871,17 @@ public class ChatServiceImpl implements ChatService {
             List<LlmMessage> messages,
             ChatMessage assistantMessage,
             boolean reasoningRequested,
+            List<LlmToolDefinition> availableTools,
             StringBuilder content,
             StringBuilder reasoningContent,
             ProcessEventRecorder processRecorder,
             AtomicBoolean finished,
-            Exception originalException,
-            ToolExecutionContext toolContext
+            Exception originalException
     ) {
         try {
             LlmClient client = llmClientFactory.apply(runtimeConfig.protocolType());
             StreamAttemptOutcome retryOutcome = streamOnce(client, runtimeConfig, compactMessagesForRetry(messages),
-                    reasoningRequested, toolContext, emitter, assistantMessage, content, reasoningContent,
+                    reasoningRequested, availableTools, emitter, assistantMessage, content, reasoningContent,
                     processRecorder, finished);
             if (retryOutcome.retryRequested() && finished.compareAndSet(false, true)) {
                 failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent,

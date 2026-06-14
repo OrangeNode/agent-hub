@@ -18,6 +18,7 @@ coverage/
 .env.*.local
 
 backend/logs/
+test-artifacts/
 .worktrees/
 
 sandbox-service/bin/

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import chatViewSource from '../src/views/ChatView.vue?raw'
 
+const normalizedChatViewSource = chatViewSource.replace(/\r\n/g, '\n')
+
 function cssBlock(selector: string) {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const match = chatViewSource.match(new RegExp(`${escapedSelector}\\s*\\{(?<body>[\\s\\S]*?)\\n\\}`))
+  const match = normalizedChatViewSource.match(new RegExp(`${escapedSelector}\\s*\\{(?<body>[\\s\\S]*?)\\n\\}`))
   return match?.groups?.body ?? ''
 }
 
@@ -28,8 +30,8 @@ describe('chat scrollbar layout', () => {
   it('prevents side drawer animation from creating a horizontal page scrollbar', () => {
     const chatShell = cssBlock('.chat-shell')
 
-    expect(chatViewSource).toContain(':global(html),\n:global(body) {')
-    expect(chatViewSource).toContain('overflow-x: hidden;')
+    expect(normalizedChatViewSource).toContain(':global(html),\n:global(body) {')
+    expect(normalizedChatViewSource).toContain('overflow-x: hidden;')
     expect(chatShell).toContain('overflow-x: hidden;')
   })
 })

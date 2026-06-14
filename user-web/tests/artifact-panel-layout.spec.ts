@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import chatViewSource from '../src/views/ChatView.vue?raw'
 
+const normalizedChatViewSource = chatViewSource.replace(/\r\n/g, '\n')
+
 describe('artifact panel layout', () => {
   it('does not render a top-right all-files button', () => {
     expect(chatViewSource).not.toContain('toggleWorkPanel')
@@ -17,7 +19,7 @@ describe('artifact panel layout', () => {
   })
 
   it('keeps artifact panels as right-side drawers near the desktop breakpoint', () => {
-    expect(chatViewSource).toContain('.work-panel,\n  .artifact-preview-panel {\n    position: fixed;')
+    expect(normalizedChatViewSource).toContain('.work-panel,\n  .artifact-preview-panel {\n    position: fixed;')
     expect(chatViewSource).toContain('right: 0;')
     expect(chatViewSource).not.toContain('grid-column: 1 / -1;')
   })

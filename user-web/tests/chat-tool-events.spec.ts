@@ -33,6 +33,7 @@ describe('聊天工具调用链状态', () => {
           toolCallId: 'call_1',
           name: 'write_file',
           status: 'completed',
+          expanded: false,
           stdout: '写入中',
           stderr: '',
           result: '文件写入完成'
@@ -67,6 +68,7 @@ describe('聊天工具调用链状态', () => {
           toolCallId: 'call_late',
           name: '工具调用',
           status: 'running',
+          expanded: false,
           stdout: '',
           stderr: 'warning',
           result: ''
@@ -83,6 +85,7 @@ describe('聊天工具调用链状态', () => {
           toolCallId: 'call_1',
           name: 'exec',
           status: 'completed',
+          expanded: false,
           stdout: 'ok',
           stderr: '',
           result: 'stdout:\nok\nstderr:\n'
@@ -97,6 +100,7 @@ describe('聊天工具调用链状态', () => {
           toolCallId: 'call_1',
           name: 'exec',
           status: 'completed',
+          expanded: false,
           stdout: 'ok',
           stderr: '',
           result: 'stdout:\nok\nstderr:\n'

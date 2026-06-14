@@ -132,7 +132,7 @@ class ChatServiceImplTest {
         );
         assertThat(sender.completed).isTrue();
         assertThat(llmClient.lastRequest.messages()).hasSize(1);
-        assertThat(llmClient.lastRequest.messages().getFirst().content()).isEqualTo("你好，介绍一下自己");
+        assertTimedMessageContent(llmClient.lastRequest.messages().getFirst().content(), "你好，介绍一下自己");
         assertThat(llmClient.lastRequest.reasoningRequested()).isTrue();
     }
 
@@ -183,7 +183,7 @@ class ChatServiceImplTest {
         assertThat(llmClient.lastRequest.messages().get(0).role()).isEqualTo("system");
         assertThat(llmClient.lastRequest.messages().get(0).content()).isEqualTo("你是一个公文写作助手。");
         assertThat(llmClient.lastRequest.messages().get(1).role()).isEqualTo("user");
-        assertThat(llmClient.lastRequest.messages().get(1).content()).isEqualTo("起草一份会议通知");
+        assertTimedMessageContent(llmClient.lastRequest.messages().get(1).content(), "起草一份会议通知");
     }
 
     @Test
@@ -230,7 +230,7 @@ class ChatServiceImplTest {
         assertThat(llmClient.lastRequest.messages()).hasSize(2);
         assertThat(llmClient.lastRequest.messages().get(0).role()).isEqualTo("system");
         assertThat(llmClient.lastRequest.messages().get(0).content()).isEqualTo("你是一个公文写作助手。");
-        assertThat(llmClient.lastRequest.messages().get(1).content()).isEqualTo("继续");
+        assertTimedMessageContent(llmClient.lastRequest.messages().get(1).content(), "继续");
     }
 
     @Test
@@ -324,9 +324,10 @@ class ChatServiceImplTest {
 
         assertThat(llmClient.lastRequest.messages()).hasSize(1);
         assertThat(llmClient.lastRequest.messages().getFirst().content()).isNull();
-        assertThat(llmClient.lastRequest.messages().getFirst().parts()).containsExactly(
-                LlmContentPart.imageUrl("https://example.com/cat.png")
-        );
+        assertThat(llmClient.lastRequest.messages().getFirst().parts()).hasSize(2);
+        assertOnlyTimedMessageContent(llmClient.lastRequest.messages().getFirst().parts().get(0).text());
+        assertThat(llmClient.lastRequest.messages().getFirst().parts().get(1))
+                .isEqualTo(LlmContentPart.imageUrl("https://example.com/cat.png"));
         verify(attachmentService).bindToMessage(7L, 100L, 1L, List.of(1L));
     }
 
@@ -505,7 +506,7 @@ class ChatServiceImplTest {
         assertThat(llmClient.requests).hasSize(2);
         assertThat(llmClient.requests.get(0).messages()).hasSizeGreaterThan(1);
         assertThat(llmClient.requests.get(1).messages()).hasSize(1);
-        assertThat(llmClient.requests.get(1).messages().getFirst().content()).isEqualTo("继续");
+        assertTimedMessageContent(llmClient.requests.get(1).messages().getFirst().content(), "继续");
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
         verify(messageMapper).updateById(updatedMessageCaptor.capture());
         assertThat(updatedMessageCaptor.getValue().getStatus()).isEqualTo("COMPLETED");
@@ -1032,10 +1033,10 @@ class ChatServiceImplTest {
 
         assertThat(llmClient.lastRequest.messages()).hasSize(1);
         assertThat(llmClient.lastRequest.messages().getFirst().content()).isNull();
-        assertThat(llmClient.lastRequest.messages().getFirst().parts()).containsExactly(
-                LlmContentPart.text("分析图片"),
-                LlmContentPart.imageUrl("https://example.com/cat.png")
-        );
+        assertThat(llmClient.lastRequest.messages().getFirst().parts()).hasSize(2);
+        assertTimedMessageContent(llmClient.lastRequest.messages().getFirst().parts().get(0).text(), "分析图片");
+        assertThat(llmClient.lastRequest.messages().getFirst().parts().get(1))
+                .isEqualTo(LlmContentPart.imageUrl("https://example.com/cat.png"));
     }
 
     @Test
@@ -1203,6 +1204,18 @@ class ChatServiceImplTest {
                 new SimpleTokenEstimator(),
                 protocolType -> llmClient
         );
+    }
+
+    private void assertTimedMessageContent(String actual, String expectedContent) {
+        assertThat(actual)
+                .startsWith("[消息时间：")
+                .endsWith("\n" + expectedContent);
+    }
+
+    private void assertOnlyTimedMessageContent(String actual) {
+        assertThat(actual)
+                .startsWith("[消息时间：")
+                .doesNotContain("\n");
     }
 
     private TransactionTemplate transactionTemplate() {

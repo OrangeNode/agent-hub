@@ -23,6 +23,7 @@ import com.agenthub.common.exception.BusinessException;
 import com.agenthub.storage.attachment.dto.AttachmentItem;
 import com.agenthub.storage.attachment.dto.AttachmentReference;
 import com.agenthub.storage.attachment.service.AttachmentService;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
@@ -99,6 +100,31 @@ class ConversationContextBuilderTest {
         assertThat(result.messages().getLast().role()).isEqualTo("user");
         assertThat(result.messages().getLast().content()).isEqualTo("当前问题");
         assertThat(result.inputTokenEstimate()).isLessThanOrEqualTo(10_000 - 1_000 - 1_024);
+    }
+
+    @Test
+    void shouldIncludeMessageCreatedAtInLlmContextWhenProvided() {
+        OffsetDateTime historyTime = OffsetDateTime.parse("2026-06-13T22:10:30+08:00");
+        OffsetDateTime currentTime = OffsetDateTime.parse("2026-06-14T00:35:20+08:00");
+        ChatMessage historyMessage = message(1L, "USER", "昨天的新闻有哪些？");
+        historyMessage.setCreatedAt(historyTime);
+        ConversationContextBuilder builder = builder(List.of(historyMessage), null, summaryClient("summary"));
+
+        ConversationContext result = builder.build(
+                7L,
+                100L,
+                runtimeConfig(10_000, 1_000),
+                "明天北京天气怎么样？",
+                List.<AttachmentReference>of(),
+                null,
+                currentTime
+        );
+
+        assertThat(result.messages()).hasSize(2);
+        assertThat(result.messages().getFirst().content())
+                .isEqualTo("[消息时间：2026-06-13T22:10:30+08:00]\n昨天的新闻有哪些？");
+        assertThat(result.messages().getLast().content())
+                .isEqualTo("[消息时间：2026-06-14T00:35:20+08:00]\n明天北京天气怎么样？");
     }
 
     @Test

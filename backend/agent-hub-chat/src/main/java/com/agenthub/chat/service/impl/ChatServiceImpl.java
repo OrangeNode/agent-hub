@@ -256,6 +256,7 @@ public class ChatServiceImpl implements ChatService {
             List<Long> attachmentIds,
             List<Long> reuseAttachmentIds
     ) {
+        OffsetDateTime currentMessageCreatedAt = OffsetDateTime.now();
         ChatConversation conversation = resolveConversation(userId, existingConversation, agentKey, runtimeConfig, normalizedPrompt);
         int imageTokenEstimate = runtimeConfig.imageTokenEstimate() == null
                 ? DEFAULT_IMAGE_TOKEN_ESTIMATE
@@ -272,7 +273,7 @@ public class ChatServiceImpl implements ChatService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "当前模型不支持图片输入");
         }
         ConversationContext context = contextBuilder.build(userId, resolvedConversationId, runtimeConfig, normalizedPrompt,
-                images, systemPrompt(agentRuntime));
+                images, systemPrompt(agentRuntime), currentMessageCreatedAt);
         return new ChatPreparation(
                 userId,
                 existingConversation == null,
@@ -281,7 +282,8 @@ public class ChatServiceImpl implements ChatService {
                 runtimeConfig,
                 attachmentIds,
                 images,
-                context
+                context,
+                currentMessageCreatedAt
         );
     }
 
@@ -291,7 +293,7 @@ public class ChatServiceImpl implements ChatService {
             conversationMapper.insert(conversation);
         }
         ChatMessage userMessage = saveUserMessage(preparation.userId(), conversation.getId(),
-                preparation.normalizedPrompt(), preparation.runtimeConfig());
+                preparation.normalizedPrompt(), preparation.runtimeConfig(), preparation.currentMessageCreatedAt());
         attachmentService.bindToMessage(preparation.userId(), conversation.getId(), userMessage.getId(),
                 preparation.attachmentIds());
         ChatMessage assistantMessage = saveAssistantMessage(preparation.userId(), conversation.getId(),
@@ -321,7 +323,8 @@ public class ChatServiceImpl implements ChatService {
             AiModelRuntimeConfig runtimeConfig,
             List<Long> attachmentIds,
             List<AttachmentReference> images,
-            ConversationContext context
+            ConversationContext context,
+            OffsetDateTime currentMessageCreatedAt
     ) {
     }
 
@@ -607,9 +610,10 @@ public class ChatServiceImpl implements ChatService {
             Long userId,
             Long conversationId,
             String prompt,
-            AiModelRuntimeConfig runtimeConfig
+            AiModelRuntimeConfig runtimeConfig,
+            OffsetDateTime createdAt
     ) {
-        OffsetDateTime now = OffsetDateTime.now();
+        OffsetDateTime now = createdAt == null ? OffsetDateTime.now() : createdAt;
         ChatMessage message = new ChatMessage();
         message.setConversationId(conversationId);
         message.setUserId(userId);

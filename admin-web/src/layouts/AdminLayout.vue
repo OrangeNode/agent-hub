@@ -366,7 +366,15 @@ function goDashboard() {
 
 .content-body {
   display: flex;
+  min-width: 0;
   min-height: 100%;
+  overflow: auto;
+}
+
+.content-body :deep(.page) {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .brand {

@@ -66,6 +66,14 @@ export const routeMenuDefinitions: RouteMenuDefinition[] = [
     component: () => import('../views/AiModelsView.vue')
   },
   {
+    path: '/ai/mcp-servers',
+    name: 'ai-mcp-servers',
+    title: 'MCP 服务',
+    icon: 'api',
+    permission: 'mcp:server:list',
+    component: () => import('../views/McpServersView.vue')
+  },
+  {
     path: '/agent/list',
     name: 'agent-list',
     title: 'Agent 列表',

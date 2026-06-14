@@ -2,6 +2,7 @@ export interface ChatToolTrace {
   toolCallId: string
   name: string
   status: string
+  expanded?: boolean
   stdout: string
   stderr: string
   result: string
@@ -101,6 +102,7 @@ function ensureToolTrace(events: ChatProcessEvent[], toolCallId: string) {
     toolCallId,
     name: '工具调用',
     status: 'running',
+    expanded: false,
     stdout: '',
     stderr: '',
     result: ''
@@ -138,6 +140,7 @@ function normalizeProcessEvent(event: ChatProcessEvent | null | undefined): Chat
       toolCallId: event.tool.toolCallId || '',
       name: event.tool.name || '工具调用',
       status: event.tool.status || 'running',
+      expanded: Boolean(event.tool.expanded),
       stdout: event.tool.stdout || '',
       stderr: event.tool.stderr || '',
       result: event.tool.result || ''

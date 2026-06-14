@@ -90,6 +90,18 @@ public class ConversationContextBuilder {
             List<AttachmentReference> images,
             String systemPrompt
     ) {
+        return build(userId, conversationId, runtimeConfig, currentPrompt, images, systemPrompt, null);
+    }
+
+    public ConversationContext build(
+            Long userId,
+            Long conversationId,
+            AiModelRuntimeConfig runtimeConfig,
+            String currentPrompt,
+            List<AttachmentReference> images,
+            String systemPrompt,
+            OffsetDateTime currentMessageTime
+    ) {
         int contextWindow = resolveContextWindow(runtimeConfig);
         int reservedOutputTokens = resolveReservedOutputTokens(runtimeConfig);
         int historyImageTokenEstimate = resolveImageTokenEstimate(runtimeConfig);
@@ -98,7 +110,7 @@ public class ConversationContextBuilder {
             throw new BusinessException(ErrorCode.BAD_REQUEST, CURRENT_INPUT_TOO_LONG);
         }
 
-        int currentInputEstimate = estimateCurrentInput(currentPrompt, images);
+        int currentInputEstimate = estimateCurrentInput(currentPrompt, images, currentMessageTime);
         if (currentInputEstimate > availableInputTokens) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, CURRENT_INPUT_TOO_LONG);
         }
@@ -152,7 +164,7 @@ public class ConversationContextBuilder {
             }
         }
 
-        LlmMessage currentMessage = buildCurrentUserMessage(currentPrompt, images);
+        LlmMessage currentMessage = buildCurrentUserMessage(currentPrompt, images, currentMessageTime);
         messages.add(currentMessage);
         usedTokens += currentInputEstimate;
         return new ConversationContext(List.copyOf(messages), summaryUpdate.updated(), usedTokens);
@@ -376,11 +388,12 @@ public class ConversationContextBuilder {
         String role = toLlmRole(message.getRole());
         List<AttachmentItem> attachments = attachmentsFor(message, attachmentsByMessageId);
         if (!"user".equals(role) || attachments.isEmpty()) {
-            return new LlmMessage(role, defaultString(message.getContent()));
+            return new LlmMessage(role, withMessageTime(message.getCreatedAt(), message.getContent()));
         }
         List<LlmContentPart> parts = new ArrayList<>();
-        if (hasText(message.getContent())) {
-            parts.add(LlmContentPart.text(message.getContent()));
+        String text = withMessageTime(message.getCreatedAt(), message.getContent());
+        if (hasText(text)) {
+            parts.add(LlmContentPart.text(text));
         }
         attachments.stream()
                 .map(AttachmentItem::previewUrl)
@@ -401,12 +414,21 @@ public class ConversationContextBuilder {
     }
 
     private LlmMessage buildCurrentUserMessage(String prompt, List<AttachmentReference> images) {
+        return buildCurrentUserMessage(prompt, images, null);
+    }
+
+    private LlmMessage buildCurrentUserMessage(
+            String prompt,
+            List<AttachmentReference> images,
+            OffsetDateTime currentMessageTime
+    ) {
+        String content = withMessageTime(currentMessageTime, prompt);
         if (images == null || images.isEmpty()) {
-            return new LlmMessage("user", prompt);
+            return new LlmMessage("user", content);
         }
         List<LlmContentPart> parts = new ArrayList<>();
-        if (hasText(prompt)) {
-            parts.add(LlmContentPart.text(prompt));
+        if (hasText(content)) {
+            parts.add(LlmContentPart.text(content));
         }
         images.stream()
                 .map(AttachmentReference::readUrl)
@@ -421,7 +443,7 @@ public class ConversationContextBuilder {
             int imageTokenEstimate
     ) {
         return history.stream()
-                .mapToInt(message -> estimateText(message.getContent())
+                .mapToInt(message -> estimateText(withMessageTime(message.getCreatedAt(), message.getContent()))
                         + attachmentsFor(message, attachmentsByMessageId).size() * imageTokenEstimate)
                 .sum();
     }
@@ -437,13 +459,26 @@ public class ConversationContextBuilder {
     }
 
     private int estimateCurrentInput(String prompt, List<AttachmentReference> images) {
-        int estimate = estimateText(prompt);
+        return estimateCurrentInput(prompt, images, null);
+    }
+
+    private int estimateCurrentInput(String prompt, List<AttachmentReference> images, OffsetDateTime currentMessageTime) {
+        int estimate = estimateText(withMessageTime(currentMessageTime, prompt));
         if (images == null || images.isEmpty()) {
             return estimate;
         }
         return estimate + images.stream()
                 .mapToInt(image -> image.tokenEstimate() <= 0 ? DEFAULT_IMAGE_TOKEN_ESTIMATE : image.tokenEstimate())
                 .sum();
+    }
+
+    private String withMessageTime(OffsetDateTime messageTime, String content) {
+        String safeContent = defaultString(content);
+        if (messageTime == null) {
+            return safeContent;
+        }
+        String prefix = "[消息时间：" + messageTime + "]";
+        return safeContent.isBlank() ? prefix : prefix + "\n" + safeContent;
     }
 
     private int estimateMessage(LlmMessage message, int imageTokenEstimate) {

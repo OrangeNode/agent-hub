@@ -17,7 +17,13 @@
         <n-select v-model:value="protocolFilter" clearable :options="protocolOptions" placeholder="按协议筛选" />
         <n-select v-model:value="statusFilter" clearable :options="statusOptions" placeholder="按状态筛选" />
       </div>
-      <n-data-table :columns="columns" :data="filteredProviders" :loading="loading" :pagination="false" />
+      <n-data-table
+        :columns="columns"
+        :data="filteredProviders"
+        :loading="loading"
+        :pagination="false"
+        :scroll-x="1120"
+      />
     </n-card>
 
     <n-modal
@@ -216,6 +222,7 @@ const columns: DataTableColumns<AiProviderRecord> = [
     title: '操作',
     key: 'actions',
     width: 280,
+    fixed: 'right',
     render: (row) =>
       h(NSpace, { wrap: false }, {
         default: () => [

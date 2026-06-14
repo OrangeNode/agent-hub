@@ -6,6 +6,7 @@ import com.agenthub.ai.llm.LlmStreamChunk;
 import com.agenthub.ai.llm.LlmStreamRequest;
 import com.agenthub.ai.llm.tool.LlmToolCall;
 import com.agenthub.ai.llm.tool.LlmToolDefinition;
+import com.agenthub.ai.llm.tool.LlmToolNameMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -45,12 +46,13 @@ public class AnthropicMessagesClient implements LlmClient {
     public void stream(LlmStreamRequest request, Consumer<LlmStreamChunk> chunkConsumer) {
         try {
             rejectUnsupportedContentParts(request.messages());
-            HttpResponse<Stream<String>> response = send(buildRequest(request));
+            LlmToolNameMapper toolNameMapper = LlmToolNameMapper.from(request.tools());
+            HttpResponse<Stream<String>> response = send(buildRequest(request, toolNameMapper));
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 chunkConsumer.accept(LlmStreamChunk.error("Anthropic Messages 流式请求失败，HTTP 状态码: " + response.statusCode()));
                 return;
             }
-            consumeSse(response.body(), chunkConsumer);
+            consumeSse(response.body(), chunkConsumer, toolNameMapper);
         } catch (IllegalArgumentException e) {
             chunkConsumer.accept(LlmStreamChunk.error(e.getMessage()));
         } catch (InterruptedException e) {
@@ -75,7 +77,8 @@ public class AnthropicMessagesClient implements LlmClient {
      * 将 Anthropic SSE 事件转换为统一 chunk。
      */
     public List<LlmStreamChunk> parseEvent(String eventName, String payload) {
-        return parseEvent(eventName, payload, new ToolUseAccumulator());
+        LlmToolNameMapper toolNameMapper = LlmToolNameMapper.from(List.of());
+        return parseEvent(eventName, payload, new ToolUseAccumulator(toolNameMapper));
     }
 
     private List<LlmStreamChunk> parseEvent(String eventName, String payload, ToolUseAccumulator toolUseAccumulator) {
@@ -132,9 +135,13 @@ public class AnthropicMessagesClient implements LlmClient {
     /**
      * 消费 Anthropic SSE 行协议，按 event/data 组合解析事件。
      */
-    private void consumeSse(Stream<String> lines, Consumer<LlmStreamChunk> chunkConsumer) {
+    private void consumeSse(
+            Stream<String> lines,
+            Consumer<LlmStreamChunk> chunkConsumer,
+            LlmToolNameMapper toolNameMapper
+    ) {
         String eventName = null;
-        ToolUseAccumulator toolUseAccumulator = new ToolUseAccumulator();
+        ToolUseAccumulator toolUseAccumulator = new ToolUseAccumulator(toolNameMapper);
         try (Stream<String> closeableLines = lines) {
             Iterator<String> iterator = closeableLines.iterator();
             while (iterator.hasNext()) {
@@ -157,8 +164,8 @@ public class AnthropicMessagesClient implements LlmClient {
         }
     }
 
-    private HttpRequest buildRequest(LlmStreamRequest request) throws IOException {
-        String body = OBJECT_MAPPER.writeValueAsString(buildRequestBody(request));
+    private HttpRequest buildRequest(LlmStreamRequest request, LlmToolNameMapper toolNameMapper) throws IOException {
+        String body = OBJECT_MAPPER.writeValueAsString(buildRequestBody(request, toolNameMapper));
         return HttpRequest.newBuilder()
                 .uri(URI.create(endpoint(request.baseUrl(), "/messages")))
                 .header("x-api-key", request.apiKey())
@@ -171,18 +178,18 @@ public class AnthropicMessagesClient implements LlmClient {
     /**
      * 构造 Messages 请求体，system 消息按 Anthropic 协议拆到顶层字段。
      */
-    private Map<String, Object> buildRequestBody(LlmStreamRequest request) {
+    private Map<String, Object> buildRequestBody(LlmStreamRequest request, LlmToolNameMapper toolNameMapper) {
         Map<String, Object> body = new LinkedHashMap<>();
         int maxTokens = request.maxOutputTokens() == null ? DEFAULT_MAX_TOKENS : request.maxOutputTokens();
         body.put("model", request.model());
-        body.put("messages", toMessages(request.messages()));
+        body.put("messages", toMessages(request.messages(), toolNameMapper));
         body.put("stream", true);
         body.put("max_tokens", maxTokens);
         if (request.reasoningRequested()) {
             body.put("thinking", thinkingConfig(maxTokens));
         }
         if (request.tools() != null && !request.tools().isEmpty()) {
-            body.put("tools", request.tools().stream().map(this::toAnthropicTool).toList());
+            body.put("tools", request.tools().stream().map(tool -> toAnthropicTool(tool, toolNameMapper)).toList());
         }
 
         String system = systemPrompt(request.messages());
@@ -202,7 +209,7 @@ public class AnthropicMessagesClient implements LlmClient {
         return thinking;
     }
 
-    private List<Map<String, Object>> toMessages(List<LlmMessage> messages) {
+    private List<Map<String, Object>> toMessages(List<LlmMessage> messages, LlmToolNameMapper toolNameMapper) {
         if (messages == null) {
             return List.of();
         }
@@ -221,7 +228,9 @@ public class AnthropicMessagesClient implements LlmClient {
                     }
                     if (message.hasToolCalls()) {
                         item.put("role", "assistant");
-                        item.put("content", message.toolCalls().stream().map(this::toAnthropicToolUse).toList());
+                        item.put("content", message.toolCalls().stream()
+                                .map(toolCall -> toAnthropicToolUse(toolCall, toolNameMapper))
+                                .toList());
                         return item;
                     }
                     item.put("role", message.role());
@@ -231,18 +240,18 @@ public class AnthropicMessagesClient implements LlmClient {
                 .toList();
     }
 
-    private Map<String, Object> toAnthropicToolUse(LlmToolCall toolCall) {
+    private Map<String, Object> toAnthropicToolUse(LlmToolCall toolCall, LlmToolNameMapper toolNameMapper) {
         return Map.of(
                 "type", "tool_use",
                 "id", toolCall.id(),
-                "name", toolCall.name(),
+                "name", toolNameMapper.toModelName(toolCall.name()),
                 "input", toolCall.arguments() == null ? Map.of() : toolCall.arguments()
         );
     }
 
-    private Map<String, Object> toAnthropicTool(LlmToolDefinition tool) {
+    private Map<String, Object> toAnthropicTool(LlmToolDefinition tool, LlmToolNameMapper toolNameMapper) {
         return Map.of(
-                "name", tool.name(),
+                "name", toolNameMapper.toModelName(tool.name()),
                 "description", tool.description(),
                 "input_schema", tool.parameters()
         );
@@ -312,6 +321,11 @@ public class AnthropicMessagesClient implements LlmClient {
     private class ToolUseAccumulator {
 
         private final Map<String, PendingToolUse> pendingToolUses = new LinkedHashMap<>();
+        private final LlmToolNameMapper toolNameMapper;
+
+        private ToolUseAccumulator(LlmToolNameMapper toolNameMapper) {
+            this.toolNameMapper = toolNameMapper;
+        }
 
         private List<LlmStreamChunk> start(JsonNode root) {
             JsonNode contentBlock = root.path("content_block");
@@ -360,7 +374,7 @@ public class AnthropicMessagesClient implements LlmClient {
                     : parseJsonObject(pendingToolUse.partialJson.toString());
             return LlmStreamChunk.toolCall(new LlmToolCall(
                     pendingToolUse.id,
-                    pendingToolUse.name,
+                    toolNameMapper.toInternalName(pendingToolUse.name),
                     arguments
             ));
         }

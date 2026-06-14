@@ -266,33 +266,51 @@
                   :aria-expanded="messageItem.processExpanded"
                   @click="toggleProcess(messageItem)"
                 >
-                  <span>{{ processStatusText(messageItem) }}</span>
-                  <span class="process-caret" aria-hidden="true" />
+                  <span>{{ processToggleText(messageItem) }}</span>
+                  <small>{{ processStatusText(messageItem) }}</small>
                 </button>
-                <div v-if="messageItem.processExpanded" class="process-content">
-                  <template
-                    v-for="(event, index) in messageItem.processEvents"
-                    :key="processEventKey(event, index)"
-                  >
-                    <p v-if="event.type === 'reasoning'" class="process-reasoning">
-                      {{ event.content }}
-                    </p>
-                    <section v-else class="process-tool">
-                      <div class="process-tool-header">
-                        <span class="process-tool-icon" aria-hidden="true">
-                          <svg viewBox="0 0 24 24">
-                            <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-5 5a2 2 0 0 0 2.8 2.8l5-5a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.6-2.6 2.4-2.8z" />
-                          </svg>
-                        </span>
-                        <span class="process-tool-title">{{ toolDisplayName(event.tool.name) }}</span>
-                        <span class="process-tool-status">{{ toolStatusText(event.tool.status) }}</span>
+                <Transition name="process-expand">
+                  <div v-if="messageItem.processExpanded" class="process-content">
+                    <template
+                      v-for="(event, index) in messageItem.processEvents"
+                      :key="processEventKey(event, index)"
+                    >
+                      <div v-if="event.type === 'reasoning'" class="process-reasoning-scroll" aria-label="思考内容">
+                        <p class="process-reasoning">{{ event.content }}</p>
                       </div>
-                      <pre v-if="event.tool.stdout" class="process-tool-output">{{ event.tool.stdout }}</pre>
-                      <pre v-if="event.tool.stderr" class="process-tool-output error">{{ event.tool.stderr }}</pre>
-                      <p v-if="event.tool.result" class="process-tool-result">{{ event.tool.result }}</p>
-                    </section>
-                  </template>
-                </div>
+                      <section v-else class="process-tool">
+                        <button
+                          type="button"
+                          class="process-tool-toggle"
+                          :aria-expanded="event.tool.expanded"
+                          @click="toggleToolResult(event.tool)"
+                        >
+                          <span class="process-tool-icon" aria-hidden="true">
+                            <svg viewBox="0 0 24 24">
+                              <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-5 5a2 2 0 0 0 2.8 2.8l5-5a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.6-2.6 2.4-2.8z" />
+                            </svg>
+                          </span>
+                          <span class="process-tool-title">工具调用：{{ toolDisplayName(event.tool.name) }}</span>
+                          <span class="process-tool-status">{{ toolStatusText(event.tool.status) }}</span>
+                          <span class="process-tool-expand">{{ toolResultToggleText(event.tool) }}</span>
+                        </button>
+                        <Transition name="tool-detail">
+                          <div v-if="event.tool.expanded" class="process-tool-detail">
+                            <pre v-if="event.tool.stdout" class="process-tool-output">{{ event.tool.stdout }}</pre>
+                            <pre v-if="event.tool.stderr" class="process-tool-output error">{{ event.tool.stderr }}</pre>
+                            <p v-if="event.tool.result" class="process-tool-result">{{ event.tool.result }}</p>
+                            <p
+                              v-if="!event.tool.stdout && !event.tool.stderr && !event.tool.result"
+                              class="process-tool-empty"
+                            >
+                              暂无工具结果
+                            </p>
+                          </div>
+                        </Transition>
+                      </section>
+                    </template>
+                  </div>
+                </Transition>
               </div>
               <div
                 class="assistant-markdown"
@@ -747,7 +765,7 @@ import {
   createInitialProcessEvents,
   createProcessEvents
 } from './chat-tool-events.helpers'
-import type { ChatProcessEvent } from './chat-tool-events.helpers'
+import type { ChatProcessEvent, ChatToolTrace } from './chat-tool-events.helpers'
 import {
   canClearAgentSelection,
   mapConversationRecord,
@@ -1654,6 +1672,18 @@ function copyMessage(content: string) {
 
 function toggleProcess(messageItem: ChatMessageItem) {
   messageItem.processExpanded = !messageItem.processExpanded
+}
+
+function processToggleText(messageItem: ChatMessageItem) {
+  return messageItem.processExpanded ? '收起思考过程↑' : '展开思考过程↓'
+}
+
+function toggleToolResult(tool: ChatToolTrace) {
+  tool.expanded = !tool.expanded
+}
+
+function toolResultToggleText(tool: ChatToolTrace) {
+  return tool.expanded ? '收起结果↑' : '展开结果↓'
 }
 
 function processStatusText(messageItem: ChatMessageItem) {
@@ -2908,7 +2938,7 @@ svg {
 
 .process-block {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   margin-bottom: 18px;
   padding: 0 0 0 2px;
   border-bottom: 1px solid #edf0f3;
@@ -2921,7 +2951,7 @@ svg {
 .process-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   width: max-content;
   max-width: 100%;
   padding: 0 0 12px;
@@ -2940,17 +2970,10 @@ svg {
   font-weight: 500;
 }
 
-.process-caret {
-  width: 7px;
-  height: 7px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: translateY(-1px) rotate(45deg);
-  transition: transform 0.16s ease;
-}
-
-.process-toggle[aria-expanded='false'] .process-caret {
-  transform: translateY(1px) rotate(-45deg);
+.process-toggle small {
+  color: #9ca3af;
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .process-content {
@@ -2959,6 +2982,58 @@ svg {
   margin: 0 0 16px 0;
   padding-left: 14px;
   border-left: 2px solid #e5e7eb;
+}
+
+.process-expand-enter-active,
+.process-expand-leave-active,
+.tool-detail-enter-active,
+.tool-detail-leave-active {
+  overflow: hidden;
+  transition: max-height 0.22s ease, opacity 0.18s ease, transform 0.22s ease;
+}
+
+.process-expand-enter-from,
+.process-expand-leave-to,
+.tool-detail-enter-from,
+.tool-detail-leave-to {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.process-expand-enter-to,
+.process-expand-leave-from {
+  max-height: 720px;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.tool-detail-enter-to,
+.tool-detail-leave-from {
+  max-height: 420px;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.process-reasoning-scroll {
+  overflow-y: auto;
+  max-height: 180px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+  scrollbar-color: #cfd4dc transparent;
+  scrollbar-width: thin;
+}
+
+.process-reasoning-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.process-reasoning-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #cfd4dc;
 }
 
 .process-reasoning {
@@ -2975,14 +3050,33 @@ svg {
   min-width: 0;
 }
 
-.process-tool-header {
-  display: flex;
+.process-tool-toggle {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
   color: #374151;
+  cursor: pointer;
+  font: inherit;
   font-size: 13px;
   line-height: 1.4;
+  text-align: left;
+}
+
+.process-tool-toggle:hover {
+  border-color: #cfd4dc;
+  background: #fafafa;
+}
+
+.process-tool-toggle:focus-visible {
+  outline: 2px solid #d1d5db;
+  outline-offset: 2px;
 }
 
 .process-tool-icon {
@@ -3000,11 +3094,26 @@ svg {
 }
 
 .process-tool-title {
+  overflow: hidden;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .process-tool-status {
   color: #6b7280;
+}
+
+.process-tool-expand {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.process-tool-detail {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 26px;
 }
 
 .process-tool-output {
@@ -3029,11 +3138,32 @@ svg {
 }
 
 .process-tool-result {
+  overflow-y: auto;
+  max-height: 180px;
   margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #ffffff;
   color: #4b5563;
   font-size: 13px;
   line-height: 1.65;
   white-space: pre-wrap;
+}
+
+.process-tool-empty {
+  margin: 0;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .process-expand-enter-active,
+  .process-expand-leave-active,
+  .tool-detail-enter-active,
+  .tool-detail-leave-active {
+    transition: none;
+  }
 }
 
 .artifact-bundle-card {

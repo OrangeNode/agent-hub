@@ -156,6 +156,9 @@ public class SandboxAdminServiceImpl implements com.agenthub.sandbox.admin.servi
     public SandboxControlResult reapIdle() {
         SandboxControlResult result = client.reapIdle();
         syncOpenSessionsWithRuntime();
+        if (!result.success() && result.affected().isEmpty() && result.errors().isEmpty()) {
+            return new SandboxControlResult(true, List.of("无空闲运行时需要回收"), List.of());
+        }
         return result;
     }
 

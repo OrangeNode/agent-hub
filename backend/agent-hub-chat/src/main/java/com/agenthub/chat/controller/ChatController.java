@@ -56,7 +56,8 @@ public class ChatController {
                 request.prompt(),
                 Boolean.TRUE.equals(request.thinkingEnabled()),
                 request.attachmentIds(),
-                request.reuseAttachmentIds()
+                request.reuseAttachmentIds(),
+                request.skillIds()
         );
     }
 
@@ -162,7 +163,8 @@ public class ChatController {
             String agentKey,
             Boolean thinkingEnabled,
             List<Long> attachmentIds,
-            List<Long> reuseAttachmentIds
+            List<Long> reuseAttachmentIds,
+            List<Long> skillIds
     ) {
     }
 

@@ -32,6 +32,8 @@ import com.agenthub.sse.SseEventData;
 import com.agenthub.sse.SseEventSender;
 import com.agenthub.sse.SseEventType;
 import com.agenthub.sandbox.service.SandboxToolService;
+import com.agenthub.skill.service.SkillRuntimeContext;
+import com.agenthub.skill.service.SkillRuntimeService;
 import com.agenthub.storage.attachment.dto.AttachmentItem;
 import com.agenthub.storage.attachment.dto.AttachmentReference;
 import com.agenthub.storage.attachment.service.AttachmentService;
@@ -184,6 +186,116 @@ class ChatServiceImplTest {
         assertThat(llmClient.lastRequest.messages().get(0).content()).isEqualTo("你是一个公文写作助手。");
         assertThat(llmClient.lastRequest.messages().get(1).role()).isEqualTo("user");
         assertTimedMessageContent(llmClient.lastRequest.messages().get(1).content(), "起草一份会议通知");
+    }
+
+    @Test
+    void shouldInjectSelectedSkillsForDefaultAgentWithProgressiveDisclosure() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        SkillRuntimeService skillRuntimeService = mock(SkillRuntimeService.class);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.answer("好的"),
+                LlmStreamChunk.done()
+        ));
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                new RecordingSseEventSender(),
+                attachmentService,
+                null,
+                contextBuilder(messageMapper, attachmentService, llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                null,
+                null,
+                skillRuntimeService
+        );
+        when(modelService.requireDefaultRuntimeConfig()).thenReturn(runtimeConfig());
+        when(conversationMapper.insert(any(ChatConversation.class))).thenAnswer(invocation -> {
+            ChatConversation conversation = invocation.getArgument(0);
+            conversation.setId(100L);
+            return 1;
+        });
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, null, List.of(), List.of(), 1500)).thenReturn(List.of());
+        when(skillRuntimeService.buildRuntimeContext(null, List.of(10L, 11L))).thenReturn(new SkillRuntimeContext(
+                "已选择以下 Skill。如需完整说明，调用 skill.read。\nSkill ID：10",
+                List.of(10L, 11L)
+        ));
+
+        service.stream(7L, null, null, null, "按 Skill 帮我写", false, List.of(), List.of(), List.of(10L, 11L));
+
+        assertThat(llmClient.lastRequest.messages()).hasSize(2);
+        assertThat(llmClient.lastRequest.messages().get(0).role()).isEqualTo("system");
+        assertThat(llmClient.lastRequest.messages().get(0).content())
+                .contains("已选择以下 Skill")
+                .contains("如需完整说明，调用 skill.read")
+                .contains("Skill ID：10");
+        assertTimedMessageContent(llmClient.lastRequest.messages().get(1).content(), "按 Skill 帮我写");
+    }
+
+    @Test
+    void shouldUseBoundSkillsForBusinessAgentAndIgnoreSelectedSkills() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        AgentService agentService = mock(AgentService.class);
+        SkillRuntimeService skillRuntimeService = mock(SkillRuntimeService.class);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.answer("好的"),
+                LlmStreamChunk.done()
+        ));
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                new RecordingSseEventSender(),
+                attachmentService,
+                agentService,
+                contextBuilder(messageMapper, attachmentService, llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                null,
+                null,
+                skillRuntimeService
+        );
+        when(agentService.requireEnabledRuntimeConfig("official-writing")).thenReturn(new AgentRuntimeConfig(
+                1L,
+                "official-writing",
+                "公文写作 Agent",
+                "你是一个公文写作助手。",
+                10L
+        ));
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.insert(any(ChatConversation.class))).thenAnswer(invocation -> {
+            ChatConversation conversation = invocation.getArgument(0);
+            conversation.setId(100L);
+            return 1;
+        });
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, null, List.of(), List.of(), 1500)).thenReturn(List.of());
+        when(skillRuntimeService.buildRuntimeContext(1L, List.of(10L))).thenReturn(new SkillRuntimeContext(
+                "已绑定以下 Skill。如需完整说明，调用 skill.read。\nSkill ID：11",
+                List.of(11L)
+        ));
+
+        service.stream(7L, null, null, "official-writing", "起草会议通知", false, List.of(), List.of(), List.of(10L));
+
+        assertThat(llmClient.lastRequest.messages()).hasSize(2);
+        assertThat(llmClient.lastRequest.messages().get(0).content())
+                .contains("你是一个公文写作助手。")
+                .contains("已绑定以下 Skill")
+                .contains("Skill ID：11")
+                .doesNotContain("Skill ID：10");
+        verify(skillRuntimeService).buildRuntimeContext(1L, List.of(10L));
     }
 
     @Test

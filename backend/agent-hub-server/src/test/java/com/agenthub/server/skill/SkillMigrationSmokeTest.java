@@ -1,0 +1,167 @@
+package com.agenthub.server.skill;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.agenthub.skill.mapper.AgentSkillBindingMapper;
+import com.agenthub.skill.mapper.SkillFileManifestMapper;
+import com.agenthub.skill.mapper.SkillImportMapper;
+import com.agenthub.skill.mapper.SkillPackageMapper;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import javax.sql.DataSource;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
+
+@SpringBootTest(properties = {
+        "spring.datasource.url=jdbc:h2:mem:skill_migration;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;INIT=CREATE DOMAIN IF NOT EXISTS TIMESTAMPTZ AS TIMESTAMP WITH TIME ZONE",
+        "spring.datasource.username=sa",
+        "spring.datasource.password=",
+        "spring.datasource.driver-class-name=org.h2.Driver",
+        "spring.data.redis.repositories.enabled=false"
+})
+class SkillMigrationSmokeTest {
+
+    @Autowired
+    private DataSource dataSource;
+
+    @Autowired
+    private SkillPackageMapper packageMapper;
+
+    @Autowired
+    private SkillImportMapper importMapper;
+
+    @Autowired
+    private SkillFileManifestMapper fileMapper;
+
+    @Autowired
+    private AgentSkillBindingMapper bindingMapper;
+
+    @Test
+    void shouldCreateSkillTables() {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+
+        List<String> tableNames = jdbcTemplate.queryForList("""
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                    AND table_name IN ('skill_package', 'skill_import', 'skill_file_manifest', 'agent_skill_binding')
+                ORDER BY table_name
+                """, String.class);
+
+        assertThat(tableNames).containsExactly(
+                "agent_skill_binding",
+                "skill_file_manifest",
+                "skill_import",
+                "skill_package"
+        );
+    }
+
+    @Test
+    void shouldCreateSkillConstraints() {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+
+        List<String> constraints = jdbcTemplate.queryForList("""
+                SELECT constraint_name
+                FROM information_schema.table_constraints
+                WHERE table_schema = 'public'
+                    AND table_name IN ('skill_package', 'skill_file_manifest', 'agent_skill_binding')
+                """, String.class);
+
+        assertThat(constraints).contains(
+                "uk_skill_package_key",
+                "uk_skill_package_name",
+                "fk_skill_file_package",
+                "fk_agent_skill_agent",
+                "fk_agent_skill_package",
+                "uk_agent_skill_binding"
+        );
+    }
+
+    @Test
+    void shouldRegisterSkillMappers() {
+        assertThat(packageMapper).isNotNull();
+        assertThat(importMapper).isNotNull();
+        assertThat(fileMapper).isNotNull();
+        assertThat(bindingMapper).isNotNull();
+    }
+
+    @Test
+    void shouldRegisterSkillMenuAndPermissions() {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+
+        Integer menuCount = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM sys_menu
+                WHERE name = 'skills'
+                    AND path = '/agent/skills'
+                    AND permission = 'skill:list'
+                """, Integer.class);
+
+        assertThat(menuCount).isEqualTo(1);
+
+        String skillMenuTitle = jdbcTemplate.queryForObject("""
+                SELECT title
+                FROM sys_menu
+                WHERE path = '/agent/skills'
+                    AND permission = 'skill:list'
+                """, String.class);
+
+        assertThat(skillMenuTitle).isEqualTo("Skill 库");
+
+        List<String> permissions = jdbcTemplate.queryForList("""
+                SELECT sm.permission
+                FROM sys_role_menu srm
+                JOIN sys_role sr ON sr.id = srm.role_id
+                JOIN sys_menu sm ON sm.id = srm.menu_id
+                WHERE sr.code = 'ADMIN'
+                    AND sm.permission IN (
+                        'skill:list',
+                        'skill:upload',
+                        'skill:delete',
+                        'agent:skill:update'
+                    )
+                ORDER BY sm.permission
+                """, String.class);
+
+        assertThat(permissions).containsExactly(
+                "agent:skill:update",
+                "skill:delete",
+                "skill:list",
+                "skill:upload"
+        );
+
+        Integer obsoleteMenuCount = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM sys_menu
+                WHERE permission IN (
+                    'skill:package:create',
+                    'skill:package:update',
+                    'skill:package:enable',
+                    'skill:version:activate',
+                    'skill:version:read'
+                )
+                """, Integer.class);
+
+        assertThat(obsoleteMenuCount).isZero();
+    }
+
+    @Test
+    void shouldNotHardCodeMenuIdsOrRestartIdentityInMigration() throws IOException {
+        var migrationScriptUrl = SkillMigrationSmokeTest.class
+                .getResource("/db/migration/V12__init_skill_library.sql");
+
+        assertThat(migrationScriptUrl).isNotNull();
+
+        String scriptContent;
+        try (var inputStream = migrationScriptUrl.openStream()) {
+            scriptContent = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+        }
+
+        assertThat(scriptContent).doesNotContain("INSERT INTO sys_menu (id");
+        assertThat(scriptContent).doesNotContain("INSERT INTO sys_role_menu (id");
+        assertThat(scriptContent).doesNotContain("RESTART WITH");
+    }
+}

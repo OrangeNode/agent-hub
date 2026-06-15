@@ -108,6 +108,13 @@ export interface AvailableAgentRecord {
   sort: number
 }
 
+export interface AvailableSkillRecord {
+  skillId: number
+  skillKey: string
+  name: string
+  description?: string | null
+}
+
 export interface OpenChatStreamOptions {
   prompt: string
   token: string
@@ -117,6 +124,7 @@ export interface OpenChatStreamOptions {
   thinkingEnabled?: boolean
   attachmentIds?: number[]
   reuseAttachmentIds?: number[]
+  skillIds?: number[]
 }
 
 export interface ChatStreamHandlers {
@@ -164,7 +172,8 @@ async function readChatStream(
         agentKey: options.agentKey ?? null,
         thinkingEnabled: options.thinkingEnabled ?? false,
         attachmentIds: options.attachmentIds ?? [],
-        reuseAttachmentIds: options.reuseAttachmentIds ?? []
+        reuseAttachmentIds: options.reuseAttachmentIds ?? [],
+        skillIds: options.skillIds ?? []
       }),
       signal: controller.signal
     })
@@ -391,6 +400,11 @@ function filenameFromDisposition(disposition: string | undefined) {
 
 export async function fetchAvailableAgents() {
   const response = await http.get<ApiResponse<AvailableAgentRecord[]>>('/agents/available')
+  return response.data.data
+}
+
+export async function fetchAvailableSkills() {
+  const response = await http.get<ApiResponse<AvailableSkillRecord[]>>('/skills/available')
   return response.data.data
 }
 

@@ -33,6 +33,8 @@ import com.agenthub.sse.SseEventSender;
 import com.agenthub.sse.SseEventType;
 import com.agenthub.sandbox.client.dto.SandboxArtifactItem;
 import com.agenthub.sandbox.service.SandboxToolService;
+import com.agenthub.skill.service.SkillRuntimeContext;
+import com.agenthub.skill.service.SkillRuntimeService;
 import com.agenthub.storage.attachment.dto.AttachmentItem;
 import com.agenthub.storage.attachment.dto.AttachmentReference;
 import com.agenthub.storage.attachment.service.AttachmentService;
@@ -111,6 +113,7 @@ public class ChatServiceImpl implements ChatService {
     private final Executor streamExecutor;
     private final SandboxToolService sandboxToolService;
     private final ToolRegistry toolRegistry;
+    private final SkillRuntimeService skillRuntimeService;
 
     @Autowired
     public ChatServiceImpl(
@@ -123,11 +126,12 @@ public class ChatServiceImpl implements ChatService {
             AgentService agentService,
             ConversationContextBuilder contextBuilder,
             SandboxToolService sandboxToolService,
-            ToolRegistry toolRegistry
+            ToolRegistry toolRegistry,
+            SkillRuntimeService skillRuntimeService
     ) {
         this(conversationMapper, messageMapper, modelService, titleService, transactionTemplate, new SseEventSender(),
                 attachmentService, agentService, contextBuilder, LlmClientFactory::create, defaultStreamExecutor(),
-                sandboxToolService, toolRegistry);
+                sandboxToolService, toolRegistry, skillRuntimeService);
     }
 
     public ChatServiceImpl(
@@ -143,7 +147,7 @@ public class ChatServiceImpl implements ChatService {
             Executor streamExecutor
     ) {
         this(conversationMapper, messageMapper, modelService, titleService, transactionTemplate, sseEventSender,
-                attachmentService, null, contextBuilder, llmClientFactory, streamExecutor, null, null);
+                attachmentService, null, contextBuilder, llmClientFactory, streamExecutor, null, null, null);
     }
 
     public ChatServiceImpl(
@@ -160,7 +164,7 @@ public class ChatServiceImpl implements ChatService {
             Executor streamExecutor
     ) {
         this(conversationMapper, messageMapper, modelService, titleService, transactionTemplate, sseEventSender,
-                attachmentService, agentService, contextBuilder, llmClientFactory, streamExecutor, null, null);
+                attachmentService, agentService, contextBuilder, llmClientFactory, streamExecutor, null, null, null);
     }
 
     public ChatServiceImpl(
@@ -178,6 +182,27 @@ public class ChatServiceImpl implements ChatService {
             SandboxToolService sandboxToolService,
             ToolRegistry toolRegistry
     ) {
+        this(conversationMapper, messageMapper, modelService, titleService, transactionTemplate, sseEventSender,
+                attachmentService, agentService, contextBuilder, llmClientFactory, streamExecutor,
+                sandboxToolService, toolRegistry, null);
+    }
+
+    public ChatServiceImpl(
+            ChatConversationMapper conversationMapper,
+            ChatMessageMapper messageMapper,
+            AiModelService modelService,
+            ConversationTitleService titleService,
+            TransactionTemplate transactionTemplate,
+            SseEventSender sseEventSender,
+            AttachmentService attachmentService,
+            AgentService agentService,
+            ConversationContextBuilder contextBuilder,
+            Function<String, LlmClient> llmClientFactory,
+            Executor streamExecutor,
+            SandboxToolService sandboxToolService,
+            ToolRegistry toolRegistry,
+            SkillRuntimeService skillRuntimeService
+    ) {
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
         this.modelService = modelService;
@@ -191,6 +216,7 @@ public class ChatServiceImpl implements ChatService {
         this.streamExecutor = streamExecutor;
         this.sandboxToolService = sandboxToolService;
         this.toolRegistry = toolRegistry;
+        this.skillRuntimeService = skillRuntimeService;
     }
 
     /**
@@ -205,7 +231,8 @@ public class ChatServiceImpl implements ChatService {
             String prompt,
             boolean thinkingEnabled,
             List<Long> attachmentIds,
-            List<Long> reuseAttachmentIds
+            List<Long> reuseAttachmentIds,
+            List<Long> skillIds
     ) {
         String normalizedPrompt = normalizePrompt(prompt);
         requireChatInput(normalizedPrompt, attachmentIds, reuseAttachmentIds);
@@ -222,7 +249,8 @@ public class ChatServiceImpl implements ChatService {
                 runtimeConfig,
                 agentRuntime,
                 attachmentIds,
-                reuseAttachmentIds
+                reuseAttachmentIds,
+                skillIds
         );
         PreparedChat preparedChat = transactionTemplate.execute(status -> persistChatRecords(preparation));
         if (preparedChat == null) {
@@ -237,7 +265,8 @@ public class ChatServiceImpl implements ChatService {
         if (connected) {
             streamExecutor.execute(() -> streamLlm(emitter, preparedChat.conversation().getUserId(),
                     preparedChat.conversation().getId(), runtimeConfig, preparedChat.context().messages(),
-                    preparedChat.assistantMessage(), preparedChat.conversation().getAgentKey(), thinkingEnabled));
+                    preparedChat.assistantMessage(), preparedChat.conversation().getAgentKey(), thinkingEnabled,
+                    preparedChat.skillIds()));
         } else {
             // 初始事件发送失败说明客户端已断开，直接标记助手消息失败。
             failAssistantMessage(preparedChat.assistantMessage(), new StringBuilder(), new StringBuilder(), SSE_CONNECTION_CLOSED);
@@ -254,7 +283,8 @@ public class ChatServiceImpl implements ChatService {
             AiModelRuntimeConfig runtimeConfig,
             AgentRuntimeConfig agentRuntime,
             List<Long> attachmentIds,
-            List<Long> reuseAttachmentIds
+            List<Long> reuseAttachmentIds,
+            List<Long> selectedSkillIds
     ) {
         OffsetDateTime currentMessageCreatedAt = OffsetDateTime.now();
         ChatConversation conversation = resolveConversation(userId, existingConversation, agentKey, runtimeConfig, normalizedPrompt);
@@ -272,8 +302,9 @@ public class ChatServiceImpl implements ChatService {
         if (!images.isEmpty() && !runtimeConfig.imageInputSupported()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "当前模型不支持图片输入");
         }
+        SkillRuntimeContext skillContext = buildSkillRuntimeContext(agentRuntime, selectedSkillIds);
         ConversationContext context = contextBuilder.build(userId, resolvedConversationId, runtimeConfig, normalizedPrompt,
-                images, systemPrompt(agentRuntime), currentMessageCreatedAt);
+                images, combinedSystemPrompt(agentRuntime, skillContext), currentMessageCreatedAt);
         return new ChatPreparation(
                 userId,
                 existingConversation == null,
@@ -283,6 +314,7 @@ public class ChatServiceImpl implements ChatService {
                 attachmentIds,
                 images,
                 context,
+                skillContext.skillIds(),
                 currentMessageCreatedAt
         );
     }
@@ -299,7 +331,8 @@ public class ChatServiceImpl implements ChatService {
         ChatMessage assistantMessage = saveAssistantMessage(preparation.userId(), conversation.getId(),
                 preparation.runtimeConfig());
         touchConversation(conversation);
-        return new PreparedChat(conversation, userMessage, assistantMessage, preparation.images(), preparation.context());
+        return new PreparedChat(conversation, userMessage, assistantMessage, preparation.images(), preparation.context(),
+                preparation.skillIds());
     }
 
     private static Executor defaultStreamExecutor() {
@@ -311,7 +344,8 @@ public class ChatServiceImpl implements ChatService {
             ChatMessage userMessage,
             ChatMessage assistantMessage,
             List<AttachmentReference> images,
-            ConversationContext context
+            ConversationContext context,
+            List<Long> skillIds
     ) {
     }
 
@@ -324,6 +358,7 @@ public class ChatServiceImpl implements ChatService {
             List<Long> attachmentIds,
             List<AttachmentReference> images,
             ConversationContext context,
+            List<Long> skillIds,
             OffsetDateTime currentMessageCreatedAt
     ) {
     }
@@ -516,6 +551,26 @@ public class ChatServiceImpl implements ChatService {
         return agentRuntime == null ? null : agentRuntime.systemPrompt();
     }
 
+    private SkillRuntimeContext buildSkillRuntimeContext(AgentRuntimeConfig agentRuntime, List<Long> selectedSkillIds) {
+        if (skillRuntimeService == null) {
+            return new SkillRuntimeContext("", List.of());
+        }
+        Long agentId = agentRuntime == null ? null : agentRuntime.agentId();
+        return skillRuntimeService.buildRuntimeContext(agentId, selectedSkillIds);
+    }
+
+    private String combinedSystemPrompt(AgentRuntimeConfig agentRuntime, SkillRuntimeContext skillContext) {
+        String agentPrompt = systemPrompt(agentRuntime);
+        String skillPrompt = skillContext == null ? "" : skillContext.prompt();
+        if (!hasText(agentPrompt)) {
+            return skillPrompt;
+        }
+        if (!hasText(skillPrompt)) {
+            return agentPrompt;
+        }
+        return agentPrompt.strip() + "\n\n" + skillPrompt.strip();
+    }
+
     /**
      * 根据 conversationId 决定创建新会话还是续写已有会话。
      */
@@ -660,7 +715,8 @@ public class ChatServiceImpl implements ChatService {
             List<LlmMessage> messages,
             ChatMessage assistantMessage,
             String agentKey,
-            boolean thinkingEnabled
+            boolean thinkingEnabled,
+            List<Long> skillIds
     ) {
         StringBuilder content = new StringBuilder();
         StringBuilder reasoningContent = new StringBuilder();
@@ -670,6 +726,7 @@ public class ChatServiceImpl implements ChatService {
                 conversationId,
                 assistantMessage.getId(),
                 agentKey,
+                skillIds,
                 (toolCallId, toolName, stream, output) -> {
                     String safeStream = hasText(stream) ? stream : "stdout";
                     String safeOutput = defaultString(output);

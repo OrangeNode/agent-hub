@@ -201,6 +201,16 @@
             {{ activeAgentName }}
             <button v-if="!activeAgentLocked" type="button" class="agent-tag-close" @click="clearAgent">&times;</button>
           </span>
+          <template v-else>
+            <span
+              v-for="skill in selectedSkillItems"
+              :key="skill.skillId"
+              class="skill-tag composer-skill"
+            >
+              {{ skill.name }}
+              <button type="button" class="skill-tag-close" @click="removeSelectedSkill(skill.skillId)">&times;</button>
+            </span>
+          </template>
           <n-input
             v-model:value="prompt"
             type="textarea"
@@ -444,6 +454,16 @@
               {{ activeAgentName }}
               <button v-if="!activeAgentLocked" type="button" class="agent-tag-close" @click="clearAgent">&times;</button>
             </span>
+            <template v-else>
+              <span
+                v-for="skill in selectedSkillItems"
+                :key="skill.skillId"
+                class="skill-tag composer-skill"
+              >
+                {{ skill.name }}
+                <button type="button" class="skill-tag-close" @click="removeSelectedSkill(skill.skillId)">&times;</button>
+              </span>
+            </template>
             <n-input
               v-model:value="prompt"
               type="textarea"
@@ -657,6 +677,38 @@
       </section>
     </n-modal>
 
+    <n-modal v-model:show="skillPickerOpen" to="body" transform-origin="center">
+      <section class="skill-picker-modal" role="dialog" aria-modal="true" aria-labelledby="skill-picker-title">
+        <header class="skill-picker-header">
+          <div>
+            <h3 id="skill-picker-title">选择 Skill</h3>
+            <span>已选 {{ selectedSkillIds.length }} 个</span>
+          </div>
+          <n-button quaternary size="small" @click="skillPickerOpen = false">完成</n-button>
+        </header>
+        <div class="skill-picker-list" :class="{ loading: skillsLoading }">
+          <p v-if="skillsLoading" class="skill-picker-empty">正在加载 Skill...</p>
+          <p v-else-if="!availableSkills.length" class="skill-picker-empty">暂无可用 Skill</p>
+          <label
+            v-for="skill in availableSkills"
+            v-else
+            :key="skill.skillId"
+            class="skill-picker-option"
+          >
+            <input
+              type="checkbox"
+              :checked="isSkillSelected(skill.skillId)"
+              @change="toggleSelectedSkill(skill.skillId)"
+            />
+            <span>
+              <strong>{{ skill.name }}</strong>
+              <small>{{ skill.description || skill.skillKey }}</small>
+            </span>
+          </label>
+        </div>
+      </section>
+    </n-modal>
+
     <n-modal
       v-model:show="thinkingConfigOpen"
       class="thinking-config-modal"
@@ -730,6 +782,7 @@ import {
   downloadArtifact,
   fetchAvailableAgents,
   fetchAvailableModels,
+  fetchAvailableSkills,
   fetchArtifactContent,
   fetchConversationArtifacts,
   fetchConversationMessages,
@@ -740,6 +793,7 @@ import {
 import type {
   AvailableAgentRecord,
   AvailableModelRecord,
+  AvailableSkillRecord,
   ChatArtifactContentRecord,
   ChatArtifactRecord,
   ChatAttachmentRecord,
@@ -852,9 +906,13 @@ const imageInputRef = ref<HTMLInputElement | null>(null)
 const pendingImages = ref<PendingImage[]>([])
 const imagePreviewUrl = ref<string | null>(null)
 const historyImagePickerOpen = ref(false)
+const skillPickerOpen = ref(false)
+const skillsLoading = ref(false)
 const selectedReuseAttachmentIds = ref<number[]>([])
+const selectedSkillIds = ref<number[]>([])
 const selectedModel = ref<number | null>(null)
 const availableModels = ref<AvailableModelRecord[]>([])
+const availableSkills = ref<AvailableSkillRecord[]>([])
 const reasoningNow = ref(Date.now())
 const artifactMap = ref<Record<number, ChatArtifactItem[]>>({})
 const selectedArtifactId = ref<number | null>(null)
@@ -868,6 +926,13 @@ let sentLocalPreviewUrls = new Set<string>()
 
 watch(prompt, (val) => {
   isMultiline.value = val.includes('\n') || val.length > 40
+})
+
+watch(activeAgentKey, (key) => {
+  if (key) {
+    selectedSkillIds.value = []
+    skillPickerOpen.value = false
+  }
 })
 
 const modelOptions = computed(() =>
@@ -888,22 +953,38 @@ const selectedModelLabel = computed(() => {
 const selectedModelItem = computed(() =>
   availableModels.value.find((item) => item.modelId === selectedModel.value) ?? null
 )
-const uploadMenuOptions = computed(() => [
-  {
-    key: 'upload-image',
-    label: selectedModelItem.value?.imageInputSupported
-      ? '上传照片和文件'
-      : '上传照片和文件（当前模型不支持图片输入）',
-    disabled: !selectedModelItem.value?.imageInputSupported
-  },
-  {
-    key: 'reuse-image',
-    label: historyImageReuseDisabledReason.value
-      ? `选择历史图片（${historyImageReuseDisabledReason.value}）`
-      : '选择历史图片',
-    disabled: Boolean(historyImageReuseDisabledReason.value)
+const selectedSkillItems = computed(() => {
+  const selected = new Set(selectedSkillIds.value)
+  return availableSkills.value.filter((item) => selected.has(item.skillId))
+})
+const uploadMenuOptions = computed(() => {
+  const options = [
+    {
+      key: 'upload-image',
+      label: selectedModelItem.value?.imageInputSupported
+        ? '上传照片和文件'
+        : '上传照片和文件（当前模型不支持图片输入）',
+      disabled: !selectedModelItem.value?.imageInputSupported
+    },
+    {
+      key: 'reuse-image',
+      label: historyImageReuseDisabledReason.value
+        ? `选择历史图片（${historyImageReuseDisabledReason.value}）`
+        : '选择历史图片',
+      disabled: Boolean(historyImageReuseDisabledReason.value)
+    }
+  ]
+
+  if (!activeAgentKey.value) {
+    options.push({
+      key: 'select-skill',
+      label: selectedSkillIds.value.length ? `选择 Skill（已选 ${selectedSkillIds.value.length}）` : '选择 Skill',
+      disabled: false
+    })
   }
-])
+
+  return options
+})
 const hasUploadingImage = computed(() => pendingImages.value.some((image) => image.status === 'uploading'))
 const hasFailedImage = computed(() => pendingImages.value.some((image) => image.status === 'failed'))
 const firstReasoningModel = computed(() => availableModels.value.find((item) => item.reasoningSupported) ?? null)
@@ -1125,6 +1206,17 @@ async function loadAgents() {
   }
 }
 
+async function loadSkills() {
+  skillsLoading.value = true
+  try {
+    availableSkills.value = await fetchAvailableSkills()
+  } catch (error) {
+    message.warning(error instanceof Error ? error.message : '加载 Skill 列表失败')
+  } finally {
+    skillsLoading.value = false
+  }
+}
+
 function toAgentOption(item: AvailableAgentRecord): AgentOption {
   return {
     key: item.agentKey,
@@ -1294,6 +1386,7 @@ async function confirmDeleteConversation() {
 function selectAgent(agent: AgentOption) {
   activeAgentKey.value = agent.key
   activeAgentName.value = agent.name
+  selectedSkillIds.value = []
   agentMenuOpen.value = false
   createConversation()
 }
@@ -1316,9 +1409,24 @@ function syncActiveAgentFromConversation(conversation: ConversationItem | null =
   })
   activeAgentKey.value = selection.key
   activeAgentName.value = selection.name
+  if (selection.key) {
+    selectedSkillIds.value = []
+  }
 }
 
 function handleUploadMenuSelect(key: string | number) {
+  if (key === 'select-skill') {
+    if (activeAgentKey.value) {
+      message.info('当前 Agent 的 Skill 由后台绑定')
+      return
+    }
+    skillPickerOpen.value = true
+    if (!skillsLoading.value) {
+      void loadSkills()
+    }
+    return
+  }
+
   if (key === 'reuse-image') {
     openHistoryImagePicker()
     return
@@ -1334,6 +1442,23 @@ function handleUploadMenuSelect(key: string | number) {
   }
 
   imageInputRef.value?.click()
+}
+
+function removeSelectedSkill(skillId: number) {
+  selectedSkillIds.value = selectedSkillIds.value.filter((item) => item !== skillId)
+}
+
+function isSkillSelected(skillId: number) {
+  return selectedSkillIds.value.includes(skillId)
+}
+
+function toggleSelectedSkill(skillId: number) {
+  if (isSkillSelected(skillId)) {
+    removeSelectedSkill(skillId)
+    return
+  }
+
+  selectedSkillIds.value = [...selectedSkillIds.value, skillId]
 }
 
 function handleImageSelected(event: Event) {
@@ -1837,6 +1962,7 @@ function handleSend() {
   const currentAttachmentIds = currentReadyPendingImages
     .map((image) => image.attachmentId as number)
   const currentReuseAttachmentIds = currentReuseAttachments.map((attachment) => attachment.attachmentId)
+  const currentSkillIds = activeAgentKey.value ? [] : [...selectedSkillIds.value]
   const currentSentPreviewUrls = currentReadyPendingImages.map((image) => image.previewUrl)
   currentSentPreviewUrls.forEach((previewUrl) => sentLocalPreviewUrls.add(previewUrl))
   prompt.value = ''
@@ -1853,7 +1979,8 @@ function handleSend() {
       agentKey: activeAgentKey.value,
       thinkingEnabled: currentThinkingEnabled,
       attachmentIds: currentAttachmentIds,
-      reuseAttachmentIds: currentReuseAttachmentIds
+      reuseAttachmentIds: currentReuseAttachmentIds,
+      skillIds: currentSkillIds
     },
     {
       onConversation: (data) => {
@@ -2001,6 +2128,7 @@ onBeforeUnmount(() => {
 onMounted(() => {
   void loadAgents()
   void loadModels()
+  void loadSkills()
   void loadConversations()
 })
 </script>
@@ -2466,6 +2594,7 @@ svg {
 /* Single-line order: +, agent, input, model, send */
 .composer-upload { order: 1; }
 .composer-agent { order: 2; }
+.composer-skill { order: 2; }
 .composer-input { order: 3; }
 .composer-model { order: 4; }
 .composer-send { order: 5; }
@@ -2478,6 +2607,7 @@ svg {
 
 .landing-composer.is-multiline .composer-upload { order: 2; }
 .landing-composer.is-multiline .composer-agent { order: 3; }
+.landing-composer.is-multiline .composer-skill { order: 3; }
 .landing-composer.is-multiline .composer-model { order: 4; margin-left: auto; }
 .landing-composer.is-multiline .composer-send { order: 5; }
 
@@ -2499,6 +2629,7 @@ svg {
 
 .composer-upload,
 .composer-agent,
+.composer-skill,
 .composer-model,
 .composer-send {
   flex-shrink: 0;
@@ -2725,6 +2856,99 @@ svg {
   font-weight: 600;
 }
 
+.skill-picker-modal {
+  display: grid;
+  gap: 14px;
+  width: min(480px, calc(100vw - 32px));
+  padding: 18px;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 46px rgba(15, 23, 42, 0.16);
+}
+
+.skill-picker-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.skill-picker-header h3 {
+  margin: 0 0 4px;
+  color: #111827;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.skill-picker-header span {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.skill-picker-list {
+  display: grid;
+  gap: 8px;
+  max-height: min(320px, 52vh);
+  overflow-y: auto;
+}
+
+.skill-picker-list.loading {
+  min-height: 72px;
+}
+
+.skill-picker-empty {
+  margin: 0;
+  padding: 16px 0;
+  color: #6b7280;
+  font-size: 14px;
+  text-align: center;
+}
+
+.skill-picker-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.skill-picker-option:hover {
+  background: #f8fafc;
+}
+
+.skill-picker-option input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: #2563eb;
+}
+
+.skill-picker-option span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.skill-picker-option strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-picker-option small {
+  overflow: hidden;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-tag {
   display: inline-flex;
   align-items: center;
@@ -2754,6 +2978,38 @@ svg {
 
 .agent-tag-close:hover {
   background: #c7d2fe;
+}
+
+.skill-tag {
+  display: inline-flex;
+  align-items: center;
+  max-width: 180px;
+  gap: 5px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: #ecfdf5;
+  color: #065f46;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-tag-close {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 999px;
+  color: #047857;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.skill-tag-close:hover {
+  background: #bbf7d0;
 }
 
 .conversation-view {

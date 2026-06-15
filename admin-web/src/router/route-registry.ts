@@ -82,6 +82,14 @@ export const routeMenuDefinitions: RouteMenuDefinition[] = [
     component: () => import('../views/AgentsView.vue')
   },
   {
+    path: '/agent/skills',
+    name: 'agent-skills',
+    title: 'Skill 库',
+    icon: 'FolderOpenOutlined',
+    permission: 'skill:list',
+    component: () => import('../views/SkillsView.vue')
+  },
+  {
     path: '/sandbox/monitor',
     name: 'sandbox-monitor',
     title: 'Sandbox 运维',

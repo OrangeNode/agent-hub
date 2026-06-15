@@ -72,6 +72,34 @@
         </n-space>
       </template>
     </n-modal>
+
+    <n-modal
+      v-model:show="showSkillModal"
+      preset="card"
+      :title="skillModalAgent ? `${skillModalAgent.name} 绑定 Skill` : '绑定 Skill'"
+      class="form-modal"
+      :style="{ width: 'min(640px, calc(100vw - 32px))' }"
+    >
+      <n-form label-placement="top">
+        <n-form-item label="Skill">
+          <n-select
+            v-model:value="selectedSkillIds"
+            multiple
+            filterable
+            clearable
+            :loading="skillLoading"
+            :options="skillOptions"
+            placeholder="选择后台绑定给该 Agent 的 Skill"
+          />
+        </n-form-item>
+      </n-form>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="showSkillModal = false">取消</n-button>
+          <n-button type="primary" :loading="skillSaving" @click="submitSkillBindings">保存</n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
@@ -96,8 +124,10 @@ import {
 } from 'naive-ui'
 import { createAgent, deleteAgent, fetchAgents, updateAgent } from '../api/agent'
 import { fetchAiModels } from '../api/ai'
+import { fetchAgentSkillBindings, fetchAvailableSkills, updateAgentSkillBindings } from '../api/skill'
 import type { AgentFormPayload, AgentRecord } from '../types/agent'
 import type { AiModelRecord } from '../types/ai'
+import type { SkillOptionRecord } from '../types/skill'
 
 const message = useMessage()
 const loading = ref(false)
@@ -106,7 +136,13 @@ const keyword = ref('')
 const statusFilter = ref<string | null>(null)
 const agents = ref<AgentRecord[]>([])
 const models = ref<AiModelRecord[]>([])
+const availableSkills = ref<SkillOptionRecord[]>([])
 const editingAgent = ref<AgentRecord | null>(null)
+const skillModalAgent = ref<AgentRecord | null>(null)
+const showSkillModal = ref(false)
+const skillLoading = ref(false)
+const skillSaving = ref(false)
+const selectedSkillIds = ref<number[]>([])
 
 const statusOptions: SelectOption[] = [
   { label: '启用', value: 'true' },
@@ -128,6 +164,13 @@ const modelOptions = computed<SelectOption[]>(() =>
   models.value.map((item) => ({
     label: `${item.displayName}（${item.providerName}）`,
     value: item.modelId
+  }))
+)
+
+const skillOptions = computed<SelectOption[]>(() =>
+  availableSkills.value.map((item) => ({
+    label: item.description ? `${item.name}（${item.description}）` : item.name,
+    value: item.skillId
   }))
 )
 
@@ -166,11 +209,12 @@ const columns: DataTableColumns<AgentRecord> = [
   {
     title: '操作',
     key: 'actions',
-    width: 230,
+    width: 300,
     render: (row) =>
       h(NSpace, { wrap: false }, {
         default: () => [
           h(NButton, { size: 'small', tertiary: true, onClick: () => openEdit(row) }, { default: () => '编辑' }),
+          h(NButton, { size: 'small', tertiary: true, onClick: () => openSkills(row) }, { default: () => 'Skill' }),
           h(
             NSwitch,
             {
@@ -232,6 +276,43 @@ async function loadData() {
     message.error(error instanceof Error ? error.message : '加载 Agent 数据失败')
   } finally {
     loading.value = false
+  }
+}
+
+async function openSkills(agent: AgentRecord) {
+  skillModalAgent.value = agent
+  showSkillModal.value = true
+  skillLoading.value = true
+  try {
+    const [skillData, bindingData] = await Promise.all([
+      availableSkills.value.length ? Promise.resolve(availableSkills.value) : fetchAvailableSkills(),
+      fetchAgentSkillBindings(agent.agentId)
+    ])
+    availableSkills.value = skillData
+    selectedSkillIds.value = bindingData
+      .slice()
+      .sort((a, b) => a.sort - b.sort)
+      .map((item) => item.skillId)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '加载 Agent Skill 绑定失败')
+  } finally {
+    skillLoading.value = false
+  }
+}
+
+async function submitSkillBindings() {
+  if (!skillModalAgent.value) {
+    return
+  }
+  skillSaving.value = true
+  try {
+    await updateAgentSkillBindings(skillModalAgent.value.agentId, selectedSkillIds.value)
+    message.success('Agent Skill 绑定已保存')
+    showSkillModal.value = false
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '保存 Agent Skill 绑定失败')
+  } finally {
+    skillSaving.value = false
   }
 }
 

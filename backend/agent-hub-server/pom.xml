@@ -42,6 +42,11 @@
         </dependency>
         <dependency>
             <groupId>com.agenthub</groupId>
+            <artifactId>agent-hub-skill</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.agenthub</groupId>
             <artifactId>agent-hub-sandbox</artifactId>
             <version>${project.version}</version>
         </dependency>

@@ -40,4 +40,10 @@ class ConversationTitleServiceTest {
         assertThat(conversationTitleService.cleanGeneratedTitle("  \"Agent 平台设计方案。\"  "))
                 .isEqualTo("Agent 平台设计方案");
     }
+
+    @Test
+    void shouldTreatQuestionMarkOnlyTitleAsDefaultTitle() {
+        assertThat(conversationTitleService.cleanGeneratedTitle("???????????????"))
+                .isEqualTo("新会话");
+    }
 }

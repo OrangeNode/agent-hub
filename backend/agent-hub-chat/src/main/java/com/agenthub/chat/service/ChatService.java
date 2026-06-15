@@ -13,7 +13,7 @@ public interface ChatService {
     /**
      * 发起或继续会话，并通过 SSE 流式返回模型响应。
      */
-    SseEmitter stream(
+    default SseEmitter stream(
             Long userId,
             Long conversationId,
             Long modelId,
@@ -22,6 +22,24 @@ public interface ChatService {
             boolean thinkingEnabled,
             List<Long> attachmentIds,
             List<Long> reuseAttachmentIds
+    ) {
+        return stream(userId, conversationId, modelId, agentKey, prompt, thinkingEnabled,
+                attachmentIds, reuseAttachmentIds, List.of());
+    }
+
+    /**
+     * 发起或继续会话，并可为默认 Agent 传入本轮选择的 Skill。
+     */
+    SseEmitter stream(
+            Long userId,
+            Long conversationId,
+            Long modelId,
+            String agentKey,
+            String prompt,
+            boolean thinkingEnabled,
+            List<Long> attachmentIds,
+            List<Long> reuseAttachmentIds,
+            List<Long> skillIds
     );
 
     /**

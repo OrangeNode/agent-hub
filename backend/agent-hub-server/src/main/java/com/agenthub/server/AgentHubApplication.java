@@ -15,6 +15,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         "com.agenthub.ai.provider.mapper",
         "com.agenthub.ai.model.mapper",
         "com.agenthub.agent.mapper",
+        "com.agenthub.skill.mapper",
         "com.agenthub.sandbox.session.mapper",
         "com.agenthub.sandbox.execution.mapper",
         "com.agenthub.sandbox.artifact.mapper",

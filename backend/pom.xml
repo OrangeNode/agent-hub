@@ -29,6 +29,7 @@
         <module>agent-hub-system</module>
         <module>agent-hub-ai</module>
         <module>agent-hub-agent</module>
+        <module>agent-hub-skill</module>
         <module>agent-hub-sandbox</module>
         <module>agent-hub-tool</module>
         <module>agent-hub-storage</module>

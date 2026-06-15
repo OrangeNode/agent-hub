@@ -21,6 +21,28 @@ func TestMinimalRootfsInitConfiguresGuestNetworkFromKernelIPArg(t *testing.T) {
 	}
 }
 
+func TestMinimalRootfsIncludesDocxSkillRuntimeDependencies(t *testing.T) {
+	content := readScript(t, "build-minimal-rootfs.sh")
+
+	for _, expected := range []string{
+		`ROOTFS_SIZE_MB="${SANDBOX_ROOTFS_SIZE_MB:-8192}"`,
+		"dotnet-sdk-8.0",
+		"pandoc",
+		"python3-docx",
+		"python3-lxml",
+		"fontconfig",
+		"fonts-dejavu-core",
+		"fonts-liberation",
+		"fonts-noto-cjk",
+		"fonts-noto-core",
+		"libreoffice-writer",
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("build-minimal-rootfs.sh missing docx runtime dependency %q", expected)
+		}
+	}
+}
+
 func TestStartScriptExportsAdminLogFile(t *testing.T) {
 	content := readScript(t, "start-sandbox-service.sh")
 

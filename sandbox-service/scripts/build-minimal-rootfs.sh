@@ -29,19 +29,29 @@ RUNTIME_PACKAGES=(
   ca-certificates
   coreutils
   curl
+  dotnet-sdk-8.0
   findutils
+  fontconfig
+  fonts-dejavu-core
+  fonts-liberation
+  fonts-noto-cjk
+  fonts-noto-core
   gawk
   git
   grep
   gzip
   iproute2
   jq
+  libreoffice-writer
   login
   npm
   nodejs
+  pandoc
   passwd
   procps
   python3
+  python3-docx
+  python3-lxml
   python3-matplotlib
   python3-numpy
   python3-openpyxl

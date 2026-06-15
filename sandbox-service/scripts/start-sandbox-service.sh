@@ -3,6 +3,34 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ENV_FILE="${SANDBOX_ENV_FILE:-${SERVICE_DIR}/.env}"
+
+load_env_file() {
+  local env_file="$1"
+  [[ -f "${env_file}" ]] || return 0
+
+  local line name value
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%$'\r'}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "${line}" || "${line}" == \#* ]] && continue
+    if [[ "${line}" == export[[:space:]]* ]]; then
+      line="${line#export}"
+      line="${line#"${line%%[![:space:]]*}"}"
+    fi
+    [[ "${line}" == *=* ]] || continue
+    name="${line%%=*}"
+    value="${line#*=}"
+    name="${name%"${name##*[![:space:]]}"}"
+    [[ "${name}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    if [[ -z "${!name+x}" ]]; then
+      eval "export ${name}=${value}"
+    fi
+  done < "${env_file}"
+}
+
+load_env_file "${ENV_FILE}"
 
 ROOTFS_DIR="${SANDBOX_ASSET_DIR:-${SERVICE_DIR}/rootfs}"
 BIN_DIR="${SERVICE_DIR}/bin"

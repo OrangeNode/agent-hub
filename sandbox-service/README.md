@@ -64,8 +64,9 @@ cp /var/lib/firecracker/vmlinux.bin sandbox-service/rootfs/vmlinux
 
 启动前脚本会检查 `sandbox-service/rootfs/rootfs.ext4` 和 `sandbox-service/rootfs/vmlinux` 是否存在，通过后再编译并启动 `sandbox-service`。
 
+启动脚本会自动读取 `sandbox-service/.env`。仓库提供了 `sandbox-service/.env.example`，本地开发可直接复制后按需修改；如果需要指定其他配置文件，可通过 `SANDBOX_ENV_FILE=/path/to/file` 覆盖。
+
 ```bash
-export SANDBOX_INTERNAL_TOKEN=dev-sandbox-token
 ./sandbox-service/scripts/start-sandbox-service.sh
 ```
 

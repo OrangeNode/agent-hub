@@ -51,6 +51,49 @@ func TestStartScriptExportsAdminLogFile(t *testing.T) {
 	}
 }
 
+func TestStartScriptLoadsEnvFileBeforeReadingConfig(t *testing.T) {
+	content := readScript(t, "start-sandbox-service.sh")
+
+	for _, expected := range []string{
+		`ENV_FILE="${SANDBOX_ENV_FILE:-${SERVICE_DIR}/.env}"`,
+		`load_env_file "${ENV_FILE}"`,
+		`SANDBOX_INTERNAL_TOKEN`,
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("start-sandbox-service.sh missing env-file support %q", expected)
+		}
+	}
+}
+
+func TestStopScriptLoadsEnvFileBeforeReadingConfig(t *testing.T) {
+	content := readScript(t, "stop-sandbox-service.sh")
+
+	for _, expected := range []string{
+		`ENV_FILE="${SANDBOX_ENV_FILE:-${SERVICE_DIR}/.env}"`,
+		`load_env_file "${ENV_FILE}"`,
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("stop-sandbox-service.sh missing env-file support %q", expected)
+		}
+	}
+}
+
+func TestSandboxEnvExampleIncludesRequiredLocalDefaults(t *testing.T) {
+	content := readScript(t, "../.env.example")
+
+	for _, expected := range []string{
+		"SANDBOX_INTERNAL_TOKEN=dev-sandbox-token",
+		"SANDBOX_LISTEN_ADDR=0.0.0.0:8090",
+		"SANDBOX_VM_MODE=firecracker",
+		"SANDBOX_OBJECT_ENDPOINT=127.0.0.1:9000",
+		"SANDBOX_OBJECT_BUCKET=agent-hub-sandbox-artifacts",
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf(".env.example missing local default %q", expected)
+		}
+	}
+}
+
 func readScript(t *testing.T, path string) string {
 	t.Helper()
 

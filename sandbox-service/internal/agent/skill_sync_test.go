@@ -91,6 +91,35 @@ func TestServerSyncSkillZipRejectsSHA256Mismatch(t *testing.T) {
 	}
 }
 
+func TestServerSyncSkillZipRejectsDownloadedZipTooLarge(t *testing.T) {
+	root := t.TempDir()
+	zipServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.CopyN(w, zeroReader{}, maxSkillZipBytes+1)
+	}))
+	defer zipServer.Close()
+
+	server := NewServer(NewExecutor(1024), NewFileService(root))
+	body := bytes.NewBufferString(`{"skills":[{"skillId":6,"skillKey":"demo-skill","name":"Demo","zipDownloadUrl":"` +
+		zipServer.URL + `","zipSha256":"` + strings.Repeat("0", 64) + `","targetDir":"/workspace/skills/demo-skill"}]}`)
+	req := httptest.NewRequest(http.MethodPost, "/skills/sync-zip", body)
+	rec := httptest.NewRecorder()
+
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "超过大小限制") {
+		t.Fatalf("expected size limit error, body = %s", rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "skills", ".archives", "demo-skill.zip")); !os.IsNotExist(err) {
+		t.Fatalf("archive should not be written after oversized download, stat error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "skills", "demo-skill")); !os.IsNotExist(err) {
+		t.Fatalf("target dir should not be created after oversized download, stat error = %v", err)
+	}
+}
+
 func TestServerSyncSkillZipRejectsTooManyFilesOrExtractedBytes(t *testing.T) {
 	t.Run("too many files", func(t *testing.T) {
 		root := t.TempDir()

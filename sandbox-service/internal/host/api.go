@@ -257,7 +257,7 @@ func (s *apiServer) handleSyncSkillZip(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.manager.EndUse(session.ID)
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 2<<20))
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "读取请求体失败")
 		return

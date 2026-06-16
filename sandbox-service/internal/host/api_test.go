@@ -587,6 +587,44 @@ func TestSyncSkillZipProxiesBodyToGuest(t *testing.T) {
 	}
 }
 
+func TestSyncSkillZipProxiesLargeBodyWithoutTruncating(t *testing.T) {
+	requestBody := []byte(`{"skills":[{"skillId":6,"skillKey":"docx","payload":"` + strings.Repeat("a", (2<<20)+1) + `"}]}`)
+	var guestBody []byte
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/skills/sync-zip" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		guestBody = data
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(`{"ok":true,"skills":[]}`))
+	}))
+	defer guest.Close()
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	router := NewRouterWithManager(manager)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/internal/sandbox/sessions/"+session.ID+"/skills/sync-zip",
+		bytes.NewReader(requestBody))
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !bytes.Equal(guestBody, requestBody) {
+		t.Fatalf("guest body length = %d, want %d", len(guestBody), len(requestBody))
+	}
+}
+
 func TestSyncSkillZipReturnsNotFoundWhenSessionMissing(t *testing.T) {
 	manager := NewSessionManager(&fakeVMFactory{}, 1, 5*time.Minute)
 	router := NewRouterWithManager(manager)

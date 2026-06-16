@@ -25,7 +25,21 @@ const (
 	maxSkillZipExtractedBytes int64 = 100 * 1024 * 1024
 )
 
-var skillZipHTTPClient = &http.Client{Timeout: 30 * time.Second}
+var skillZipHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) == 0 {
+			return nil
+		}
+		if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+			return errors.New("zip 下载地址只支持 http 或 https")
+		}
+		if !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+			return errors.New("禁止跨 host 重定向")
+		}
+		return nil
+	},
+}
 
 type SkillZipSyncRequest struct {
 	Skills []SkillZipSyncItem `json:"skills"`
@@ -128,7 +142,7 @@ func downloadSkillZip(ctx context.Context, rawURL string) ([]byte, error) {
 	if err != nil {
 		return nil, errors.New("zip 下载地址不合法")
 	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 		return nil, errors.New("zip 下载地址只支持 http 或 https")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
@@ -202,49 +216,76 @@ func (s *FileService) replaceSkillZip(targetHostPath string, archiveHostPath str
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := s.prepareSkillArchivePath(archiveHostPath); err != nil {
+	skillsRoot := filepath.Dir(targetHostPath)
+	archiveDir := filepath.Dir(archiveHostPath)
+	tmpRoot := filepath.Join(skillsRoot, ".tmp")
+	if err := s.prepareSkillSyncDirs(skillsRoot, archiveDir, tmpRoot, targetHostPath, archiveHostPath); err != nil {
 		return 0, 0, err
 	}
-	if err := os.WriteFile(archiveHostPath, zipBytes, 0o644); err != nil {
+
+	archiveTempPath, err := writeSkillArchiveTemp(archiveDir, archiveHostPath, zipBytes)
+	if err != nil {
 		return 0, 0, err
 	}
-	if err := s.prepareCleanSkillTarget(targetHostPath); err != nil {
+	archiveTempActive := true
+	defer func() {
+		if archiveTempActive {
+			_ = os.Remove(archiveTempPath)
+		}
+	}()
+
+	tmpTargetPath, err := os.MkdirTemp(tmpRoot, filepath.Base(targetHostPath)+"-")
+	if err != nil {
 		return 0, 0, err
 	}
-	return s.extractSkillZipEntries(targetHostPath, entries)
+	tmpTargetActive := true
+	defer func() {
+		if tmpTargetActive {
+			_ = os.RemoveAll(tmpTargetPath)
+		}
+	}()
+	if _, err := s.ensureNoSymlinkInExistingComponents(tmpTargetPath, true); err != nil {
+		return 0, 0, err
+	}
+
+	fileCount, totalBytes, err := s.extractSkillZipEntries(tmpTargetPath, entries)
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := s.prepareSkillSyncDirs(skillsRoot, archiveDir, tmpRoot, targetHostPath, archiveHostPath); err != nil {
+		return 0, 0, err
+	}
+	if err := s.commitSkillZipReplacement(targetHostPath, archiveHostPath, tmpTargetPath, archiveTempPath, tmpRoot); err != nil {
+		return 0, 0, err
+	}
+	tmpTargetActive = false
+	archiveTempActive = false
+	return fileCount, totalBytes, nil
 }
 
-func (s *FileService) prepareSkillArchivePath(archiveHostPath string) error {
-	archiveParent := filepath.Dir(archiveHostPath)
-	if _, err := s.ensureNoSymlinkInExistingComponents(archiveParent, false); err != nil {
+func (s *FileService) prepareSkillSyncDirs(skillsRoot string, archiveDir string, tmpRoot string, targetHostPath string, archiveHostPath string) error {
+	if _, err := s.ensureNoSymlinkInExistingComponents(skillsRoot, false); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(archiveParent, 0o755); err != nil {
+	if err := os.MkdirAll(skillsRoot, 0o755); err != nil {
 		return err
 	}
-	if _, err := s.ensureNoSymlinkInExistingComponents(archiveParent, true); err != nil {
+	if _, err := s.ensureNoSymlinkInExistingComponents(skillsRoot, true); err != nil {
 		return err
 	}
-	if _, err := os.Lstat(archiveHostPath); err == nil {
-		_, err = s.ensureNoSymlinkInExistingComponents(archiveHostPath, true)
-		return err
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	return nil
-}
 
-func (s *FileService) prepareCleanSkillTarget(targetHostPath string) error {
-	targetParent := filepath.Dir(targetHostPath)
-	if _, err := s.ensureNoSymlinkInExistingComponents(targetParent, false); err != nil {
-		return err
+	for _, dir := range []string{archiveDir, tmpRoot} {
+		if _, err := s.ensureNoSymlinkInExistingComponents(dir, false); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		if _, err := s.ensureNoSymlinkInExistingComponents(dir, true); err != nil {
+			return err
+		}
 	}
-	if err := os.MkdirAll(targetParent, 0o755); err != nil {
-		return err
-	}
-	if _, err := s.ensureNoSymlinkInExistingComponents(targetParent, true); err != nil {
-		return err
-	}
+
 	if _, err := os.Lstat(targetHostPath); err == nil {
 		if _, err := s.ensureNoSymlinkInExistingComponents(targetHostPath, true); err != nil {
 			return err
@@ -252,14 +293,126 @@ func (s *FileService) prepareCleanSkillTarget(targetHostPath string) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.RemoveAll(targetHostPath); err != nil {
+	if _, err := os.Lstat(archiveHostPath); err == nil {
+		if _, err := s.ensureNoSymlinkInExistingComponents(archiveHostPath, true); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.MkdirAll(targetHostPath, 0o755); err != nil {
+	return nil
+}
+
+func writeSkillArchiveTemp(archiveDir string, archiveHostPath string, zipBytes []byte) (string, error) {
+	file, err := os.CreateTemp(archiveDir, filepath.Base(archiveHostPath)+".tmp-")
+	if err != nil {
+		return "", err
+	}
+	tempPath := file.Name()
+	if _, err := file.Write(zipBytes); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tempPath)
+		return "", err
+	}
+	if err := file.Chmod(0o644); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tempPath)
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tempPath)
+		return "", err
+	}
+	return tempPath, nil
+}
+
+func (s *FileService) commitSkillZipReplacement(targetHostPath string, archiveHostPath string, tmpTargetPath string, archiveTempPath string, tmpRoot string) error {
+	targetBackupPath, targetHadBackup, err := s.moveExistingPathToBackup(targetHostPath, tmpRoot, filepath.Base(targetHostPath)+"-backup-")
+	if err != nil {
 		return err
 	}
-	_, err := s.ensureNoSymlinkInExistingComponents(targetHostPath, true)
-	return err
+	targetMoved := false
+	if err := os.Rename(tmpTargetPath, targetHostPath); err != nil {
+		if restoreErr := restoreBackupPath(targetHostPath, targetBackupPath, targetHadBackup); restoreErr != nil {
+			return fmt.Errorf("%w；恢复旧 Skill 失败: %v", err, restoreErr)
+		}
+		return err
+	}
+	targetMoved = true
+
+	archiveBackupPath, archiveHadBackup, err := s.moveExistingPathToBackup(archiveHostPath, filepath.Dir(archiveHostPath), filepath.Base(archiveHostPath)+".bak-")
+	if err != nil {
+		if restoreErr := rollbackMovedTarget(targetHostPath, targetBackupPath, targetHadBackup, targetMoved); restoreErr != nil {
+			return fmt.Errorf("%w；恢复旧 Skill 失败: %v", err, restoreErr)
+		}
+		return err
+	}
+	if err := os.Rename(archiveTempPath, archiveHostPath); err != nil {
+		if restoreArchiveErr := restoreBackupPath(archiveHostPath, archiveBackupPath, archiveHadBackup); restoreArchiveErr != nil {
+			err = fmt.Errorf("%w；恢复旧归档失败: %v", err, restoreArchiveErr)
+		}
+		if restoreTargetErr := rollbackMovedTarget(targetHostPath, targetBackupPath, targetHadBackup, targetMoved); restoreTargetErr != nil {
+			return fmt.Errorf("%w；恢复旧 Skill 失败: %v", err, restoreTargetErr)
+		}
+		return err
+	}
+
+	if targetHadBackup {
+		_ = os.RemoveAll(targetBackupPath)
+	}
+	if archiveHadBackup {
+		_ = os.Remove(archiveBackupPath)
+	}
+	return nil
+}
+
+func (s *FileService) moveExistingPathToBackup(path string, backupParent string, backupPattern string) (string, bool, error) {
+	if _, err := os.Lstat(path); err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if _, err := s.ensureNoSymlinkInExistingComponents(path, true); err != nil {
+		return "", false, err
+	}
+	backupPath, err := reserveTempPath(backupParent, backupPattern)
+	if err != nil {
+		return "", false, err
+	}
+	if err := os.Rename(path, backupPath); err != nil {
+		_ = os.RemoveAll(backupPath)
+		return "", false, err
+	}
+	return backupPath, true, nil
+}
+
+func reserveTempPath(parent string, pattern string) (string, error) {
+	path, err := os.MkdirTemp(parent, pattern)
+	if err != nil {
+		return "", err
+	}
+	if err := os.Remove(path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func rollbackMovedTarget(targetHostPath string, targetBackupPath string, targetHadBackup bool, targetMoved bool) error {
+	if !targetMoved {
+		return nil
+	}
+	return restoreBackupPath(targetHostPath, targetBackupPath, targetHadBackup)
+}
+
+func restoreBackupPath(path string, backupPath string, hadBackup bool) error {
+	if err := os.RemoveAll(path); err != nil {
+		return err
+	}
+	if hadBackup {
+		return os.Rename(backupPath, path)
+	}
+	return nil
 }
 
 func (s *FileService) extractSkillZipEntries(targetHostPath string, entries []skillZipEntry) (int, int64, error) {

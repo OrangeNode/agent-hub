@@ -52,6 +52,7 @@ import com.agenthub.tool.runtime.ToolExecutionRequest;
 import com.agenthub.tool.runtime.ToolExecutionResult;
 import com.agenthub.tool.runtime.ToolRegistry;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -315,6 +316,59 @@ class ChatServiceImplTest {
     }
 
     @Test
+    void shouldComputeMissingSkillZipSha256FromLegacyStoredZip() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        SkillRuntimeService skillRuntimeService = mock(SkillRuntimeService.class);
+        SandboxSessionService sandboxSessionService = mock(SandboxSessionService.class);
+        SandboxClient sandboxClient = mock(SandboxClient.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        LlmClient llmClient = mock(LlmClient.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                sender,
+                attachmentService,
+                null,
+                contextBuilder(messageMapper, attachmentService, llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                null,
+                null,
+                skillRuntimeService,
+                sandboxSessionService,
+                sandboxClient,
+                objectStorageClient
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(), List.of(), 1500)).thenReturn(List.of());
+        when(skillRuntimeService.buildRuntimeContext(null, List.of(6L))).thenReturn(skillContextWithDocxPackage(" "));
+        when(sandboxSessionService.ensureSession(7L, 100L)).thenReturn("sbx_1");
+        when(objectStorageClient.readBytes("agent-hub", "skill-packages/docx.zip"))
+                .thenReturn("legacy zip".getBytes(StandardCharsets.UTF_8));
+        when(objectStorageClient.presignGet("agent-hub", "skill-packages/docx.zip", Duration.ofMinutes(10)))
+                .thenReturn("https://storage.example.com/skill-packages/docx.zip");
+
+        service.stream(7L, 100L, 10L, null, "用 docx 帮我写", false, List.of(), List.of(), List.of(6L));
+
+        ArgumentCaptor<SkillZipSyncRequest> requestCaptor = ArgumentCaptor.forClass(SkillZipSyncRequest.class);
+        verify(sandboxClient).syncSkillZips(eq("sbx_1"), requestCaptor.capture());
+        verify(llmClient).stream(any(LlmStreamRequest.class), any());
+        assertThat(requestCaptor.getValue().skills())
+                .singleElement()
+                .satisfies(skill -> assertThat(skill.zipSha256())
+                        .isEqualTo("abc773af8db9f28b6d32588141bd347ba4bd903c6410ed7a2be377fb94db054a"));
+    }
+
+    @Test
     void shouldFailAssistantMessageAndSkipLlmWhenSkillZipSyncFails() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
         ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
@@ -405,7 +459,7 @@ class ChatServiceImplTest {
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
         when(attachmentService.resolveImagesForChat(7L, 100L, List.of(), List.of(), 1500)).thenReturn(List.of());
         when(skillRuntimeService.buildRuntimeContext(null, List.of(6L)))
-                .thenReturn(skillContextWithDocxPackage(" "));
+                .thenReturn(skillContextWithDocxPackage(" ", "a".repeat(64)));
 
         service.stream(7L, 100L, 10L, null, "用 docx 帮我写", false, List.of(), List.of(), List.of(6L));
 
@@ -415,7 +469,7 @@ class ChatServiceImplTest {
                 "FAILED".equals(message.getStatus())
                         && message.getErrorMessage() != null
                         && message.getErrorMessage().contains("Skill 6(docx)")
-                        && message.getErrorMessage().contains("zipSha256")
+                        && message.getErrorMessage().contains("objectKey")
         ));
         assertThat(sender.eventTypes()).contains(SseEventType.ERROR, SseEventType.DONE);
         assertThat(sender.completed).isTrue();
@@ -1522,6 +1576,10 @@ class ChatServiceImplTest {
     }
 
     private SkillRuntimeContext skillContextWithDocxPackage(String zipSha256) {
+        return skillContextWithDocxPackage("skill-packages/docx.zip", zipSha256);
+    }
+
+    private SkillRuntimeContext skillContextWithDocxPackage(String objectKey, String zipSha256) {
         return new SkillRuntimeContext(
                 "已选择以下 Skill。\nsandbox 路径：/workspace/skills/docx",
                 List.of(6L),
@@ -1530,7 +1588,7 @@ class ChatServiceImplTest {
                         "docx",
                         "DOCX 文档",
                         "agent-hub",
-                        "skill-packages/docx.zip",
+                        objectKey,
                         zipSha256
                 ))
         );

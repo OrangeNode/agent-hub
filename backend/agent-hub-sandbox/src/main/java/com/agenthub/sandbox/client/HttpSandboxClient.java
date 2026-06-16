@@ -192,7 +192,11 @@ public class HttpSandboxClient implements SandboxClient {
                     .build();
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
             requireSuccess(response.statusCode(), "同步 Skill 包到沙箱失败");
-            return OBJECT_MAPPER.readValue(response.body(), SkillZipSyncResult.class);
+            SkillZipSyncResult result = OBJECT_MAPPER.readValue(response.body(), SkillZipSyncResult.class);
+            if (!result.ok()) {
+                throw new BusinessException(ErrorCode.INTERNAL_ERROR, "同步 Skill 包到沙箱失败");
+            }
+            return result;
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "同步 Skill 包到沙箱被中断");

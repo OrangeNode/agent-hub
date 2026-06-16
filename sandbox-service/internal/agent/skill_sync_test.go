@@ -17,9 +17,10 @@ import (
 func TestServerSyncSkillZipDownloadsAndExtracts(t *testing.T) {
 	root := t.TempDir()
 	zipBytes := testZip(t, map[string]string{
-		"SKILL.md":               "# Demo",
-		"references/style.md":    "style",
-		"scripts/render_docx.py": "print('ok')",
+		"writing-skill/SKILL.md":               "# Demo",
+		"writing-skill/references/style.md":    "style",
+		"writing-skill/scripts/render_docx.py": "print('ok')",
+		"unrelated/ignored.txt":                "ignored",
 	})
 	zipServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(zipBytes)
@@ -37,7 +38,10 @@ func TestServerSyncSkillZipDownloadsAndExtracts(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
+	assertFileContent(t, filepath.Join(root, "skills", "demo-skill", "SKILL.md"), "# Demo")
 	assertFileContent(t, filepath.Join(root, "skills", "demo-skill", "references", "style.md"), "style")
+	assertPathMissing(t, filepath.Join(root, "skills", "demo-skill", "writing-skill"))
+	assertPathMissing(t, filepath.Join(root, "skills", "demo-skill", "unrelated"))
 	assertFileContent(t, filepath.Join(root, "skills", ".archives", "demo-skill.zip"), string(zipBytes))
 }
 
@@ -322,6 +326,13 @@ func testCorruptedStoredZip(t *testing.T, name string, goodContent string, badCo
 	}
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
+	skillFile, err := writer.Create("SKILL.md")
+	if err != nil {
+		t.Fatalf("Create SKILL.md zip entry error = %v", err)
+	}
+	if _, err := skillFile.Write([]byte("# Demo")); err != nil {
+		t.Fatalf("Write SKILL.md zip entry error = %v", err)
+	}
 	header := &zip.FileHeader{Name: name, Method: zip.Store}
 	file, err := writer.CreateHeader(header)
 	if err != nil {
@@ -365,6 +376,13 @@ func testZipLargeFile(t *testing.T, name string, size int64) []byte {
 	t.Helper()
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
+	skillFile, err := writer.Create("SKILL.md")
+	if err != nil {
+		t.Fatalf("Create SKILL.md zip entry error = %v", err)
+	}
+	if _, err := skillFile.Write([]byte("# Demo")); err != nil {
+		t.Fatalf("Write SKILL.md zip entry error = %v", err)
+	}
 	file, err := writer.Create(name)
 	if err != nil {
 		t.Fatalf("Create zip entry error = %v", err)

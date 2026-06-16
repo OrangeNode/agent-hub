@@ -209,7 +209,62 @@ func validateSkillZipEntries(reader *zip.Reader) ([]skillZipEntry, error) {
 			isDir:     isDir,
 		})
 	}
-	return entries, nil
+	rootDir, err := chooseSkillZipRootDir(entries)
+	if err != nil {
+		return nil, err
+	}
+	strippedEntries := make([]skillZipEntry, 0, len(entries))
+	for _, entry := range entries {
+		relativeName, ok := stripSkillZipRoot(entry.cleanName, rootDir)
+		if !ok || relativeName == "" {
+			continue
+		}
+		entry.cleanName = relativeName
+		strippedEntries = append(strippedEntries, entry)
+	}
+	return strippedEntries, nil
+}
+
+func chooseSkillZipRootDir(entries []skillZipEntry) (string, error) {
+	bestPath := ""
+	bestDepth := 0
+	found := false
+	for _, entry := range entries {
+		if entry.isDir || !strings.EqualFold(path.Base(entry.cleanName), "SKILL.md") {
+			continue
+		}
+		depth := skillZipPathDepth(entry.cleanName)
+		if !found || depth < bestDepth || (depth == bestDepth && entry.cleanName < bestPath) {
+			bestPath = entry.cleanName
+			bestDepth = depth
+			found = true
+		}
+	}
+	if !found {
+		return "", errors.New("Skill 包缺少 SKILL.md")
+	}
+	rootDir := path.Dir(bestPath)
+	if rootDir == "." {
+		return "", nil
+	}
+	return rootDir, nil
+}
+
+func stripSkillZipRoot(cleanName string, rootDir string) (string, bool) {
+	if rootDir == "" {
+		return cleanName, true
+	}
+	if cleanName == rootDir {
+		return "", true
+	}
+	if strings.HasPrefix(cleanName, rootDir+"/") {
+		return cleanName[len(rootDir)+1:], true
+	}
+	return "", false
+}
+
+func skillZipPathDepth(cleanName string) int {
+	return strings.Count(cleanName, "/")
 }
 
 func (s *FileService) replaceSkillZip(targetHostPath string, archiveHostPath string, zipBytes []byte, entries []skillZipEntry) (int, int64, error) {

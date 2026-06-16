@@ -54,9 +54,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
@@ -851,7 +854,7 @@ public class ChatServiceImpl implements ChatService {
                         skill.skillKey(),
                         skill.name(),
                         objectStorageClient.presignGet(skill.bucketName(), skill.objectKey(), Duration.ofMinutes(10)),
-                        skill.zipSha256(),
+                        resolveSkillZipSha256(skill),
                         "/workspace/skills/" + skill.skillKey()
                 ))
                 .toList();
@@ -871,8 +874,26 @@ public class ChatServiceImpl implements ChatService {
         if (!hasText(skill.objectKey())) {
             throw missingSkillPackageField(skill, "objectKey");
         }
-        if (!hasText(skill.zipSha256())) {
-            throw missingSkillPackageField(skill, "zipSha256");
+    }
+
+    private String resolveSkillZipSha256(SkillRuntimePackage skill) {
+        if (hasText(skill.zipSha256())) {
+            return skill.zipSha256().strip();
+        }
+        byte[] zipBytes = objectStorageClient.readBytes(skill.bucketName(), skill.objectKey());
+        if (zipBytes == null || zipBytes.length == 0) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR,
+                    "Skill " + skillDisplayName(skill) + " 原始 zip 为空，无法同步到沙箱");
+        }
+        return sha256Hex(zipBytes);
+    }
+
+    private String sha256Hex(byte[] bytes) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(bytes));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
         }
     }
 

@@ -1,10 +1,12 @@
 package com.agenthub.sandbox.client;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.agenthub.common.exception.BusinessException;
 import com.agenthub.sandbox.client.dto.SkillZipSyncRequest;
 import com.agenthub.sandbox.client.dto.SkillZipSyncResult;
 import com.agenthub.sandbox.client.dto.SandboxEvent;
@@ -183,5 +185,23 @@ class HttpSandboxClientTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    void shouldRejectSkillZipSyncWhenResponseOkIsFalse() throws Exception {
+        SandboxProperties properties = new SandboxProperties();
+        properties.setBaseUrl("http://127.0.0.1:18080");
+        HttpClient httpClient = mock(HttpClient.class);
+        @SuppressWarnings("unchecked")
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("{\"ok\":false,\"skills\":[]}");
+        when(httpClient.send(any(HttpRequest.class), org.mockito.Mockito.<HttpResponse.BodyHandler<String>>any()))
+                .thenReturn(response);
+        HttpSandboxClient client = new HttpSandboxClient(properties, httpClient);
+
+        assertThatThrownBy(() -> client.syncSkillZips("sbx_1", new SkillZipSyncRequest(List.of())))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("同步 Skill 包到沙箱失败");
     }
 }

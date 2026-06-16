@@ -15,6 +15,9 @@ public class SkillFileManifest {
     private Boolean directory;
     private Long sizeBytes;
     private String sha256;
+    private String bucketName;
+    private String objectKey;
+    private String contentType;
     private OffsetDateTime createdAt;
 
     public Long getId() {
@@ -63,6 +66,30 @@ public class SkillFileManifest {
 
     public void setSha256(String sha256) {
         this.sha256 = sha256;
+    }
+
+    public String getBucketName() {
+        return bucketName;
+    }
+
+    public void setBucketName(String bucketName) {
+        this.bucketName = bucketName;
+    }
+
+    public String getObjectKey() {
+        return objectKey;
+    }
+
+    public void setObjectKey(String objectKey) {
+        this.objectKey = objectKey;
+    }
+
+    public String getContentType() {
+        return contentType;
+    }
+
+    public void setContentType(String contentType) {
+        this.contentType = contentType;
     }
 
     public OffsetDateTime getCreatedAt() {

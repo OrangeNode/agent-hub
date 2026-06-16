@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -74,7 +76,8 @@ class SkillPackageServiceImplTest {
                         ---
 
                         # 标题
-                        """
+                        """,
+                "scripts/render_docx.py", "print('python renderer')"
         )));
         when(packageMapper.selectByName("公文写作")).thenReturn(null);
         when(packageMapper.insert(any(SkillPackage.class))).thenAnswer(invocation -> {
@@ -90,7 +93,29 @@ class SkillPackageServiceImplTest {
         assertThat(preview.imported()).isTrue();
         assertThat(preview.importedSkill().skillId()).isEqualTo(10L);
         assertThat(preview.importedSkill().name()).isEqualTo("公文写作");
-        verify(fileMapper).insert(any(SkillFileManifest.class));
+        verify(objectStorageClient).putBytes(
+                eq("agent-hub"),
+                eq("skill-packages/extracted/1/SKILL.md"),
+                eq("text/markdown"),
+                any(byte[].class)
+        );
+        verify(objectStorageClient).putBytes(
+                eq("agent-hub"),
+                eq("skill-packages/extracted/1/scripts/render_docx.py"),
+                eq("text/x-python"),
+                any(byte[].class)
+        );
+        ArgumentCaptor<SkillFileManifest> fileCaptor = ArgumentCaptor.forClass(SkillFileManifest.class);
+        verify(fileMapper, org.mockito.Mockito.times(2)).insert(fileCaptor.capture());
+        assertThat(fileCaptor.getAllValues())
+                .extracting(SkillFileManifest::getObjectKey)
+                .containsExactly(
+                        "skill-packages/extracted/1/SKILL.md",
+                        "skill-packages/extracted/1/scripts/render_docx.py"
+                );
+        assertThat(fileCaptor.getAllValues())
+                .extracting(SkillFileManifest::getContentType)
+                .containsExactly("text/markdown", "text/x-python");
     }
 
     @Test
@@ -174,6 +199,34 @@ class SkillPackageServiceImplTest {
         verify(bindingMapper).deleteBySkillId(5L);
         verify(fileMapper).deleteBySkillId(5L);
         verify(packageMapper).deleteById(5L);
+    }
+
+    @Test
+    void shouldPreviewTextFileFromExtractedObjectWhenManifestHasObjectKey() {
+        SkillPackage skill = skill(5L, "Preview Skill", "preview-skill");
+        skill.setBucketName("agent-hub");
+        skill.setObjectKey("skill-packages/demo.zip");
+        skill.setOriginalFilename("demo.zip");
+        SkillFileManifest file = file(11L, 5L, "assets/template.md", false, 14L);
+        file.setBucketName("agent-hub");
+        file.setObjectKey("skill-packages/extracted/1/assets/template.md");
+        file.setContentType("text/markdown");
+        when(packageMapper.selectById(5L)).thenReturn(skill);
+        when(fileMapper.selectBySkillId(5L)).thenReturn(List.of(file));
+        when(objectStorageClient.readBytes("agent-hub", "skill-packages/extracted/1/assets/template.md"))
+                .thenReturn("template content".getBytes(StandardCharsets.UTF_8));
+        when(objectStorageClient.readBytes("agent-hub", "skill-packages/demo.zip")).thenReturn(zip(Map.of(
+                "demo-skill/SKILL.md", "# Preview Skill",
+                "demo-skill/assets/template.md", "zip content"
+        )));
+
+        SkillFileContent content = service.fileContent(5L, "assets/template.md");
+
+        assertThat(content.relativePath()).isEqualTo("assets/template.md");
+        assertThat(content.previewable()).isTrue();
+        assertThat(content.content()).isEqualTo("template content");
+        verify(objectStorageClient).readBytes("agent-hub", "skill-packages/extracted/1/assets/template.md");
+        verify(objectStorageClient, never()).readBytes("agent-hub", "skill-packages/demo.zip");
     }
 
     @Test

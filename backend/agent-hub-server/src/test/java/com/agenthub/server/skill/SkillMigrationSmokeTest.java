@@ -8,7 +8,10 @@ import com.agenthub.skill.mapper.SkillImportMapper;
 import com.agenthub.skill.mapper.SkillPackageMapper;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -57,6 +60,30 @@ class SkillMigrationSmokeTest {
                 "skill_import",
                 "skill_package"
         );
+    }
+
+    @Test
+    void shouldCreateFullSkillZipSyncColumns() {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+
+        Map<String, List<String>> columnsByTable = jdbcTemplate.query("""
+                SELECT table_name, column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                    AND table_name IN ('skill_package', 'skill_import', 'skill_file_manifest')
+                """, resultSet -> {
+            Map<String, List<String>> columns = new HashMap<>();
+            while (resultSet.next()) {
+                columns.computeIfAbsent(resultSet.getString("table_name"), key -> new ArrayList<>())
+                        .add(resultSet.getString("column_name"));
+            }
+            return columns;
+        });
+
+        assertThat(columnsByTable.get("skill_package")).contains("zip_sha256");
+        assertThat(columnsByTable.get("skill_import")).contains("zip_sha256");
+        assertThat(columnsByTable.get("skill_file_manifest"))
+                .contains("bucket_name", "object_key", "content_type");
     }
 
     @Test

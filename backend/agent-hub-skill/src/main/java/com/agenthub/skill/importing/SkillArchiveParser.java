@@ -26,6 +26,7 @@ public class SkillArchiveParser {
         if (zipBytes == null || zipBytes.length == 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "Skill 包不是有效的 zip 文件");
         }
+        String zipSha256 = sha256(zipBytes);
         List<ArchiveEntry> entries = readEntries(zipBytes);
         ArchiveEntry skillMdEntry = chooseSkillMd(entries);
         String rootDir = rootDir(skillMdEntry.normalizedPath());
@@ -47,7 +48,7 @@ public class SkillArchiveParser {
                 .sorted(Comparator.comparing(ParsedSkillFile::relativePath))
                 .toList();
 
-        return new ParsedSkillArchive(name, description, rootDir, SKILL_MD, skillMdContent, files);
+        return new ParsedSkillArchive(name, description, rootDir, SKILL_MD, skillMdContent, zipSha256, files);
     }
 
     private List<ArchiveEntry> readEntries(byte[] zipBytes) {
@@ -152,7 +153,32 @@ public class SkillArchiveParser {
 
     private ParsedSkillFile toParsedFile(ArchiveEntry entry, String rootDir) {
         String relativePath = stripRoot(entry.normalizedPath(), rootDir);
-        return new ParsedSkillFile(relativePath, entry.directory(), entry.sizeBytes(), entry.sha256());
+        return new ParsedSkillFile(
+                relativePath,
+                entry.directory(),
+                entry.sizeBytes(),
+                entry.sha256(),
+                entry.directory() ? null : contentType(relativePath),
+                entry.directory() ? new byte[0] : entry.bytes()
+        );
+    }
+
+    private String contentType(String relativePath) {
+        String normalized = relativePath == null ? "" : relativePath.toLowerCase(Locale.ROOT);
+        if (filename(normalized).equalsIgnoreCase(SKILL_MD.toLowerCase(Locale.ROOT))
+                || normalized.endsWith(".md")) {
+            return "text/markdown";
+        }
+        if (normalized.endsWith(".py")) {
+            return "text/x-python";
+        }
+        if (normalized.endsWith(".json")) {
+            return "application/json";
+        }
+        if (normalized.endsWith(".txt")) {
+            return "text/plain";
+        }
+        return "application/octet-stream";
     }
 
     private boolean isInSkillRoot(String path, String rootDir) {

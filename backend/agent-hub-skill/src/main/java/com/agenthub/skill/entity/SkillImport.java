@@ -14,6 +14,7 @@ public class SkillImport {
     private String bucketName;
     private String objectKey;
     private String contentType;
+    private String zipSha256;
     private Long fileSize;
     private String status;
     private String parsedName;
@@ -66,6 +67,14 @@ public class SkillImport {
 
     public void setContentType(String contentType) {
         this.contentType = contentType;
+    }
+
+    public String getZipSha256() {
+        return zipSha256;
+    }
+
+    public void setZipSha256(String zipSha256) {
+        this.zipSha256 = zipSha256;
     }
 
     public Long getFileSize() {

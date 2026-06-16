@@ -6,11 +6,13 @@ import com.agenthub.storage.config.StorageProperties;
 import io.minio.GetObjectArgs;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
+import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
 import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
 import io.minio.errors.ErrorResponseException;
 import io.minio.http.Method;
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.time.Duration;
 import java.util.Map;
@@ -108,6 +110,21 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
             return inputStream.readAllBytes();
         } catch (Exception exception) {
             throw storageException(exception);
+        }
+    }
+
+    @Override
+    public void putBytes(String bucket, String objectKey, String contentType, byte[] bytes) {
+        byte[] content = bytes == null ? new byte[0] : bytes;
+        try (ByteArrayInputStream inputStream = new ByteArrayInputStream(content)) {
+            internalClient.putObject(PutObjectArgs.builder()
+                    .bucket(resolveBucket(bucket))
+                    .object(objectKey)
+                    .contentType(contentType)
+                    .stream(inputStream, content.length, -1)
+                    .build());
+        } catch (Exception exception) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, STORAGE_ERROR_MESSAGE);
         }
     }
 

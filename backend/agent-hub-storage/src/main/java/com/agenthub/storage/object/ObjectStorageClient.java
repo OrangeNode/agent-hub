@@ -26,5 +26,11 @@ public interface ObjectStorageClient {
         return readBytes(objectKey);
     }
 
+    void putBytes(String bucket, String objectKey, String contentType, byte[] bytes);
+
+    default void putBytes(String objectKey, String contentType, byte[] bytes) {
+        putBytes(null, objectKey, contentType, bytes);
+    }
+
     void delete(String objectKey);
 }

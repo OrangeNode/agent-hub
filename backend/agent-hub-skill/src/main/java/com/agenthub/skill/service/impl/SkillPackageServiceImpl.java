@@ -16,6 +16,7 @@ import com.agenthub.skill.entity.SkillPackage;
 import com.agenthub.skill.importing.ParsedSkillArchive;
 import com.agenthub.skill.importing.ParsedSkillFile;
 import com.agenthub.skill.importing.SkillArchiveParser;
+import com.agenthub.skill.importing.StoredSkillFile;
 import com.agenthub.skill.mapper.AgentSkillBindingMapper;
 import com.agenthub.skill.mapper.SkillFileManifestMapper;
 import com.agenthub.skill.mapper.SkillImportMapper;
@@ -59,7 +60,7 @@ public class SkillPackageServiceImpl implements SkillPackageService {
     private static final String MODE_RENAME = "RENAME";
     private static final String SKILL_MD = "SKILL.md";
     private static final long MAX_PREVIEW_BYTES = 512 * 1024;
-    private static final TypeReference<List<ParsedSkillFile>> FILE_LIST_TYPE = new TypeReference<>() {
+    private static final TypeReference<List<StoredSkillFile>> FILE_LIST_TYPE = new TypeReference<>() {
     };
 
     private final SkillPackageMapper packageMapper;
@@ -165,11 +166,10 @@ public class SkillPackageServiceImpl implements SkillPackageService {
         if (metadata.size() != skillImport.getFileSize()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "Skill 包上传失败，请重新上传");
         }
-        ParsedSkillArchive archive = archiveParser.parse(
-                objectStorageClient.readBytes(skillImport.getObjectKey()),
-                skillImport.getOriginalFilename()
-        );
-        fillParsedImport(skillImport, archive);
+        byte[] zipBytes = objectStorageClient.readBytes(skillImport.getObjectKey());
+        ParsedSkillArchive archive = archiveParser.parse(zipBytes, skillImport.getOriginalFilename());
+        List<StoredSkillFile> storedFiles = storeExtractedFiles(skillImport, archive);
+        fillParsedImport(skillImport, archive, storedFiles);
         importMapper.updateById(skillImport);
 
         SkillPackage duplicateSkill = packageMapper.selectByName(archive.name());
@@ -268,8 +268,16 @@ public class SkillPackageServiceImpl implements SkillPackageService {
             );
         }
 
-        byte[] archiveBytes = objectStorageClient.readBytes(skill.getBucketName(), skill.getObjectKey());
-        byte[] fileBytes = readArchiveFile(archiveBytes, normalizedPath);
+        byte[] fileBytes;
+        if (manifest.getObjectKey() != null && !manifest.getObjectKey().isBlank()) {
+            String bucketName = defaultString(manifest.getBucketName()).isBlank()
+                    ? skill.getBucketName()
+                    : manifest.getBucketName();
+            fileBytes = objectStorageClient.readBytes(bucketName, manifest.getObjectKey());
+        } else {
+            byte[] archiveBytes = objectStorageClient.readBytes(skill.getBucketName(), skill.getObjectKey());
+            fileBytes = readArchiveFile(archiveBytes, normalizedPath);
+        }
         if (isBinary(fileBytes)) {
             return new SkillFileContent(
                     manifest.getId(),
@@ -299,6 +307,43 @@ public class SkillPackageServiceImpl implements SkillPackageService {
         bindingMapper.deleteBySkillId(skillId);
         fileMapper.deleteBySkillId(skillId);
         packageMapper.deleteById(skillId);
+    }
+
+    private List<StoredSkillFile> storeExtractedFiles(SkillImport skillImport, ParsedSkillArchive archive) {
+        String bucketName = defaultString(skillImport.getBucketName()).isBlank()
+                ? storageProperties.getBucket()
+                : skillImport.getBucketName();
+        return archive.files().stream()
+                .map(parsedFile -> storeExtractedFile(skillImport.getId(), bucketName, parsedFile))
+                .toList();
+    }
+
+    private StoredSkillFile storeExtractedFile(Long importId, String bucketName, ParsedSkillFile parsedFile) {
+        if (parsedFile.directory()) {
+            return new StoredSkillFile(
+                    parsedFile.relativePath(),
+                    true,
+                    parsedFile.sizeBytes(),
+                    parsedFile.sha256(),
+                    null,
+                    null,
+                    parsedFile.contentType()
+            );
+        }
+        String contentType = defaultString(parsedFile.contentType()).isBlank()
+                ? "application/octet-stream"
+                : parsedFile.contentType();
+        String objectKey = buildExtractedObjectKey(importId, parsedFile.relativePath());
+        objectStorageClient.putBytes(bucketName, objectKey, contentType, parsedFile.bytes());
+        return new StoredSkillFile(
+                parsedFile.relativePath(),
+                false,
+                parsedFile.sizeBytes(),
+                parsedFile.sha256(),
+                bucketName,
+                objectKey,
+                contentType
+        );
     }
 
     private SkillPackageItem createSkill(Long userId, SkillImport skillImport, String name, String description) {
@@ -337,6 +382,7 @@ public class SkillPackageServiceImpl implements SkillPackageService {
         skill.setBucketName(skillImport.getBucketName());
         skill.setObjectKey(skillImport.getObjectKey());
         skill.setContentType(skillImport.getContentType());
+        skill.setZipSha256(skillImport.getZipSha256());
         skill.setFileSize(skillImport.getFileSize());
         skill.setSkillMdPath(skillImport.getSkillMdPath());
         skill.setSkillMdContent(skillImport.getSkillMdContent());
@@ -344,27 +390,31 @@ public class SkillPackageServiceImpl implements SkillPackageService {
     }
 
     private void replaceFiles(Long skillId, SkillImport skillImport) {
-        for (ParsedSkillFile parsedFile : readManifest(skillImport.getManifestJson())) {
+        for (StoredSkillFile storedFile : readManifest(skillImport.getManifestJson())) {
             SkillFileManifest file = new SkillFileManifest();
             file.setSkillId(skillId);
-            file.setRelativePath(parsedFile.relativePath());
-            file.setDirectory(parsedFile.directory());
-            file.setSizeBytes(parsedFile.sizeBytes());
-            file.setSha256(parsedFile.sha256());
+            file.setRelativePath(storedFile.relativePath());
+            file.setDirectory(storedFile.directory());
+            file.setSizeBytes(storedFile.sizeBytes());
+            file.setSha256(storedFile.sha256());
+            file.setBucketName(storedFile.bucketName());
+            file.setObjectKey(storedFile.objectKey());
+            file.setContentType(storedFile.contentType());
             file.setCreatedAt(OffsetDateTime.now());
             fileMapper.insert(file);
         }
     }
 
-    private void fillParsedImport(SkillImport skillImport, ParsedSkillArchive archive) {
+    private void fillParsedImport(SkillImport skillImport, ParsedSkillArchive archive, List<StoredSkillFile> storedFiles) {
         skillImport.setStatus(STATUS_PARSED);
         skillImport.setParsedName(archive.name());
         skillImport.setParsedDescription(archive.description());
         skillImport.setRootDir(archive.rootDir());
         skillImport.setSkillMdPath(archive.skillMdPath());
         skillImport.setSkillMdContent(archive.skillMdContent());
+        skillImport.setZipSha256(archive.zipSha256());
         skillImport.setFileCount(archive.files().size());
-        skillImport.setManifestJson(writeManifest(archive.files()));
+        skillImport.setManifestJson(writeManifest(storedFiles));
         skillImport.setErrorMessage(null);
         skillImport.setUpdatedAt(OffsetDateTime.now());
     }
@@ -511,7 +561,7 @@ public class SkillPackageServiceImpl implements SkillPackageService {
         return (int) path.chars().filter(character -> character == '/').count();
     }
 
-    private String writeManifest(List<ParsedSkillFile> files) {
+    private String writeManifest(List<StoredSkillFile> files) {
         try {
             return objectMapper.writeValueAsString(files);
         } catch (JsonProcessingException exception) {
@@ -519,7 +569,7 @@ public class SkillPackageServiceImpl implements SkillPackageService {
         }
     }
 
-    private List<ParsedSkillFile> readManifest(String manifestJson) {
+    private List<StoredSkillFile> readManifest(String manifestJson) {
         try {
             return objectMapper.readValue(manifestJson, FILE_LIST_TYPE);
         } catch (JsonProcessingException exception) {
@@ -574,6 +624,10 @@ public class SkillPackageServiceImpl implements SkillPackageService {
     private String buildObjectKey(String filename, OffsetDateTime now) {
         return "skill-packages/" + now.format(DateTimeFormatter.BASIC_ISO_DATE) + "/"
                 + UUID.randomUUID() + "-" + filename;
+    }
+
+    private String buildExtractedObjectKey(Long importId, String relativePath) {
+        return "skill-packages/extracted/" + importId + "/" + relativePath;
     }
 
     private SkillPackageItem toItem(SkillPackage skill) {

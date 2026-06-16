@@ -77,6 +77,35 @@ class SkillArchiveParserTest {
     }
 
     @Test
+    void shouldExposeZipHashFileBytesContentTypeAndFileHash() {
+        Map<String, String> files = new LinkedHashMap<>();
+        files.put("docx/SKILL.md", "# Docx Skill");
+        files.put("docx/scripts/", "");
+        files.put("docx/scripts/render_docx.py", "print('python renderer')");
+
+        byte[] zipBytes = zip(files);
+        ParsedSkillArchive archive = parser.parse(zipBytes, "docx.zip");
+
+        assertThat(archive.zipSha256()).hasSize(64);
+        assertThat(archive.files())
+                .filteredOn(file -> file.relativePath().equals("scripts/render_docx.py"))
+                .singleElement()
+                .satisfies(file -> {
+                    assertThat(file.directory()).isFalse();
+                    assertThat(file.bytes()).contains("python".getBytes(StandardCharsets.UTF_8));
+                    assertThat(file.contentType()).isEqualTo("text/x-python");
+                    assertThat(file.sha256()).hasSize(64);
+                });
+        assertThat(archive.files())
+                .filteredOn(file -> file.relativePath().equals("scripts"))
+                .singleElement()
+                .satisfies(file -> {
+                    assertThat(file.directory()).isTrue();
+                    assertThat(file.bytes()).isEmpty();
+                });
+    }
+
+    @Test
     void shouldFallbackToFilenameWhenNoNameOrHeadingExists() {
         byte[] zipBytes = zip(Map.of("SKILL.md", "按用户输入生成摘要。"));
 

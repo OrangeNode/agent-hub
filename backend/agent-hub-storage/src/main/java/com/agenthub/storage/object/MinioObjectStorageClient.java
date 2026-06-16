@@ -116,11 +116,14 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
     @Override
     public void putBytes(String bucket, String objectKey, String contentType, byte[] bytes) {
         byte[] content = bytes == null ? new byte[0] : bytes;
+        String resolvedContentType = contentType == null || contentType.isBlank()
+                ? "application/octet-stream"
+                : contentType;
         try (ByteArrayInputStream inputStream = new ByteArrayInputStream(content)) {
             internalClient.putObject(PutObjectArgs.builder()
                     .bucket(resolveBucket(bucket))
                     .object(objectKey)
-                    .contentType(contentType)
+                    .contentType(resolvedContentType)
                     .stream(inputStream, content.length, -1)
                     .build());
         } catch (Exception exception) {

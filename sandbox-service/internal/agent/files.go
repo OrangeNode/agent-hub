@@ -272,6 +272,26 @@ func (s *FileService) EnsureWorkspaceHasNoSymlink() error {
 	return s.ensureWorkspaceHasNoSymlinkLocked(maxWorkspaceSymlinkScanEntries)
 }
 
+func (s *FileService) ResolveSkillTarget(skillKey string, targetDir string) (string, string, error) {
+	if !validSkillKey(skillKey) {
+		return "", "", errors.New("Skill key 不合法")
+	}
+	expectedGuestPath := "/workspace/skills/" + skillKey
+	cleanedTarget := filepath.ToSlash(filepath.Clean(strings.TrimSpace(targetDir)))
+	if cleanedTarget != expectedGuestPath {
+		return "", "", errors.New("Skill 只能同步到 /workspace/skills/{skillKey}")
+	}
+	targetHostPath, err := s.resolveGuestWorkspacePath(expectedGuestPath)
+	if err != nil {
+		return "", "", err
+	}
+	archiveHostPath, err := s.resolveGuestWorkspacePath("/workspace/skills/.archives/" + skillKey + ".zip")
+	if err != nil {
+		return "", "", err
+	}
+	return targetHostPath, archiveHostPath, nil
+}
+
 func (s *FileService) resolveLexical(input string) (string, error) {
 	cleanInput := filepath.Clean(strings.TrimSpace(input))
 	if cleanInput == "." {
@@ -447,6 +467,20 @@ func isPathLike(value string) bool {
 
 func isASCIILetter(value byte) bool {
 	return (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z')
+}
+
+func validSkillKey(value string) bool {
+	if value == "" {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (s *FileService) fileInfo(path string, info os.FileInfo) FileInfo {

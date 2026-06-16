@@ -49,6 +49,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("POST /files/content", s.handleWriteFile)
 	mux.HandleFunc("PUT /files/content", s.handleWriteFile)
 	mux.HandleFunc("GET /artifacts", s.handleArtifacts)
+	mux.HandleFunc("POST /skills/sync-zip", s.handleSyncSkillZip)
 	return mux
 }
 

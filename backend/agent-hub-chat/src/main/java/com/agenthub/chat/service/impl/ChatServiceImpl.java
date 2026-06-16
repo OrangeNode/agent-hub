@@ -31,13 +31,17 @@ import com.agenthub.common.exception.BusinessException;
 import com.agenthub.sse.SseEventData;
 import com.agenthub.sse.SseEventSender;
 import com.agenthub.sse.SseEventType;
+import com.agenthub.sandbox.client.SandboxClient;
 import com.agenthub.sandbox.client.dto.SandboxArtifactItem;
+import com.agenthub.sandbox.client.dto.SkillZipSyncRequest;
+import com.agenthub.sandbox.service.SandboxSessionService;
 import com.agenthub.sandbox.service.SandboxToolService;
 import com.agenthub.skill.service.SkillRuntimeContext;
 import com.agenthub.skill.service.SkillRuntimeService;
 import com.agenthub.storage.attachment.dto.AttachmentItem;
 import com.agenthub.storage.attachment.dto.AttachmentReference;
 import com.agenthub.storage.attachment.service.AttachmentService;
+import com.agenthub.storage.object.ObjectStorageClient;
 import com.agenthub.tool.runtime.ToolExecutionContext;
 import com.agenthub.tool.runtime.ToolExecutionRequest;
 import com.agenthub.tool.runtime.ToolExecutionResult;
@@ -49,6 +53,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -114,6 +119,9 @@ public class ChatServiceImpl implements ChatService {
     private final SandboxToolService sandboxToolService;
     private final ToolRegistry toolRegistry;
     private final SkillRuntimeService skillRuntimeService;
+    private final SandboxSessionService sandboxSessionService;
+    private final SandboxClient sandboxClient;
+    private final ObjectStorageClient objectStorageClient;
 
     @Autowired
     public ChatServiceImpl(
@@ -127,11 +135,15 @@ public class ChatServiceImpl implements ChatService {
             ConversationContextBuilder contextBuilder,
             SandboxToolService sandboxToolService,
             ToolRegistry toolRegistry,
-            SkillRuntimeService skillRuntimeService
+            SkillRuntimeService skillRuntimeService,
+            SandboxSessionService sandboxSessionService,
+            SandboxClient sandboxClient,
+            ObjectStorageClient objectStorageClient
     ) {
         this(conversationMapper, messageMapper, modelService, titleService, transactionTemplate, new SseEventSender(),
                 attachmentService, agentService, contextBuilder, LlmClientFactory::create, defaultStreamExecutor(),
-                sandboxToolService, toolRegistry, skillRuntimeService);
+                sandboxToolService, toolRegistry, skillRuntimeService,
+                sandboxSessionService, sandboxClient, objectStorageClient);
     }
 
     public ChatServiceImpl(
@@ -203,6 +215,30 @@ public class ChatServiceImpl implements ChatService {
             ToolRegistry toolRegistry,
             SkillRuntimeService skillRuntimeService
     ) {
+        this(conversationMapper, messageMapper, modelService, titleService, transactionTemplate, sseEventSender,
+                attachmentService, agentService, contextBuilder, llmClientFactory, streamExecutor,
+                sandboxToolService, toolRegistry, skillRuntimeService, null, null, null);
+    }
+
+    public ChatServiceImpl(
+            ChatConversationMapper conversationMapper,
+            ChatMessageMapper messageMapper,
+            AiModelService modelService,
+            ConversationTitleService titleService,
+            TransactionTemplate transactionTemplate,
+            SseEventSender sseEventSender,
+            AttachmentService attachmentService,
+            AgentService agentService,
+            ConversationContextBuilder contextBuilder,
+            Function<String, LlmClient> llmClientFactory,
+            Executor streamExecutor,
+            SandboxToolService sandboxToolService,
+            ToolRegistry toolRegistry,
+            SkillRuntimeService skillRuntimeService,
+            SandboxSessionService sandboxSessionService,
+            SandboxClient sandboxClient,
+            ObjectStorageClient objectStorageClient
+    ) {
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
         this.modelService = modelService;
@@ -217,6 +253,9 @@ public class ChatServiceImpl implements ChatService {
         this.sandboxToolService = sandboxToolService;
         this.toolRegistry = toolRegistry;
         this.skillRuntimeService = skillRuntimeService;
+        this.sandboxSessionService = sandboxSessionService;
+        this.sandboxClient = sandboxClient;
+        this.objectStorageClient = objectStorageClient;
     }
 
     /**
@@ -266,7 +305,7 @@ public class ChatServiceImpl implements ChatService {
             streamExecutor.execute(() -> streamLlm(emitter, preparedChat.conversation().getUserId(),
                     preparedChat.conversation().getId(), runtimeConfig, preparedChat.context().messages(),
                     preparedChat.assistantMessage(), preparedChat.conversation().getAgentKey(), thinkingEnabled,
-                    preparedChat.skillIds()));
+                    preparedChat.skillContext()));
         } else {
             // 初始事件发送失败说明客户端已断开，直接标记助手消息失败。
             failAssistantMessage(preparedChat.assistantMessage(), new StringBuilder(), new StringBuilder(), SSE_CONNECTION_CLOSED);
@@ -314,7 +353,7 @@ public class ChatServiceImpl implements ChatService {
                 attachmentIds,
                 images,
                 context,
-                skillContext.skillIds(),
+                skillContext,
                 currentMessageCreatedAt
         );
     }
@@ -332,7 +371,7 @@ public class ChatServiceImpl implements ChatService {
                 preparation.runtimeConfig());
         touchConversation(conversation);
         return new PreparedChat(conversation, userMessage, assistantMessage, preparation.images(), preparation.context(),
-                preparation.skillIds());
+                preparation.skillContext());
     }
 
     private static Executor defaultStreamExecutor() {
@@ -345,7 +384,7 @@ public class ChatServiceImpl implements ChatService {
             ChatMessage assistantMessage,
             List<AttachmentReference> images,
             ConversationContext context,
-            List<Long> skillIds
+            SkillRuntimeContext skillContext
     ) {
     }
 
@@ -358,7 +397,7 @@ public class ChatServiceImpl implements ChatService {
             List<Long> attachmentIds,
             List<AttachmentReference> images,
             ConversationContext context,
-            List<Long> skillIds,
+            SkillRuntimeContext skillContext,
             OffsetDateTime currentMessageCreatedAt
     ) {
     }
@@ -716,11 +755,12 @@ public class ChatServiceImpl implements ChatService {
             ChatMessage assistantMessage,
             String agentKey,
             boolean thinkingEnabled,
-            List<Long> skillIds
+            SkillRuntimeContext skillContext
     ) {
         StringBuilder content = new StringBuilder();
         StringBuilder reasoningContent = new StringBuilder();
         ProcessEventRecorder processRecorder = new ProcessEventRecorder();
+        List<Long> skillIds = skillContext == null ? List.of() : skillContext.skillIds();
         ToolExecutionContext toolContext = new ToolExecutionContext(
                 userId,
                 conversationId,
@@ -741,6 +781,7 @@ public class ChatServiceImpl implements ChatService {
         List<LlmToolDefinition> availableTools = List.of();
         List<LlmMessage> loopMessages = new ArrayList<>(messages);
         try {
+            syncSkillsToSandbox(userId, conversationId, skillContext);
             availableTools = listTools(toolContext);
             LlmClient client = llmClientFactory.apply(runtimeConfig.protocolType());
             loopMessages = withSandboxPathRules(messages, availableTools);
@@ -792,6 +833,27 @@ public class ChatServiceImpl implements ChatService {
             send(emitter, SseEventType.DONE, new SseEventData.Done());
             sseEventSender.complete(emitter);
         }
+    }
+
+    private void syncSkillsToSandbox(Long userId, Long conversationId, SkillRuntimeContext skillContext) {
+        if (skillContext == null || skillContext.packages().isEmpty()) {
+            return;
+        }
+        if (sandboxSessionService == null || sandboxClient == null || objectStorageClient == null) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "沙箱同步服务不可用");
+        }
+        String sandboxSessionId = sandboxSessionService.ensureSession(userId, conversationId);
+        List<SkillZipSyncRequest.Skill> skills = skillContext.packages().stream()
+                .map(skill -> new SkillZipSyncRequest.Skill(
+                        skill.skillId(),
+                        skill.skillKey(),
+                        skill.name(),
+                        objectStorageClient.presignGet(skill.bucketName(), skill.objectKey(), Duration.ofMinutes(10)),
+                        skill.zipSha256(),
+                        "/workspace/skills/" + skill.skillKey()
+                ))
+                .toList();
+        sandboxClient.syncSkillZips(sandboxSessionId, new SkillZipSyncRequest(skills));
     }
 
     private LlmStreamRequest buildRequest(

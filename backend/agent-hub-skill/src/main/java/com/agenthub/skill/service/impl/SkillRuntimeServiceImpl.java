@@ -5,6 +5,7 @@ import com.agenthub.skill.entity.SkillPackage;
 import com.agenthub.skill.mapper.AgentSkillBindingMapper;
 import com.agenthub.skill.mapper.SkillPackageMapper;
 import com.agenthub.skill.service.SkillRuntimeContext;
+import com.agenthub.skill.service.SkillRuntimePackage;
 import com.agenthub.skill.service.SkillRuntimeService;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -40,7 +41,21 @@ public class SkillRuntimeServiceImpl implements SkillRuntimeService {
         if (skills.isEmpty()) {
             return new SkillRuntimeContext("", List.of());
         }
-        return new SkillRuntimeContext(buildPrompt(agentId == null, skills), skills.stream().map(SkillPackage::getId).toList());
+        List<SkillRuntimePackage> packages = skills.stream()
+                .map(skill -> new SkillRuntimePackage(
+                        skill.getId(),
+                        skill.getSkillKey(),
+                        skill.getName(),
+                        skill.getBucketName(),
+                        skill.getObjectKey(),
+                        skill.getZipSha256()
+                ))
+                .toList();
+        return new SkillRuntimeContext(
+                buildPrompt(agentId == null, skills),
+                skills.stream().map(SkillPackage::getId).toList(),
+                packages
+        );
     }
 
     @Override
@@ -87,6 +102,9 @@ public class SkillRuntimeServiceImpl implements SkillRuntimeService {
             }
             builder.append("摘要：").append(excerpt(skill.getSkillMdContent())).append('\n');
             builder.append("完整说明：调用 skill.read，参数 skill_id=").append(skill.getId()).append('\n');
+            builder.append("sandbox 路径：/workspace/skills/")
+                    .append(skill.getSkillKey())
+                    .append("，可读取该目录下的 SKILL.md、references、scripts 和模板文件。\n");
         }
         return builder.toString();
     }

@@ -52,6 +52,24 @@ class SkillRuntimeServiceTest {
     }
 
     @Test
+    void shouldBuildRuntimePackagesAndExposeSandboxPathForSelectedSkills() {
+        SkillPackage skill = skill(6L, "docx", "DOCX 文档", "生成 docx", "# DOCX\n完整规则");
+        when(packageMapper.selectByIds(List.of(6L))).thenReturn(List.of(skill));
+
+        SkillRuntimeContext context = service.buildRuntimeContext(null, List.of(6L));
+
+        assertThat(context.packages())
+                .singleElement()
+                .satisfies(runtimePackage -> {
+                    assertThat(runtimePackage.skillId()).isEqualTo(6L);
+                    assertThat(runtimePackage.skillKey()).isEqualTo("docx");
+                    assertThat(runtimePackage.objectKey()).isEqualTo("skill-packages/docx.zip");
+                    assertThat(runtimePackage.zipSha256()).hasSize(64);
+                });
+        assertThat(context.prompt()).contains("/workspace/skills/docx");
+    }
+
+    @Test
     void shouldReadFullSkillMdOnlyWhenSkillIsAllowedInCurrentContext() {
         SkillPackage skill = skill(10L, "公文写作", "写通知", "# 公文写作\n完整内容");
         when(packageMapper.selectById(10L)).thenReturn(skill);
@@ -61,12 +79,19 @@ class SkillRuntimeServiceTest {
     }
 
     private SkillPackage skill(Long id, String name, String description, String skillMdContent) {
+        return skill(id, "skill-" + id, name, description, skillMdContent);
+    }
+
+    private SkillPackage skill(Long id, String skillKey, String name, String description, String skillMdContent) {
         SkillPackage skill = new SkillPackage();
         skill.setId(id);
-        skill.setSkillKey("skill-" + id);
+        skill.setSkillKey(skillKey);
         skill.setName(name);
         skill.setDescription(description);
         skill.setSkillMdContent(skillMdContent);
+        skill.setBucketName("agent-hub");
+        skill.setObjectKey("skill-packages/" + skillKey + ".zip");
+        skill.setZipSha256("a".repeat(64));
         skill.setFileCount(1);
         return skill;
     }

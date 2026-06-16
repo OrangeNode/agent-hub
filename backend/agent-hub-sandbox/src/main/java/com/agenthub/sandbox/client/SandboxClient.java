@@ -6,6 +6,8 @@ import com.agenthub.sandbox.client.dto.ExecSandboxRequest;
 import com.agenthub.sandbox.client.dto.SandboxArtifactItem;
 import com.agenthub.sandbox.client.dto.SandboxFileItem;
 import com.agenthub.sandbox.client.dto.SandboxEvent;
+import com.agenthub.sandbox.client.dto.SkillZipSyncRequest;
+import com.agenthub.sandbox.client.dto.SkillZipSyncResult;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -22,4 +24,6 @@ public interface SandboxClient {
     String readFile(String sandboxSessionId, String path, int maxBytes);
 
     List<SandboxArtifactItem> writeFile(String sandboxSessionId, String path, String content, boolean append);
+
+    SkillZipSyncResult syncSkillZips(String sandboxSessionId, SkillZipSyncRequest request);
 }

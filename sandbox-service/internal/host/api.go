@@ -69,6 +69,7 @@ func NewRouterWithManager(manager *SessionManager, options ...RouterOption) http
 	mux.HandleFunc("POST /internal/sandbox/sessions", server.handleCreateSession)
 	mux.HandleFunc("GET /internal/sandbox/sessions/{sessionId}/health", server.handleSessionHealth)
 	mux.HandleFunc("POST /internal/sandbox/sessions/{sessionId}/exec/stream", server.handleExecStream)
+	mux.HandleFunc("POST /internal/sandbox/sessions/{sessionId}/skills/sync-zip", server.handleSyncSkillZip)
 	mux.HandleFunc("GET /internal/sandbox/sessions/{sessionId}/files", server.handleListFiles)
 	mux.HandleFunc("GET /internal/sandbox/sessions/{sessionId}/files/content", server.handleReadFile)
 	mux.HandleFunc("POST /internal/sandbox/sessions/{sessionId}/files/content", server.handleWriteFile)
@@ -247,6 +248,33 @@ func (s *apiServer) handleExecStream(w http.ResponseWriter, r *http.Request) {
 		sse.WriteEvent(w, "error", map[string]string{"message": syncArtifactsClientMessage})
 		return
 	}
+}
+
+func (s *apiServer) handleSyncSkillZip(w http.ResponseWriter, r *http.Request) {
+	session, ok := s.beginSessionUse(w, r.PathValue("sessionId"))
+	if !ok {
+		return
+	}
+	defer s.manager.EndUse(session.ID)
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 2<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "读取请求体失败")
+		return
+	}
+	status, responseBody, err := s.proxyJSONResponse(
+		r,
+		http.MethodPost,
+		joinAgentURL(session.AgentURL, "/skills/sync-zip"),
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "同步 Skill 包代理失败")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(responseBody)
 }
 
 func (s *apiServer) handleListFiles(w http.ResponseWriter, r *http.Request) {

@@ -5,13 +5,19 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.agenthub.sandbox.client.dto.SkillZipSyncRequest;
+import com.agenthub.sandbox.client.dto.SkillZipSyncResult;
 import com.agenthub.sandbox.client.dto.SandboxEvent;
 import com.agenthub.sandbox.client.dto.SandboxFileItem;
 import com.agenthub.sandbox.config.SandboxProperties;
+import com.sun.net.httpserver.HttpServer;
+import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -121,5 +127,58 @@ class HttpSandboxClientTest {
         HttpSandboxClient client = new HttpSandboxClient(properties, httpClient);
 
         assertThat(client.sessionExists("sbx_unhealthy")).isFalse();
+    }
+
+    @Test
+    void shouldSyncSkillZipsWithBearerTokenAndBody() throws Exception {
+        AtomicReference<String> capturedMethod = new AtomicReference<>();
+        AtomicReference<String> capturedPath = new AtomicReference<>();
+        AtomicReference<String> capturedAuthorization = new AtomicReference<>();
+        AtomicReference<String> capturedBody = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            capturedMethod.set(exchange.getRequestMethod());
+            capturedPath.set(exchange.getRequestURI().getPath());
+            capturedAuthorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            capturedBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = """
+                    {"ok":true,"skills":[{"skillId":6,"skillKey":"docx","targetDir":"/workspace/skills/docx","archivePath":"/tmp/docx.zip","fileCount":3,"totalBytes":128}]}
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            SandboxProperties properties = new SandboxProperties();
+            properties.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            properties.setInternalToken("token");
+            HttpSandboxClient client = new HttpSandboxClient(properties);
+            String sha256 = "a".repeat(64);
+            SkillZipSyncRequest request = new SkillZipSyncRequest(List.of(
+                    new SkillZipSyncRequest.Skill(
+                            6L,
+                            "docx",
+                            "docx",
+                            "https://minio.example.com/docx.zip",
+                            sha256,
+                            "/workspace/skills/docx"
+                    )
+            ));
+
+            SkillZipSyncResult result = client.syncSkillZips("sbx_1", request);
+
+            assertThat(result.ok()).isTrue();
+            assertThat(result.skills()).hasSize(1);
+            assertThat(result.skills().getFirst().archivePath()).isEqualTo("/tmp/docx.zip");
+            assertThat(capturedMethod.get()).isEqualTo("POST");
+            assertThat(capturedPath.get()).isEqualTo("/internal/sandbox/sessions/sbx_1/skills/sync-zip");
+            assertThat(capturedAuthorization.get()).isEqualTo("Bearer token");
+            assertThat(capturedBody.get()).isEqualTo("{\"skills\":[{\"skillId\":6,\"skillKey\":\"docx\",\"name\":\"docx\",\"zipDownloadUrl\":\"https://minio.example.com/docx.zip\",\"zipSha256\":\""
+                    + sha256 + "\",\"targetDir\":\"/workspace/skills/docx\"}]}");
+        } finally {
+            server.stop(0);
+        }
     }
 }

@@ -546,6 +546,65 @@ func TestWriteFileProxiesAppendModeToGuest(t *testing.T) {
 	}
 }
 
+func TestSyncSkillZipProxiesBodyToGuest(t *testing.T) {
+	requestBody := `{"skills":[{"skillId":6,"skillKey":"docx","targetDir":"/workspace/skills/docx"}]}`
+	var guestBody string
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/skills/sync-zip" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("ReadAll() error = %v", err)
+		}
+		guestBody = string(data)
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(`{"ok":true,"skills":[{"skillId":6,"skillKey":"docx","targetDir":"/workspace/skills/docx"}]}`))
+	}))
+	defer guest.Close()
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	router := NewRouterWithManager(manager)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/internal/sandbox/sessions/"+session.ID+"/skills/sync-zip",
+		strings.NewReader(requestBody))
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if guestBody != requestBody {
+		t.Fatalf("guest body = %s, want %s", guestBody, requestBody)
+	}
+	if !strings.Contains(rec.Body.String(), `"ok":true`) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
+func TestSyncSkillZipReturnsNotFoundWhenSessionMissing(t *testing.T) {
+	manager := NewSessionManager(&fakeVMFactory{}, 1, 5*time.Minute)
+	router := NewRouterWithManager(manager)
+	req := httptest.NewRequest(http.MethodPost,
+		"/internal/sandbox/sessions/sbx_missing/skills/sync-zip",
+		strings.NewReader(`{"skills":[]}`))
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("Content-Type = %q", rec.Header().Get("Content-Type"))
+	}
+}
+
 func TestWriteFileSyncsArtifactsAfterSuccessfulArtifactWrite(t *testing.T) {
 	artifactSHA := sha256Hex("hello")
 	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

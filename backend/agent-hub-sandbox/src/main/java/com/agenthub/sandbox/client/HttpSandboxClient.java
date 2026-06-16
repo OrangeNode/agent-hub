@@ -8,6 +8,8 @@ import com.agenthub.sandbox.client.dto.ExecSandboxRequest;
 import com.agenthub.sandbox.client.dto.SandboxArtifactItem;
 import com.agenthub.sandbox.client.dto.SandboxEvent;
 import com.agenthub.sandbox.client.dto.SandboxFileItem;
+import com.agenthub.sandbox.client.dto.SkillZipSyncRequest;
+import com.agenthub.sandbox.client.dto.SkillZipSyncResult;
 import com.agenthub.sandbox.config.SandboxProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -176,6 +178,26 @@ public class HttpSandboxClient implements SandboxClient {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "写入沙箱文件被中断");
         } catch (IOException exception) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "写入沙箱文件失败");
+        }
+    }
+
+    @Override
+    public SkillZipSyncResult syncSkillZips(String sandboxSessionId, SkillZipSyncRequest request) {
+        try {
+            String body = OBJECT_MAPPER.writeValueAsString(request);
+            HttpRequest httpRequest = requestBuilder("/internal/sandbox/sessions/"
+                    + encodePath(sandboxSessionId) + "/skills/sync-zip")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .build();
+            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+            requireSuccess(response.statusCode(), "同步 Skill 包到沙箱失败");
+            return OBJECT_MAPPER.readValue(response.body(), SkillZipSyncResult.class);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "同步 Skill 包到沙箱被中断");
+        } catch (IOException exception) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "同步 Skill 包到沙箱失败");
         }
     }
 

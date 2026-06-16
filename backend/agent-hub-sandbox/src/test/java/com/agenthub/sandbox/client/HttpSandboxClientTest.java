@@ -134,12 +134,14 @@ class HttpSandboxClientTest {
         AtomicReference<String> capturedMethod = new AtomicReference<>();
         AtomicReference<String> capturedPath = new AtomicReference<>();
         AtomicReference<String> capturedAuthorization = new AtomicReference<>();
+        AtomicReference<String> capturedContentType = new AtomicReference<>();
         AtomicReference<String> capturedBody = new AtomicReference<>();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
             capturedMethod.set(exchange.getRequestMethod());
-            capturedPath.set(exchange.getRequestURI().getPath());
+            capturedPath.set(exchange.getRequestURI().getRawPath());
             capturedAuthorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
+            capturedContentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
             capturedBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             byte[] response = """
                     {"ok":true,"skills":[{"skillId":6,"skillKey":"docx","targetDir":"/workspace/skills/docx","archivePath":"/tmp/docx.zip","fileCount":3,"totalBytes":128}]}
@@ -167,14 +169,15 @@ class HttpSandboxClientTest {
                     )
             ));
 
-            SkillZipSyncResult result = client.syncSkillZips("sbx_1", request);
+            SkillZipSyncResult result = client.syncSkillZips("sbx 1/docx", request);
 
             assertThat(result.ok()).isTrue();
             assertThat(result.skills()).hasSize(1);
             assertThat(result.skills().getFirst().archivePath()).isEqualTo("/tmp/docx.zip");
             assertThat(capturedMethod.get()).isEqualTo("POST");
-            assertThat(capturedPath.get()).isEqualTo("/internal/sandbox/sessions/sbx_1/skills/sync-zip");
+            assertThat(capturedPath.get()).isEqualTo("/internal/sandbox/sessions/sbx%201%2Fdocx/skills/sync-zip");
             assertThat(capturedAuthorization.get()).isEqualTo("Bearer token");
+            assertThat(capturedContentType.get()).isEqualTo("application/json; charset=utf-8");
             assertThat(capturedBody.get()).isEqualTo("{\"skills\":[{\"skillId\":6,\"skillKey\":\"docx\",\"name\":\"docx\",\"zipDownloadUrl\":\"https://minio.example.com/docx.zip\",\"zipSha256\":\""
                     + sha256 + "\",\"targetDir\":\"/workspace/skills/docx\"}]}");
         } finally {

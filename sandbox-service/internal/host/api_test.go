@@ -587,8 +587,8 @@ func TestSyncSkillZipProxiesBodyToGuest(t *testing.T) {
 	}
 }
 
-func TestSyncSkillZipProxiesLargeBodyWithoutTruncating(t *testing.T) {
-	requestBody := []byte(`{"skills":[{"skillId":6,"skillKey":"docx","payload":"` + strings.Repeat("a", (2<<20)+1) + `"}]}`)
+func TestSyncSkillZipProxiesLargeBodyAtLimitWithoutTruncating(t *testing.T) {
+	requestBody := skillZipSyncBodyWithTotalSize(maxSkillZipSyncRequestBytes)
 	var guestBody []byte
 	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/skills/sync-zip" {
@@ -622,6 +622,37 @@ func TestSyncSkillZipProxiesLargeBodyWithoutTruncating(t *testing.T) {
 	}
 	if !bytes.Equal(guestBody, requestBody) {
 		t.Fatalf("guest body length = %d, want %d", len(guestBody), len(requestBody))
+	}
+}
+
+func TestSyncSkillZipRejectsOversizedBodyWithoutCallingGuest(t *testing.T) {
+	guestCalled := false
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		guestCalled = true
+	}))
+	defer guest.Close()
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	router := NewRouterWithManager(manager)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/internal/sandbox/sessions/"+session.ID+"/skills/sync-zip",
+		bytes.NewReader(skillZipSyncBodyWithTotalSize(maxSkillZipSyncRequestBytes+1)))
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if guestCalled {
+		t.Fatal("guest should not be called when body is oversized")
+	}
+	if !strings.Contains(rec.Body.String(), "请求体超过大小限制") {
+		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 
@@ -865,6 +896,16 @@ func postJSON(t *testing.T, router http.Handler, path string, body string) *http
 		t.Fatalf("POST %s status = %d, body = %s", path, rec.Code, rec.Body.String())
 	}
 	return rec
+}
+
+func skillZipSyncBodyWithTotalSize(size int) []byte {
+	prefix := `{"skills":[{"skillId":6,"skillKey":"docx","payload":"`
+	suffix := `"}]}`
+	payloadSize := size - len(prefix) - len(suffix)
+	if payloadSize < 0 {
+		payloadSize = 0
+	}
+	return []byte(prefix + strings.Repeat("a", payloadSize) + suffix)
 }
 
 func sha256Hex(content string) string {

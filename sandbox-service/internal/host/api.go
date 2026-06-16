@@ -22,10 +22,11 @@ import (
 )
 
 const (
-	defaultArtifactPath = "/workspace/artifacts"
-	defaultContentType  = "application/octet-stream"
-	maxArtifactBytes    = 10 * 1024 * 1024
-	guestHealthTimeout  = 2 * time.Second
+	defaultArtifactPath         = "/workspace/artifacts"
+	defaultContentType          = "application/octet-stream"
+	maxArtifactBytes            = 10 * 1024 * 1024
+	maxSkillZipSyncRequestBytes = 2 * 1024 * 1024
+	guestHealthTimeout          = 2 * time.Second
 )
 
 const (
@@ -257,9 +258,13 @@ func (s *apiServer) handleSyncSkillZip(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.manager.EndUse(session.ID)
 
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxSkillZipSyncRequestBytes+1))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "读取请求体失败")
+		return
+	}
+	if len(body) > maxSkillZipSyncRequestBytes {
+		writeError(w, http.StatusRequestEntityTooLarge, "Skill 包同步请求体超过大小限制")
 		return
 	}
 	status, responseBody, err := s.proxyJSONResponse(

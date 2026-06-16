@@ -262,13 +262,14 @@ class ChatServiceImplTest {
         SandboxClient sandboxClient = mock(SandboxClient.class);
         ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
         LlmClient llmClient = mock(LlmClient.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
         ChatServiceImpl service = new ChatServiceImpl(
                 conversationMapper,
                 messageMapper,
                 modelService,
                 new ConversationTitleService(),
                 transactionTemplate(),
-                new RecordingSseEventSender(),
+                sender,
                 attachmentService,
                 null,
                 contextBuilder(messageMapper, attachmentService, llmClient),
@@ -299,8 +300,18 @@ class ChatServiceImplTest {
                 eq("skill-packages/docx.zip"),
                 eq(Duration.ofMinutes(10))
         );
-        inOrder.verify(sandboxClient).syncSkillZips(eq("sbx_1"), any(SkillZipSyncRequest.class));
+        ArgumentCaptor<SkillZipSyncRequest> requestCaptor = ArgumentCaptor.forClass(SkillZipSyncRequest.class);
+        inOrder.verify(sandboxClient).syncSkillZips(eq("sbx_1"), requestCaptor.capture());
         inOrder.verify(llmClient).stream(any(LlmStreamRequest.class), any());
+
+        assertThat(requestCaptor.getValue().skills())
+                .singleElement()
+                .satisfies(skill -> {
+                    assertThat(skill.skillKey()).isEqualTo("docx");
+                    assertThat(skill.zipSha256()).isEqualTo("a".repeat(64));
+                    assertThat(skill.targetDir()).isEqualTo("/workspace/skills/docx");
+                    assertThat(skill.zipDownloadUrl()).isEqualTo("https://storage.example.com/skill-packages/docx.zip");
+                });
     }
 
     @Test
@@ -314,13 +325,14 @@ class ChatServiceImplTest {
         SandboxClient sandboxClient = mock(SandboxClient.class);
         ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
         LlmClient llmClient = mock(LlmClient.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
         ChatServiceImpl service = new ChatServiceImpl(
                 conversationMapper,
                 messageMapper,
                 modelService,
                 new ConversationTitleService(),
                 transactionTemplate(),
-                new RecordingSseEventSender(),
+                sender,
                 attachmentService,
                 null,
                 contextBuilder(messageMapper, attachmentService, llmClient),
@@ -353,6 +365,60 @@ class ChatServiceImplTest {
                         && message.getErrorMessage() != null
                         && message.getErrorMessage().contains("同步 Skill 包到沙箱失败")
         ));
+        assertThat(sender.eventTypes()).contains(SseEventType.ERROR, SseEventType.DONE);
+        assertThat(sender.completed).isTrue();
+    }
+
+    @Test
+    void shouldFailAssistantMessageAndSkipSandboxSyncWhenSkillPackageMetadataIsMissing() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        SkillRuntimeService skillRuntimeService = mock(SkillRuntimeService.class);
+        SandboxSessionService sandboxSessionService = mock(SandboxSessionService.class);
+        SandboxClient sandboxClient = mock(SandboxClient.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        LlmClient llmClient = mock(LlmClient.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                sender,
+                attachmentService,
+                null,
+                contextBuilder(messageMapper, attachmentService, llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                null,
+                null,
+                skillRuntimeService,
+                sandboxSessionService,
+                sandboxClient,
+                objectStorageClient
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(), List.of(), 1500)).thenReturn(List.of());
+        when(skillRuntimeService.buildRuntimeContext(null, List.of(6L)))
+                .thenReturn(skillContextWithDocxPackage(" "));
+
+        service.stream(7L, 100L, 10L, null, "用 docx 帮我写", false, List.of(), List.of(), List.of(6L));
+
+        verify(sandboxClient, never()).syncSkillZips(any(), any());
+        verify(llmClient, never()).stream(any(), any());
+        verify(messageMapper).updateById(argThat((ChatMessage message) ->
+                "FAILED".equals(message.getStatus())
+                        && message.getErrorMessage() != null
+                        && message.getErrorMessage().contains("Skill 6(docx)")
+                        && message.getErrorMessage().contains("zipSha256")
+        ));
+        assertThat(sender.eventTypes()).contains(SseEventType.ERROR, SseEventType.DONE);
+        assertThat(sender.completed).isTrue();
     }
 
     @Test
@@ -411,6 +477,69 @@ class ChatServiceImplTest {
                 .contains("已绑定以下 Skill")
                 .contains("Skill ID：11")
                 .doesNotContain("Skill ID：10");
+        verify(skillRuntimeService).buildRuntimeContext(1L, List.of(10L));
+    }
+
+    @Test
+    void shouldSyncBoundSkillZipsBeforeLlmStreamForBusinessAgent() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        AgentService agentService = mock(AgentService.class);
+        SkillRuntimeService skillRuntimeService = mock(SkillRuntimeService.class);
+        SandboxSessionService sandboxSessionService = mock(SandboxSessionService.class);
+        SandboxClient sandboxClient = mock(SandboxClient.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        LlmClient llmClient = mock(LlmClient.class);
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                new RecordingSseEventSender(),
+                attachmentService,
+                agentService,
+                contextBuilder(messageMapper, attachmentService, llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                null,
+                null,
+                skillRuntimeService,
+                sandboxSessionService,
+                sandboxClient,
+                objectStorageClient
+        );
+        ChatConversation conversation = conversation(100L, 7L, "ACTIVE");
+        conversation.setAgentKey("official-writing");
+        when(conversationMapper.selectById(100L)).thenReturn(conversation);
+        when(agentService.requireEnabledRuntimeConfig("official-writing")).thenReturn(new AgentRuntimeConfig(
+                1L,
+                "official-writing",
+                "公文写作 Agent",
+                "你是一个公文写作助手。",
+                10L
+        ));
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(), List.of(), 1500)).thenReturn(List.of());
+        when(skillRuntimeService.buildRuntimeContext(1L, List.of(10L))).thenReturn(skillContextWithDocxPackage());
+        when(sandboxSessionService.ensureSession(7L, 100L)).thenReturn("sbx_1");
+        when(objectStorageClient.presignGet("agent-hub", "skill-packages/docx.zip", Duration.ofMinutes(10)))
+                .thenReturn("https://storage.example.com/skill-packages/docx.zip");
+
+        service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of(), List.of(10L));
+
+        InOrder inOrder = inOrder(sandboxSessionService, objectStorageClient, sandboxClient, llmClient);
+        inOrder.verify(sandboxSessionService).ensureSession(7L, 100L);
+        inOrder.verify(objectStorageClient).presignGet(
+                eq("agent-hub"),
+                eq("skill-packages/docx.zip"),
+                eq(Duration.ofMinutes(10))
+        );
+        inOrder.verify(sandboxClient).syncSkillZips(eq("sbx_1"), any(SkillZipSyncRequest.class));
+        inOrder.verify(llmClient).stream(any(LlmStreamRequest.class), any());
         verify(skillRuntimeService).buildRuntimeContext(1L, List.of(10L));
     }
 
@@ -1389,6 +1518,10 @@ class ChatServiceImplTest {
     }
 
     private SkillRuntimeContext skillContextWithDocxPackage() {
+        return skillContextWithDocxPackage("a".repeat(64));
+    }
+
+    private SkillRuntimeContext skillContextWithDocxPackage(String zipSha256) {
         return new SkillRuntimeContext(
                 "已选择以下 Skill。\nsandbox 路径：/workspace/skills/docx",
                 List.of(6L),
@@ -1398,7 +1531,7 @@ class ChatServiceImplTest {
                         "DOCX 文档",
                         "agent-hub",
                         "skill-packages/docx.zip",
-                        "a".repeat(64)
+                        zipSha256
                 ))
         );
     }

@@ -37,6 +37,7 @@ import com.agenthub.sandbox.client.dto.SkillZipSyncRequest;
 import com.agenthub.sandbox.service.SandboxSessionService;
 import com.agenthub.sandbox.service.SandboxToolService;
 import com.agenthub.skill.service.SkillRuntimeContext;
+import com.agenthub.skill.service.SkillRuntimePackage;
 import com.agenthub.skill.service.SkillRuntimeService;
 import com.agenthub.storage.attachment.dto.AttachmentItem;
 import com.agenthub.storage.attachment.dto.AttachmentReference;
@@ -839,6 +840,7 @@ public class ChatServiceImpl implements ChatService {
         if (skillContext == null || skillContext.packages().isEmpty()) {
             return;
         }
+        skillContext.packages().forEach(this::requireSyncableSkillPackage);
         if (sandboxSessionService == null || sandboxClient == null || objectStorageClient == null) {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "沙箱同步服务不可用");
         }
@@ -854,6 +856,35 @@ public class ChatServiceImpl implements ChatService {
                 ))
                 .toList();
         sandboxClient.syncSkillZips(sandboxSessionId, new SkillZipSyncRequest(skills));
+    }
+
+    private void requireSyncableSkillPackage(SkillRuntimePackage skill) {
+        if (skill == null) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "Skill 包元数据缺失，无法同步到沙箱");
+        }
+        if (!hasText(skill.skillKey())) {
+            throw missingSkillPackageField(skill, "skillKey");
+        }
+        if (!hasText(skill.bucketName())) {
+            throw missingSkillPackageField(skill, "bucketName");
+        }
+        if (!hasText(skill.objectKey())) {
+            throw missingSkillPackageField(skill, "objectKey");
+        }
+        if (!hasText(skill.zipSha256())) {
+            throw missingSkillPackageField(skill, "zipSha256");
+        }
+    }
+
+    private BusinessException missingSkillPackageField(SkillRuntimePackage skill, String fieldName) {
+        return new BusinessException(ErrorCode.INTERNAL_ERROR,
+                "Skill " + skillDisplayName(skill) + " 缺少 " + fieldName + "，无法同步到沙箱");
+    }
+
+    private String skillDisplayName(SkillRuntimePackage skill) {
+        String display = hasText(skill.skillKey()) ? skill.skillKey() : skill.name();
+        String id = skill.skillId() == null ? "未知" : String.valueOf(skill.skillId());
+        return hasText(display) ? id + "(" + display.strip() + ")" : id;
     }
 
     private LlmStreamRequest buildRequest(

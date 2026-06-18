@@ -34,6 +34,28 @@ class CommandPolicyTest {
     }
 
     @Test
+    void shouldAllowDocumentToolchainAndProbeCommands() {
+        assertThatCode(() -> policy.validate("dotnet --info", "/workspace", 30))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate("pandoc --version", "/workspace", 30))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate("soffice --version", "/workspace", 30))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate("libreoffice --version", "/workspace", 30))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate("which dotnet", "/workspace", 30))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate("command -v dotnet", "/workspace", 30))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate("test -f /workspace/skills/docx/scripts/docx", "/workspace", 30))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate("file /workspace/artifacts/report.docx", "/workspace", 30))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate("stat /workspace/artifacts/report.docx", "/workspace", 30))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
     void shouldNormalizeRelativeWorkspacePath() {
         assertThat(policy.validateWorkspacePath("reports/out.txt", "路径不在允许访问范围内"))
                 .isEqualTo("/workspace/reports/out.txt");
@@ -78,6 +100,14 @@ class CommandPolicyTest {
     @Test
     void shouldRejectUnknownShellEntrypoint() {
         assertThatThrownBy(() -> policy.validate("zsh -c ls", "/workspace", 30))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.COMMAND_DENIED);
+    }
+
+    @Test
+    void shouldRejectCommandBuiltinWhenItExecutesCommands() {
+        assertThatThrownBy(() -> policy.validate("command sh -lc \"echo ok\"", "/workspace", 30))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(ErrorCode.COMMAND_DENIED);

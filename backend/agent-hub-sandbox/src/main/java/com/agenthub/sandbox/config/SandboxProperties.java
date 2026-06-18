@@ -8,7 +8,7 @@ public class SandboxProperties {
     private String baseUrl = "http://127.0.0.1:8090";
     private String internalToken = "";
     private int commandMaxLength = 8192;
-    private int execTimeoutSeconds = 60;
+    private int execTimeoutSeconds = 300;
 
     public String getBaseUrl() {
         return baseUrl;

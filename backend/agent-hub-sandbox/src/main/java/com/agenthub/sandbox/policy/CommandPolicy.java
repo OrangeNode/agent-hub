@@ -17,6 +17,7 @@ public class CommandPolicy {
     private static final String ARTIFACTS_DIR = "/workspace/artifacts";
     private static final String OUTPUT_DIR = "/workspace/output";
     private static final Pattern COMMAND_TOKEN_SEPARATOR = Pattern.compile("[\\s;|&<>\"'`$(){}\\[\\],]+");
+    private static final Pattern COMMAND_LOOKUP_NAME = Pattern.compile("[A-Za-z0-9._+-]+");
     private static final List<String> DANGEROUS_KEYWORDS = List.of(
             "shutdown", "reboot", "poweroff", "halt", "mount", "umount",
             "modprobe", "insmod", "sysctl", "sudo", "su", "systemctl", "service"
@@ -25,7 +26,8 @@ public class CommandPolicy {
             "sh", "bash", "python", "python3", "node", "npm", "npx", "pip", "pip3",
             "go", "java", "javac", "mvn", "gradle", "cat", "ls", "pwd", "find",
             "grep", "sed", "awk", "head", "tail", "wc", "sort", "uniq", "printf",
-            "mkdir", "cp", "mv", "rm", "touch", "chmod", "echo", "zip", "unzip", "tar"
+            "mkdir", "cp", "mv", "rm", "touch", "chmod", "echo", "zip", "unzip", "tar",
+            "dotnet", "pandoc", "soffice", "libreoffice", "which", "test", "file", "stat"
     );
 
     private final int maxCommandLength;
@@ -50,9 +52,27 @@ public class CommandPolicy {
         rejectDangerousContent(command);
         String[] parts = command.strip().split("\\s+");
         String entrypoint = parts.length == 0 ? "" : parts[0];
-        if (entrypoint.contains("/") || entrypoint.contains("\\") || !ALLOWED_COMMANDS.contains(entrypoint)) {
+        if (entrypoint.contains("/") || entrypoint.contains("\\")
+                || (!ALLOWED_COMMANDS.contains(entrypoint) && !isAllowedCommandLookup(parts))) {
             throw new BusinessException(ErrorCode.COMMAND_DENIED, "命令未通过安全校验");
         }
+    }
+
+    private boolean isAllowedCommandLookup(String[] parts) {
+        if (parts.length < 3 || !"command".equals(parts[0])) {
+            return false;
+        }
+        if (!"-v".equals(parts[1]) && !"-V".equals(parts[1])) {
+            return false;
+        }
+        for (int index = 2; index < parts.length; index++) {
+            String name = removeQuotes(parts[index]);
+            if (name.isBlank() || name.startsWith("-") || name.contains("/") || name.contains("\\")
+                    || !COMMAND_LOOKUP_NAME.matcher(name).matches()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void rejectDangerousContent(String command) {

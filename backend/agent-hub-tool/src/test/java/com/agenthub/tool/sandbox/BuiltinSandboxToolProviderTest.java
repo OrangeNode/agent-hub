@@ -133,7 +133,7 @@ class BuiltinSandboxToolProviderTest {
                 eq("session-1"),
                 eq("echo ok"),
                 eq("/workspace"),
-                eq(60),
+                eq(300),
                 any(Consumer.class)
         );
     }
@@ -155,7 +155,7 @@ class BuiltinSandboxToolProviderTest {
         verify(sandboxToolService).exec(eq(7L), eq(100L), eq("session-1"), eq("pwd"), eq("/workspace"),
                 eq(12), any(Consumer.class));
         verify(sandboxToolService).exec(eq(7L), eq(100L), eq("session-1"), eq("ls"), eq("/workspace"),
-                eq(60), any(Consumer.class));
+                eq(300), any(Consumer.class));
     }
 
     @Test

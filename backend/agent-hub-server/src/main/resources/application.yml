@@ -37,6 +37,8 @@ agent-hub:
   sandbox:
     base-url: ${AGENT_HUB_SANDBOX_BASE_URL:http://172.16.112.183:8090}
     internal-token: ${AGENT_HUB_SANDBOX_INTERNAL_TOKEN:dev-sandbox-token}
+    command-max-length: ${AGENT_HUB_SANDBOX_COMMAND_MAX_LENGTH:8192}
+    exec-timeout-seconds: ${AGENT_HUB_SANDBOX_EXEC_TIMEOUT_SECONDS:300}
   logging:
     path: logs/agent-hub
     access-log-enabled: true

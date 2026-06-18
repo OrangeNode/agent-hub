@@ -56,50 +56,58 @@ func (p CommandPolicy) Validate(req CommandRequest) error {
 	if hasPathSeparator(argv[0]) {
 		return errors.New("命令入口不允许包含路径")
 	}
-	if !allowedCommandNames[argv[0]] {
+	if !allowedCommandNames[argv[0]] && !isAllowedCommandLookup(argv) {
 		return errors.New("命令不在允许列表中")
 	}
 	return nil
 }
 
 var allowedCommandNames = map[string]bool{
-	"sh":      true,
-	"bash":    true,
-	"python":  true,
-	"python3": true,
-	"node":    true,
-	"npm":     true,
-	"npx":     true,
-	"pip":     true,
-	"pip3":    true,
-	"go":      true,
-	"java":    true,
-	"javac":   true,
-	"mvn":     true,
-	"gradle":  true,
-	"ls":      true,
-	"cat":     true,
-	"pwd":     true,
-	"find":    true,
-	"grep":    true,
-	"sed":     true,
-	"awk":     true,
-	"head":    true,
-	"tail":    true,
-	"wc":      true,
-	"sort":    true,
-	"uniq":    true,
-	"printf":  true,
-	"mkdir":   true,
-	"cp":      true,
-	"mv":      true,
-	"rm":      true,
-	"touch":   true,
-	"chmod":   true,
-	"echo":    true,
-	"zip":     true,
-	"unzip":   true,
-	"tar":     true,
+	"sh":          true,
+	"bash":        true,
+	"python":      true,
+	"python3":     true,
+	"node":        true,
+	"npm":         true,
+	"npx":         true,
+	"pip":         true,
+	"pip3":        true,
+	"go":          true,
+	"java":        true,
+	"javac":       true,
+	"mvn":         true,
+	"gradle":      true,
+	"ls":          true,
+	"cat":         true,
+	"pwd":         true,
+	"find":        true,
+	"grep":        true,
+	"sed":         true,
+	"awk":         true,
+	"head":        true,
+	"tail":        true,
+	"wc":          true,
+	"sort":        true,
+	"uniq":        true,
+	"printf":      true,
+	"mkdir":       true,
+	"cp":          true,
+	"mv":          true,
+	"rm":          true,
+	"touch":       true,
+	"chmod":       true,
+	"echo":        true,
+	"zip":         true,
+	"unzip":       true,
+	"tar":         true,
+	"dotnet":      true,
+	"pandoc":      true,
+	"soffice":     true,
+	"libreoffice": true,
+	"which":       true,
+	"test":        true,
+	"file":        true,
+	"stat":        true,
 }
 
 func parseSimpleCommand(command string) ([]string, error) {
@@ -108,6 +116,37 @@ func parseSimpleCommand(command string) ([]string, error) {
 		return nil, errors.New("命令不能为空")
 	}
 	return argv, nil
+}
+
+func isAllowedCommandLookup(argv []string) bool {
+	if len(argv) < 3 || argv[0] != "command" {
+		return false
+	}
+	if argv[1] != "-v" && argv[1] != "-V" {
+		return false
+	}
+	for _, name := range argv[2:] {
+		name = strings.Trim(name, `"'`)
+		if name == "" || strings.HasPrefix(name, "-") || hasPathSeparator(name) || !isCommandLookupName(name) {
+			return false
+		}
+	}
+	return true
+}
+
+func isCommandLookupName(value string) bool {
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			continue
+		}
+		switch r {
+		case '.', '_', '+', '-':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func hasDangerousPath(value string) bool {

@@ -22,6 +22,26 @@ func TestValidateCommandAllowsCommonCommands(t *testing.T) {
 	}
 }
 
+func TestValidateCommandAllowsDocumentToolchainAndProbeCommands(t *testing.T) {
+	policy := NewCommandPolicy(200, 60)
+	for _, command := range []string{
+		"dotnet --info",
+		"pandoc --version",
+		"soffice --version",
+		"libreoffice --version",
+		"which dotnet",
+		"command -v dotnet",
+		"test -f /workspace/skills/docx/scripts/docx",
+		"file /workspace/artifacts/report.docx",
+		"stat /workspace/artifacts/report.docx",
+	} {
+		req := CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30}
+		if err := policy.Validate(req); err != nil {
+			t.Fatalf("Validate(%q) error = %v", command, err)
+		}
+	}
+}
+
 func TestValidateCommandRejectsBlankCommand(t *testing.T) {
 	policy := NewCommandPolicy(200, 60)
 	for _, command := range []string{"", "   ", "\t\n"} {
@@ -136,6 +156,14 @@ func TestValidateCommandRejectsUnknownShellEntrypoint(t *testing.T) {
 		if err == nil {
 			t.Fatalf("expected %q to be rejected", command)
 		}
+	}
+}
+
+func TestValidateCommandRejectsCommandBuiltinWhenItExecutesCommands(t *testing.T) {
+	policy := NewCommandPolicy(200, 60)
+	err := policy.Validate(CommandRequest{Command: `command sh -lc "echo ok"`, WorkingDir: "/workspace", TimeoutSeconds: 30})
+	if err == nil {
+		t.Fatal("expected command builtin execution to be rejected")
 	}
 }
 

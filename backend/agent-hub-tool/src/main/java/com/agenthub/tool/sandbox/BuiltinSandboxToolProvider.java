@@ -20,7 +20,7 @@ import org.springframework.stereotype.Component;
 public class BuiltinSandboxToolProvider implements ToolProvider {
 
     private static final String DEFAULT_WORKING_DIR = "/workspace";
-    private static final int DEFAULT_EXEC_TIMEOUT_SECONDS = 60;
+    private static final int DEFAULT_EXEC_TIMEOUT_SECONDS = 300;
     private static final int DEFAULT_READ_MAX_BYTES = 4096;
     private static final String DEFAULT_OUTPUT_PATH = "/workspace/artifacts/output.txt";
     private static final String DEFAULT_UPLOAD_PATH = "/workspace/input/upload.bin";

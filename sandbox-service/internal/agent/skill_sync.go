@@ -2,6 +2,7 @@ package agent
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -529,11 +530,13 @@ func (s *FileService) extractSkillZipFile(targetPath string, zipFile *zip.File, 
 	}
 	defer reader.Close()
 
-	output, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	bufferedReader := bufio.NewReader(reader)
+	mode := safeSkillZipFileMode(zipFile.FileInfo().Mode(), hasSkillZipShebang(bufferedReader))
+	output, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
 		return 0, err
 	}
-	copied, copyErr := io.Copy(output, io.LimitReader(reader, remainingBytes+1))
+	copied, copyErr := io.Copy(output, io.LimitReader(bufferedReader, remainingBytes+1))
 	closeErr := output.Close()
 	if copyErr != nil {
 		return copied, copyErr
@@ -544,7 +547,22 @@ func (s *FileService) extractSkillZipFile(targetPath string, zipFile *zip.File, 
 	if copied > remainingBytes {
 		return copied, errors.New("zip 包解压总大小超过限制")
 	}
+	if err := os.Chmod(targetPath, mode); err != nil {
+		return copied, err
+	}
 	return copied, nil
+}
+
+func safeSkillZipFileMode(mode os.FileMode, hasShebang bool) os.FileMode {
+	if mode&0o111 != 0 || hasShebang {
+		return 0o755
+	}
+	return 0o644
+}
+
+func hasSkillZipShebang(reader *bufio.Reader) bool {
+	prefix, err := reader.Peek(2)
+	return err == nil && string(prefix) == "#!"
 }
 
 func safeZipEntryPath(name string) (string, error) {

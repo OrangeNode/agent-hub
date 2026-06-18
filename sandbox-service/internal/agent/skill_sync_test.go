@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -43,6 +44,49 @@ func TestServerSyncSkillZipDownloadsAndExtracts(t *testing.T) {
 	assertPathMissing(t, filepath.Join(root, "skills", "demo-skill", "writing-skill"))
 	assertPathMissing(t, filepath.Join(root, "skills", "demo-skill", "unrelated"))
 	assertFileContent(t, filepath.Join(root, "skills", ".archives", "demo-skill.zip"), string(zipBytes))
+}
+
+func TestServerSyncSkillZipMarksShebangScriptsExecutable(t *testing.T) {
+	root := t.TempDir()
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	skillFile, err := writer.Create("SKILL.md")
+	if err != nil {
+		t.Fatalf("Create SKILL.md zip entry error = %v", err)
+	}
+	if _, err := skillFile.Write([]byte("# Demo")); err != nil {
+		t.Fatalf("Write SKILL.md zip entry error = %v", err)
+	}
+	scriptFile, err := writer.Create("scripts/docx")
+	if err != nil {
+		t.Fatalf("Create scripts/docx zip entry error = %v", err)
+	}
+	if _, err := scriptFile.Write([]byte("#!/usr/bin/env bash\necho ok\n")); err != nil {
+		t.Fatalf("Write scripts/docx zip entry error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close zip error = %v", err)
+	}
+
+	server := NewServer(NewExecutor(1024), NewFileService(root))
+	rec := postSkillZipSync(t, server, buffer.Bytes(), sha256Hex(buffer.Bytes()), "/workspace/skills/demo-skill")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if runtime.GOOS == "windows" {
+		if safeSkillZipFileMode(0, true)&0o111 == 0 {
+			t.Fatalf("safeSkillZipFileMode should mark shebang scripts executable")
+		}
+		return
+	}
+	info, err := os.Stat(filepath.Join(root, "skills", "demo-skill", "scripts", "docx"))
+	if err != nil {
+		t.Fatalf("Stat scripts/docx error = %v", err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("scripts/docx mode = %v, want executable bit", info.Mode().Perm())
+	}
 }
 
 func TestServerSyncSkillZipRejectsUnsafeEntries(t *testing.T) {

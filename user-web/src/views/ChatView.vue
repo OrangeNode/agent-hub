@@ -3002,8 +3002,13 @@ svg {
   height: 16px;
   flex: 0 0 auto;
   place-items: center;
+  padding: 0;
+  border: 0;
   border-radius: 999px;
+  background: transparent;
   color: #047857;
+  cursor: pointer;
+  font-family: Arial, Helvetica, sans-serif;
   font-size: 14px;
   line-height: 1;
 }

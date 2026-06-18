@@ -16,8 +16,8 @@ function canSend(items: UploadItem[]) {
 }
 
 function sendButtonDisabled(streaming: boolean, items: UploadItem[]) {
-  void items
-  return streaming
+  void streaming
+  return items.some((item) => item.status !== 'ready')
 }
 
 function previewSize(count: number) {
@@ -48,18 +48,18 @@ describe('聊天图片预览状态', () => {
     expect(canSend([{ id: '1', progress: 100, status: 'ready' }])).toBe(true)
   })
 
-  it('上传中或失败图片不禁用发送按钮但业务校验不允许发送', () => {
+  it('上传中或失败图片禁用发送按钮且业务校验不允许发送', () => {
     const items: UploadItem[] = [
       { id: '1', progress: 50, status: 'uploading' },
       { id: '2', progress: 100, status: 'failed' }
     ]
 
-    expect(sendButtonDisabled(false, items)).toBe(false)
+    expect(sendButtonDisabled(false, items)).toBe(true)
     expect(canSend(items)).toBe(false)
   })
 
-  it('流式响应中禁用发送按钮', () => {
-    expect(sendButtonDisabled(true, [{ id: '1', progress: 100, status: 'ready' }])).toBe(true)
+  it('流式响应中不禁用发送按钮以保留中止入口', () => {
+    expect(sendButtonDisabled(true, [{ id: '1', progress: 100, status: 'ready' }])).toBe(false)
   })
 
   it('不支持图片时菜单项禁用并展示原因', () => {

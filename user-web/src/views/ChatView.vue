@@ -16,7 +16,7 @@
       </div>
 
       <nav class="primary-nav" aria-label="主导航">
-        <button type="button" class="nav-item" @click="createConversation">
+        <button type="button" class="nav-item" @click="createConversation()">
           <span class="nav-icon">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M12 5v14M5 12h14" />
@@ -226,8 +226,19 @@
             @select="selectThinkingMode"
             @configure="thinkingConfigOpen = true"
           />
-          <button type="button" class="send-orb composer-send" :disabled="sendDisabled" @click="handleSend" aria-label="发送">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
+          <button
+            type="button"
+            class="send-orb composer-send"
+            :class="{ 'is-stopping': streaming }"
+            :disabled="sendButtonDisabled"
+            :aria-label="streaming ? '中止生成' : '发送'"
+            :title="streaming ? '中止生成' : '发送'"
+            @click="handleSend"
+          >
+            <svg v-if="streaming" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="5" y="5" width="14" height="14" rx="2.5" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" aria-hidden="true">
               <path d="M5 12h14M13 6l6 6-6 6" />
             </svg>
           </button>
@@ -324,7 +335,7 @@
               </div>
               <div
                 class="assistant-markdown"
-                v-html="renderAssistantMarkdown(messageItem.content || '正在生成回复...')"
+                v-html="renderAssistantMarkdown(assistantDisplayContent(messageItem))"
               />
               <div
                 v-if="shouldShowArtifactBundle(messageItem)"
@@ -479,8 +490,19 @@
               @select="selectThinkingMode"
               @configure="thinkingConfigOpen = true"
             />
-            <button type="button" class="send-orb composer-send" :disabled="sendDisabled" @click="handleSend" aria-label="发送">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
+            <button
+              type="button"
+              class="send-orb composer-send"
+              :class="{ 'is-stopping': streaming }"
+              :disabled="sendButtonDisabled"
+              :aria-label="streaming ? '中止生成' : '发送'"
+              :title="streaming ? '中止生成' : '发送'"
+              @click="handleSend"
+            >
+              <svg v-if="streaming" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="5" y="5" width="14" height="14" rx="2.5" />
+              </svg>
+              <svg v-else viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M5 12h14M13 6l6 6-6 6" />
               </svg>
             </button>
@@ -765,6 +787,84 @@ export function validateReuseImageCount(pendingCount: number, reuseCount: number
   }
 
   return null
+}
+
+export interface SendButtonDisabledState {
+  streaming: boolean
+  hasUploadingImage: boolean
+  hasFailedImage: boolean
+  canSubmitContent: boolean
+  imageInputBlocked: boolean
+}
+
+export function resolveSendButtonDisabled(state: SendButtonDisabledState) {
+  if (state.streaming) {
+    return false
+  }
+
+  return state.hasUploadingImage
+    || state.hasFailedImage
+    || !state.canSubmitContent
+    || state.imageInputBlocked
+}
+
+export interface StoppableAssistantMessageLike {
+  role: string
+  status?: string | null
+}
+
+export function findStoppableAssistantMessage<T extends StoppableAssistantMessageLike>(messages: T[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const messageItem = messages[index]
+    if (messageItem.role === 'assistant' && messageItem.status !== 'STOPPED') {
+      return messageItem
+    }
+  }
+
+  return undefined
+}
+
+export interface NewConversationState {
+  activeConversationId: number | null
+  activeAgentKey: string | null
+  activeAgentName: string
+  selectedSkillIds: number[]
+  prompt: string
+  workPanelOpen: boolean
+  artifactPreviewOpen: boolean
+  artifactPreview: unknown | null
+  selectedArtifactId: number | null
+  skillPickerOpen: boolean
+  historyImagePickerOpen: boolean
+  thinkingConfigOpen: boolean
+  openConversationMenuId: number | null
+  agentMenuOpen: boolean
+}
+
+export interface NewConversationResetOptions {
+  preserveAgent?: boolean
+}
+
+export function resolveNewConversationState(
+  state: NewConversationState,
+  options: NewConversationResetOptions = {}
+): NewConversationState {
+  return {
+    activeConversationId: null,
+    activeAgentKey: options.preserveAgent ? state.activeAgentKey : null,
+    activeAgentName: options.preserveAgent ? state.activeAgentName : '通用 Agent',
+    selectedSkillIds: [],
+    prompt: '',
+    workPanelOpen: false,
+    artifactPreviewOpen: false,
+    artifactPreview: null,
+    selectedArtifactId: null,
+    skillPickerOpen: false,
+    historyImagePickerOpen: false,
+    thinkingConfigOpen: false,
+    openConversationMenuId: null,
+    agentMenuOpen: false
+  }
 }
 </script>
 
@@ -1078,12 +1178,14 @@ const selectedReuseAttachments = computed(() => {
 })
 const composerImageCount = computed(() => pendingImages.value.length + selectedReuseAttachments.value.length)
 const canSubmitContent = computed(() => Boolean(prompt.value.trim()) || composerImageCount.value > 0)
-const sendDisabled = computed(() =>
-  streaming.value
-  || hasUploadingImage.value
-  || hasFailedImage.value
-  || !canSubmitContent.value
-  || (composerImageCount.value > 0 && !selectedModelItem.value?.imageInputSupported)
+const sendButtonDisabled = computed(() =>
+  resolveSendButtonDisabled({
+    streaming: streaming.value,
+    hasUploadingImage: hasUploadingImage.value,
+    hasFailedImage: hasFailedImage.value,
+    canSubmitContent: canSubmitContent.value,
+    imageInputBlocked: composerImageCount.value > 0 && !selectedModelItem.value?.imageInputSupported
+  })
 )
 const historyImageReuseDisabledReason = computed(() => {
   if (!selectedModelItem.value?.imageInputSupported) {
@@ -1234,18 +1336,41 @@ function ensureConversationMessages(conversationId: number) {
   return messageMap.value[conversationId]
 }
 
-function createConversation() {
-  // 如果当前已处于空聊天状态，不重复创建
-  if (activeConversationId.value === null) {
-    return
-  }
-  // 重置到空状态，让用户发送消息时才创建新对话
-  activeConversationId.value = null
-  workPanelOpen.value = false
-  selectedArtifactId.value = null
-  artifactPreview.value = null
-  artifactPreviewOpen.value = false
-  prompt.value = ''
+function createConversation(options: NewConversationResetOptions = {}) {
+  markCurrentAssistantStopped()
+  closeStream()
+
+  const nextState = resolveNewConversationState({
+    activeConversationId: activeConversationId.value,
+    activeAgentKey: activeAgentKey.value,
+    activeAgentName: activeAgentName.value,
+    selectedSkillIds: selectedSkillIds.value,
+    prompt: prompt.value,
+    workPanelOpen: workPanelOpen.value,
+    artifactPreviewOpen: artifactPreviewOpen.value,
+    artifactPreview: artifactPreview.value,
+    selectedArtifactId: selectedArtifactId.value,
+    skillPickerOpen: skillPickerOpen.value,
+    historyImagePickerOpen: historyImagePickerOpen.value,
+    thinkingConfigOpen: thinkingConfigOpen.value,
+    openConversationMenuId: openConversationMenuId.value,
+    agentMenuOpen: agentMenuOpen.value
+  }, options)
+
+  activeConversationId.value = nextState.activeConversationId
+  activeAgentKey.value = nextState.activeAgentKey
+  activeAgentName.value = nextState.activeAgentName
+  selectedSkillIds.value = nextState.selectedSkillIds
+  prompt.value = nextState.prompt
+  workPanelOpen.value = nextState.workPanelOpen
+  artifactPreviewOpen.value = nextState.artifactPreviewOpen
+  artifactPreview.value = nextState.artifactPreview as ChatArtifactContentRecord | null
+  selectedArtifactId.value = nextState.selectedArtifactId
+  skillPickerOpen.value = nextState.skillPickerOpen
+  historyImagePickerOpen.value = nextState.historyImagePickerOpen
+  thinkingConfigOpen.value = nextState.thinkingConfigOpen
+  openConversationMenuId.value = nextState.openConversationMenuId
+  agentMenuOpen.value = nextState.agentMenuOpen
   clearPendingImages()
   clearSelectedReuseAttachments()
 }
@@ -1388,7 +1513,7 @@ function selectAgent(agent: AgentOption) {
   activeAgentName.value = agent.name
   selectedSkillIds.value = []
   agentMenuOpen.value = false
-  createConversation()
+  createConversation({ preserveAgent: true })
 }
 
 function clearAgent() {
@@ -1795,6 +1920,14 @@ function copyMessage(content: string) {
   )
 }
 
+function assistantDisplayContent(messageItem: ChatMessageItem) {
+  if (messageItem.content) {
+    return messageItem.content
+  }
+
+  return messageItem.status === 'STOPPED' ? '已中止生成' : '正在生成回复...'
+}
+
 function toggleProcess(messageItem: ChatMessageItem) {
   messageItem.processExpanded = !messageItem.processExpanded
 }
@@ -1815,6 +1948,10 @@ function processStatusText(messageItem: ChatMessageItem) {
   const elapsedMs = reasoningElapsedMs(messageItem)
 
   if (elapsedMs === null) {
+    if (messageItem.status === 'STOPPED') {
+      return '已中止'
+    }
+
     return messageItem.status === 'STREAMING' ? '处理中' : '处理过程'
   }
 
@@ -1874,10 +2011,30 @@ function closeStream() {
   syncReasoningTimer()
 }
 
+function stopCurrentStream() {
+  markCurrentAssistantStopped()
+  closeStream()
+  void refreshActiveArtifacts()
+  void loadConversations()
+}
+
+function markCurrentAssistantStopped() {
+  if (!streaming.value) {
+    return
+  }
+
+  const assistantMessage = findStoppableAssistantMessage(currentMessages.value)
+  if (assistantMessage) {
+    finishReasoningTiming(assistantMessage)
+    assistantMessage.status = 'STOPPED'
+  }
+}
+
 function handleSend() {
   const trimmedPrompt = prompt.value.trim()
 
   if (streaming.value) {
+    stopCurrentStream()
     return
   }
 
@@ -2664,6 +2821,10 @@ svg {
   color: #ffffff;
 }
 
+.send-orb.is-stopping {
+  background: #2563eb;
+}
+
 .send-orb:disabled {
   cursor: not-allowed;
   opacity: 0.55;
@@ -2672,6 +2833,11 @@ svg {
 .send-orb svg {
   width: 18px;
   height: 18px;
+}
+
+.send-orb.is-stopping rect {
+  fill: currentColor;
+  stroke: none;
 }
 
 .pending-image-list {

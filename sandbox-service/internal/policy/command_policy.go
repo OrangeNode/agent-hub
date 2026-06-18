@@ -79,6 +79,7 @@ var allowedCommandNames = map[string]bool{
 	"gradle":      true,
 	"ls":          true,
 	"cat":         true,
+	"cd":          true,
 	"pwd":         true,
 	"find":        true,
 	"grep":        true,

@@ -42,6 +42,15 @@ func TestValidateCommandAllowsDocumentToolchainAndProbeCommands(t *testing.T) {
 	}
 }
 
+func TestValidateCommandAllowsSkillScriptFromSkillDirectory(t *testing.T) {
+	policy := NewCommandPolicy(300, 60)
+	command := "cd /workspace/skills/docx && ./scripts/docx build /workspace/artifacts/report.docx /workspace/artifacts/Document.cs"
+	req := CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30}
+	if err := policy.Validate(req); err != nil {
+		t.Fatalf("Validate(%q) error = %v", command, err)
+	}
+}
+
 func TestValidateCommandAllowsTmpExecutionPaths(t *testing.T) {
 	policy := NewCommandPolicy(300, 60)
 	for _, command := range []string{

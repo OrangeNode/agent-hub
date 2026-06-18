@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   buildControlRequest,
   buildOperationTitle,
+  buildPageQuery,
   buildRiskTagType,
   canSubmitOperation,
   expectedConfirmText,
   formatBytes,
   formatDurationSeconds,
+  normalizePageResult,
   requiresStrongConfirm
 } from '../src/views/sandbox-admin.helpers'
 
@@ -46,5 +48,25 @@ describe('Sandbox 运维辅助函数', () => {
     expect(buildOperationTitle('CLOSE_MISSING_RUNTIME')).toBe('关闭缺失运行态会话')
     expect(buildOperationTitle('REBUILD_WARM_POOL')).toBe('重建预热池')
     expect(buildOperationTitle('KILL_VM', 'fc-1')).toBe('终止 VM：fc-1')
+  })
+  it('应该把页码转换为后端列表查询参数', () => {
+    expect(buildPageQuery(1, 5)).toEqual({ limit: 5, offset: 0 })
+    expect(buildPageQuery(3, 5)).toEqual({ limit: 5, offset: 10 })
+    expect(buildPageQuery(0, 5)).toEqual({ limit: 5, offset: 0 })
+  })
+
+  it('应该兼容分页响应和旧数组响应', () => {
+    expect(normalizePageResult(['a', 'b'], 5, 0)).toEqual({
+      items: ['a', 'b'],
+      total: 2,
+      limit: 5,
+      offset: 0
+    })
+    expect(normalizePageResult({ items: ['a'], total: 8, limit: 5, offset: 5 }, 5, 5)).toEqual({
+      items: ['a'],
+      total: 8,
+      limit: 5,
+      offset: 5
+    })
   })
 })

@@ -1,6 +1,7 @@
 package com.agenthub.server.sandbox;
 
 import com.agenthub.common.api.ApiResponse;
+import com.agenthub.common.api.PageResult;
 import com.agenthub.sandbox.admin.dto.SandboxAdminArtifactItem;
 import com.agenthub.sandbox.admin.dto.SandboxAdminExecutionItem;
 import com.agenthub.sandbox.admin.dto.SandboxAdminSessionItem;
@@ -10,7 +11,6 @@ import com.agenthub.sandbox.admin.dto.SandboxOverview;
 import com.agenthub.sandbox.admin.dto.SandboxResourceSnapshot;
 import com.agenthub.sandbox.admin.service.SandboxAdminService;
 import com.agenthub.system.operationlog.annotation.OperationLog;
-import java.util.List;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -37,7 +37,7 @@ public class SandboxAdminController {
     }
 
     @GetMapping("/sessions")
-    public ApiResponse<List<SandboxAdminSessionItem>> sessions(
+    public ApiResponse<PageResult<SandboxAdminSessionItem>> sessions(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) Long conversationId,
             @RequestParam(required = false) String sandboxSessionId,
@@ -48,7 +48,7 @@ public class SandboxAdminController {
     }
 
     @GetMapping("/executions")
-    public ApiResponse<List<SandboxAdminExecutionItem>> executions(
+    public ApiResponse<PageResult<SandboxAdminExecutionItem>> executions(
             @RequestParam(required = false) Long conversationId,
             @RequestParam(required = false) Long sandboxSessionDbId,
             @RequestParam(required = false) String status,
@@ -59,7 +59,7 @@ public class SandboxAdminController {
     }
 
     @GetMapping("/artifacts")
-    public ApiResponse<List<SandboxAdminArtifactItem>> artifacts(
+    public ApiResponse<PageResult<SandboxAdminArtifactItem>> artifacts(
             @RequestParam(required = false) Long conversationId,
             @RequestParam(required = false) Long sandboxSessionDbId,
             @RequestParam(required = false) Integer limit,

@@ -1,4 +1,4 @@
-import type { SandboxOperation } from '../types/sandbox-admin'
+import type { PageResult, SandboxOperation } from '../types/sandbox-admin'
 
 export type TagType = 'default' | 'error' | 'primary' | 'info' | 'success' | 'warning'
 
@@ -206,5 +206,47 @@ export function buildControlRequest(
     reason: reason.trim(),
     confirmText: requiresStrongConfirm(action) ? confirmText.trim() : expectedConfirmText(action, targetId),
     dryRun
+  }
+}
+
+export function buildPageQuery(page: number, pageSize: number) {
+  const safePage = Math.max(1, Math.floor(page))
+  const safePageSize = Math.max(1, Math.floor(pageSize))
+  return {
+    limit: safePageSize,
+    offset: (safePage - 1) * safePageSize
+  }
+}
+
+export function normalizePageResult<T>(
+  result: PageResult<T> | T[] | null | undefined,
+  limit: number,
+  offset: number
+): PageResult<T> {
+  if (Array.isArray(result)) {
+    return {
+      items: result,
+      total: result.length,
+      limit,
+      offset
+    }
+  }
+
+  if (!result) {
+    return {
+      items: [],
+      total: 0,
+      limit,
+      offset
+    }
+  }
+
+  const page = result as Partial<PageResult<T>>
+  const items = Array.isArray(page.items) ? page.items : []
+  return {
+    items,
+    total: typeof page.total === 'number' ? page.total : items.length,
+    limit: typeof page.limit === 'number' ? page.limit : limit,
+    offset: typeof page.offset === 'number' ? page.offset : offset
   }
 }

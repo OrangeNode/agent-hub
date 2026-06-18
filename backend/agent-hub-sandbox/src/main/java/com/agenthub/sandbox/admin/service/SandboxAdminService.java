@@ -1,5 +1,6 @@
 package com.agenthub.sandbox.admin.service;
 
+import com.agenthub.common.api.PageResult;
 import com.agenthub.sandbox.admin.dto.SandboxAdminArtifactItem;
 import com.agenthub.sandbox.admin.dto.SandboxAdminExecutionItem;
 import com.agenthub.sandbox.admin.dto.SandboxAdminSessionItem;
@@ -7,13 +8,12 @@ import com.agenthub.sandbox.admin.dto.SandboxControlRequest;
 import com.agenthub.sandbox.admin.dto.SandboxControlResult;
 import com.agenthub.sandbox.admin.dto.SandboxOverview;
 import com.agenthub.sandbox.admin.dto.SandboxResourceSnapshot;
-import java.util.List;
 
 public interface SandboxAdminService {
 
     SandboxOverview overview();
 
-    List<SandboxAdminSessionItem> sessions(
+    PageResult<SandboxAdminSessionItem> sessions(
             String status,
             Long conversationId,
             String sandboxSessionId,
@@ -21,7 +21,7 @@ public interface SandboxAdminService {
             Integer offset
     );
 
-    List<SandboxAdminExecutionItem> executions(
+    PageResult<SandboxAdminExecutionItem> executions(
             Long conversationId,
             Long sandboxSessionDbId,
             String status,
@@ -29,7 +29,7 @@ public interface SandboxAdminService {
             Integer offset
     );
 
-    List<SandboxAdminArtifactItem> artifacts(
+    PageResult<SandboxAdminArtifactItem> artifacts(
             Long conversationId,
             Long sandboxSessionDbId,
             Integer limit,

@@ -59,6 +59,28 @@ public interface SandboxSessionMapper extends BaseMapper<SandboxSession> {
     );
 
     @Select("""
+            <script>
+            select count(*)
+            from sandbox_session
+            where 1 = 1
+            <if test='status != null and status != ""'>
+                and upper(status) = upper(#{status})
+            </if>
+            <if test='conversationId != null'>
+                and conversation_id = #{conversationId}
+            </if>
+            <if test='sandboxSessionId != null and sandboxSessionId != ""'>
+                and sandbox_session_id = #{sandboxSessionId}
+            </if>
+            </script>
+            """)
+    long countAdminSessions(
+            @Param("status") String status,
+            @Param("conversationId") Long conversationId,
+            @Param("sandboxSessionId") String sandboxSessionId
+    );
+
+    @Select("""
             select *
             from sandbox_session
             where upper(status) in ('READY', 'RUNNING')

@@ -115,6 +115,13 @@ export interface SandboxResourceSummary {
   orphanResources: number
 }
 
+export interface PageResult<T> {
+  items: T[]
+  total: number
+  limit: number
+  offset: number
+}
+
 export interface SandboxRuntimeStatus {
   serviceHealthy: boolean
   startedAt?: string | null

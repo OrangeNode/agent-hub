@@ -1,6 +1,7 @@
 package com.agenthub.sandbox.admin.service.impl;
 
 import com.agenthub.common.api.ErrorCode;
+import com.agenthub.common.api.PageResult;
 import com.agenthub.common.exception.BusinessException;
 import com.agenthub.sandbox.admin.client.SandboxAdminClient;
 import com.agenthub.sandbox.admin.dto.SandboxAdminArtifactItem;
@@ -89,62 +90,74 @@ public class SandboxAdminServiceImpl implements com.agenthub.sandbox.admin.servi
     }
 
     @Override
-    public List<SandboxAdminSessionItem> sessions(
+    public PageResult<SandboxAdminSessionItem> sessions(
             String status,
             Long conversationId,
             String sandboxSessionId,
             Integer limit,
             Integer offset
     ) {
+        int normalizedLimit = normalizeLimit(limit);
+        int normalizedOffset = normalizeOffset(offset);
         Map<String, SandboxRuntimeSession> runtimeBySessionId = new HashMap<>();
         for (SandboxRuntimeSession session : client.status().sessions()) {
             runtimeBySessionId.put(session.sandboxSessionId(), session);
         }
-        return sessionMapper.selectAdminSessions(
+        List<SandboxAdminSessionItem> items = sessionMapper.selectAdminSessions(
                         status,
                         conversationId,
                         sandboxSessionId,
-                        normalizeLimit(limit),
-                        normalizeOffset(offset)
+                        normalizedLimit,
+                        normalizedOffset
                 ).stream()
                 .map(session -> toSessionItem(session, runtimeBySessionId.get(session.getSandboxSessionId())))
                 .toList();
+        long total = sessionMapper.countAdminSessions(status, conversationId, sandboxSessionId);
+        return PageResult.of(items, total, normalizedLimit, normalizedOffset);
     }
 
     @Override
-    public List<SandboxAdminExecutionItem> executions(
+    public PageResult<SandboxAdminExecutionItem> executions(
             Long conversationId,
             Long sandboxSessionDbId,
             String status,
             Integer limit,
             Integer offset
     ) {
-        return executionMapper.selectAdminExecutions(
+        int normalizedLimit = normalizeLimit(limit);
+        int normalizedOffset = normalizeOffset(offset);
+        List<SandboxAdminExecutionItem> items = executionMapper.selectAdminExecutions(
                         conversationId,
                         sandboxSessionDbId,
                         status,
-                        normalizeLimit(limit),
-                        normalizeOffset(offset)
+                        normalizedLimit,
+                        normalizedOffset
                 ).stream()
                 .map(this::toExecutionItem)
                 .toList();
+        long total = executionMapper.countAdminExecutions(conversationId, sandboxSessionDbId, status);
+        return PageResult.of(items, total, normalizedLimit, normalizedOffset);
     }
 
     @Override
-    public List<SandboxAdminArtifactItem> artifacts(
+    public PageResult<SandboxAdminArtifactItem> artifacts(
             Long conversationId,
             Long sandboxSessionDbId,
             Integer limit,
             Integer offset
     ) {
-        return artifactMapper.selectAdminArtifacts(
+        int normalizedLimit = normalizeLimit(limit);
+        int normalizedOffset = normalizeOffset(offset);
+        List<SandboxAdminArtifactItem> items = artifactMapper.selectAdminArtifacts(
                         conversationId,
                         sandboxSessionDbId,
-                        normalizeLimit(limit),
-                        normalizeOffset(offset)
+                        normalizedLimit,
+                        normalizedOffset
                 ).stream()
                 .map(this::toArtifactItem)
                 .toList();
+        long total = artifactMapper.countAdminArtifacts(conversationId, sandboxSessionDbId);
+        return PageResult.of(items, total, normalizedLimit, normalizedOffset);
     }
 
     @Override

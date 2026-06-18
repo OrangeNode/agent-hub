@@ -38,6 +38,28 @@ public interface SandboxExecutionMapper extends BaseMapper<SandboxExecution> {
     );
 
     @Select("""
+            <script>
+            select count(*)
+            from sandbox_execution
+            where 1 = 1
+            <if test='conversationId != null'>
+                and conversation_id = #{conversationId}
+            </if>
+            <if test='sandboxSessionDbId != null'>
+                and sandbox_session_id = #{sandboxSessionDbId}
+            </if>
+            <if test='status != null and status != ""'>
+                and upper(status) = upper(#{status})
+            </if>
+            </script>
+            """)
+    long countAdminExecutions(
+            @Param("conversationId") Long conversationId,
+            @Param("sandboxSessionDbId") Long sandboxSessionDbId,
+            @Param("status") String status
+    );
+
+    @Select("""
             select count(*)
             from sandbox_execution
             where upper(status) = upper(#{status})

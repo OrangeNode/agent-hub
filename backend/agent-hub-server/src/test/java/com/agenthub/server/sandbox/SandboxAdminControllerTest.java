@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.agenthub.common.api.PageResult;
 import com.agenthub.sandbox.admin.dto.SandboxControlRequest;
 import com.agenthub.sandbox.admin.dto.SandboxControlResult;
 import com.agenthub.sandbox.admin.dto.SandboxOverview;
@@ -114,22 +115,30 @@ class SandboxAdminControllerTest {
     @Test
     void shouldPassLimitAndOffsetToSandboxListEndpoints() throws Exception {
         String token = loginUser(1L, "admin", List.of("sandbox:monitor:view"));
-        when(sandboxAdminService.sessions(null, null, null, 5, 10)).thenReturn(List.of());
-        when(sandboxAdminService.executions(null, null, null, 5, 10)).thenReturn(List.of());
-        when(sandboxAdminService.artifacts(null, null, 5, 10)).thenReturn(List.of());
+        when(sandboxAdminService.sessions(null, null, null, 5, 10))
+                .thenReturn(PageResult.of(List.of(), 12, 5, 10));
+        when(sandboxAdminService.executions(null, null, null, 5, 10))
+                .thenReturn(PageResult.of(List.of(), 13, 5, 10));
+        when(sandboxAdminService.artifacts(null, null, 5, 10))
+                .thenReturn(PageResult.of(List.of(), 14, 5, 10));
 
         mockMvc.perform(get("/api/sandbox/admin/sessions?limit=5&offset=10")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(200));
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.total").value(12))
+                .andExpect(jsonPath("$.data.limit").value(5))
+                .andExpect(jsonPath("$.data.offset").value(10));
         mockMvc.perform(get("/api/sandbox/admin/executions?limit=5&offset=10")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(200));
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.total").value(13));
         mockMvc.perform(get("/api/sandbox/admin/artifacts?limit=5&offset=10")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(200));
+                .andExpect(jsonPath("$.code").value(200))
+                .andExpect(jsonPath("$.data.total").value(14));
 
         verify(sandboxAdminService).sessions(null, null, null, 5, 10);
         verify(sandboxAdminService).executions(null, null, null, 5, 10);

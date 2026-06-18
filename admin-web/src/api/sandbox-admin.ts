@@ -4,6 +4,7 @@ import type {
   SandboxAdminArtifactItem,
   SandboxAdminExecutionItem,
   SandboxAdminSessionItem,
+  PageResult,
   SandboxArtifactQuery,
   SandboxControlRequest,
   SandboxControlResult,
@@ -27,21 +28,21 @@ export async function fetchSandboxOverview() {
 }
 
 export async function fetchSandboxSessions(params: SandboxSessionQuery = {}) {
-  const response = await http.get<ApiResponse<SandboxAdminSessionItem[]>>(`${basePath}/sessions`, {
+  const response = await http.get<ApiResponse<PageResult<SandboxAdminSessionItem>>>(`${basePath}/sessions`, {
     params: cleanParams(params)
   })
   return response.data.data
 }
 
 export async function fetchSandboxExecutions(params: SandboxExecutionQuery = {}) {
-  const response = await http.get<ApiResponse<SandboxAdminExecutionItem[]>>(`${basePath}/executions`, {
+  const response = await http.get<ApiResponse<PageResult<SandboxAdminExecutionItem>>>(`${basePath}/executions`, {
     params: cleanParams(params)
   })
   return response.data.data
 }
 
 export async function fetchSandboxArtifacts(params: SandboxArtifactQuery = {}) {
-  const response = await http.get<ApiResponse<SandboxAdminArtifactItem[]>>(`${basePath}/artifacts`, {
+  const response = await http.get<ApiResponse<PageResult<SandboxAdminArtifactItem>>>(`${basePath}/artifacts`, {
     params: cleanParams(params)
   })
   return response.data.data

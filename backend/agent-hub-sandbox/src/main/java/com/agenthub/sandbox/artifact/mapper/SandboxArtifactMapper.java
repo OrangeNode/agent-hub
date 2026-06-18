@@ -61,4 +61,22 @@ public interface SandboxArtifactMapper extends BaseMapper<SandboxArtifact> {
             @Param("limit") int limit,
             @Param("offset") int offset
     );
+
+    @Select("""
+            <script>
+            select count(*)
+            from sandbox_artifact
+            where 1 = 1
+            <if test='conversationId != null'>
+                and conversation_id = #{conversationId}
+            </if>
+            <if test='sandboxSessionDbId != null'>
+                and sandbox_session_id = #{sandboxSessionDbId}
+            </if>
+            </script>
+            """)
+    long countAdminArtifacts(
+            @Param("conversationId") Long conversationId,
+            @Param("sandboxSessionDbId") Long sandboxSessionDbId
+    );
 }

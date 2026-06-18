@@ -63,14 +63,22 @@ class SandboxAdminServiceImplTest {
         when(sessionMapper.selectAdminSessions(null, null, null, 5, 0)).thenReturn(List.of());
         when(executionMapper.selectAdminExecutions(null, null, null, 5, 0)).thenReturn(List.of());
         when(artifactMapper.selectAdminArtifacts(null, null, 5, 0)).thenReturn(List.of());
+        when(sessionMapper.countAdminSessions(null, null, null)).thenReturn(11L);
+        when(executionMapper.countAdminExecutions(null, null, null)).thenReturn(12L);
+        when(artifactMapper.countAdminArtifacts(null, null)).thenReturn(13L);
 
-        service.sessions(null, null, null, null, null);
-        service.executions(null, null, null, null, null);
-        service.artifacts(null, null, null, null);
+        var sessionPage = service.sessions(null, null, null, null, null);
+        var executionPage = service.executions(null, null, null, null, null);
+        var artifactPage = service.artifacts(null, null, null, null);
 
         verify(sessionMapper).selectAdminSessions(null, null, null, 5, 0);
         verify(executionMapper).selectAdminExecutions(null, null, null, 5, 0);
         verify(artifactMapper).selectAdminArtifacts(null, null, 5, 0);
+        assertThat(sessionPage.total()).isEqualTo(11);
+        assertThat(executionPage.total()).isEqualTo(12);
+        assertThat(artifactPage.total()).isEqualTo(13);
+        assertThat(sessionPage.limit()).isEqualTo(5);
+        assertThat(executionPage.offset()).isZero();
     }
 
     @Test

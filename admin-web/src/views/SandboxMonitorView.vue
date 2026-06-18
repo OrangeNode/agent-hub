@@ -139,10 +139,11 @@
           </div>
           <n-data-table
             size="small"
+            remote
             :columns="sessionColumns"
             :data="filteredSessions"
             :loading="loading"
-            :pagination="{ pageSize: PAGE_SIZE }"
+            :pagination="sessionPagination"
             :scroll-x="1240"
           />
         </n-card>
@@ -162,10 +163,11 @@
             </div>
             <n-data-table
               size="small"
+              remote
               :columns="executionColumns"
               :data="filteredExecutions"
               :loading="loading"
-              :pagination="{ pageSize: PAGE_SIZE }"
+              :pagination="executionPagination"
               :scroll-x="1280"
             />
           </n-card>
@@ -173,10 +175,11 @@
           <n-card :bordered="false" size="small" title="最近产物">
             <n-data-table
               size="small"
+              remote
               :columns="artifactColumns"
               :data="artifacts"
               :loading="loading"
-              :pagination="{ pageSize: PAGE_SIZE }"
+              :pagination="artifactPagination"
               :scroll-x="900"
             />
           </n-card>
@@ -307,7 +310,7 @@
 
 <script setup lang="ts">
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import type { DataTableColumns, SelectOption } from 'naive-ui'
+import type { DataTableColumns, PaginationProps, SelectOption } from 'naive-ui'
 import {
   NAlert,
   NButton,
@@ -348,6 +351,7 @@ import {
   rebuildSandboxWarmPool
 } from '../api/sandbox-admin'
 import type {
+  PageResult,
   SandboxAdminArtifactItem,
   SandboxAdminExecutionItem,
   SandboxAdminSessionItem,
@@ -364,6 +368,7 @@ import type {
 import {
   buildControlRequest,
   buildOperationTitle,
+  buildPageQuery,
   buildRiskTagType,
   buildStatusTagType,
   canSubmitOperation,
@@ -373,6 +378,7 @@ import {
   formatDurationMs,
   formatDurationSeconds,
   formatStatus,
+  normalizePageResult,
   requiresReason,
   requiresStrongConfirm
 } from './sandbox-admin.helpers'
@@ -389,6 +395,12 @@ const resources = ref<SandboxResourceSnapshot | null>(null)
 const sessions = ref<SandboxAdminSessionItem[]>([])
 const executions = ref<SandboxAdminExecutionItem[]>([])
 const artifacts = ref<SandboxAdminArtifactItem[]>([])
+const sessionPage = ref(1)
+const executionPage = ref(1)
+const artifactPage = ref(1)
+const sessionTotal = ref(0)
+const executionTotal = ref(0)
+const artifactTotal = ref(0)
 const logs = ref('')
 const logLines = ref(120)
 const sessionStatusFilter = ref<string | null>(null)
@@ -434,6 +446,33 @@ const visibleRisks = computed(() => {
   const start = (riskPage.value - 1) * PAGE_SIZE
   return risks.slice(start, start + PAGE_SIZE)
 })
+
+const sessionPagination = computed<PaginationProps>(() => ({
+  page: sessionPage.value,
+  pageSize: PAGE_SIZE,
+  itemCount: sessionTotal.value,
+  onUpdatePage: (page) => {
+    void reloadSessionsPage(page)
+  }
+}))
+
+const executionPagination = computed<PaginationProps>(() => ({
+  page: executionPage.value,
+  pageSize: PAGE_SIZE,
+  itemCount: executionTotal.value,
+  onUpdatePage: (page) => {
+    void reloadExecutionsPage(page)
+  }
+}))
+
+const artifactPagination = computed<PaginationProps>(() => ({
+  page: artifactPage.value,
+  pageSize: PAGE_SIZE,
+  itemCount: artifactTotal.value,
+  onUpdatePage: (page) => {
+    void reloadArtifactsPage(page)
+  }
+}))
 
 const metrics = computed(() => [
   {
@@ -760,22 +799,96 @@ function showControlResult(
   }
 }
 
+function currentSessionQuery() {
+  return buildPageQuery(sessionPage.value, PAGE_SIZE)
+}
+
+function currentExecutionQuery() {
+  return {
+    ...buildPageQuery(executionPage.value, PAGE_SIZE),
+    status: executionStatusFilter.value
+  }
+}
+
+function currentArtifactQuery() {
+  return buildPageQuery(artifactPage.value, PAGE_SIZE)
+}
+
+function applySessionPage(result: PageResult<SandboxAdminSessionItem>) {
+  const query = currentSessionQuery()
+  const page = normalizePageResult(result, query.limit, query.offset)
+  sessions.value = page.items
+  sessionTotal.value = page.total
+}
+
+function applyExecutionPage(result: PageResult<SandboxAdminExecutionItem>) {
+  const query = currentExecutionQuery()
+  const page = normalizePageResult(result, query.limit, query.offset)
+  executions.value = page.items
+  executionTotal.value = page.total
+}
+
+function applyArtifactPage(result: PageResult<SandboxAdminArtifactItem>) {
+  const query = currentArtifactQuery()
+  const page = normalizePageResult(result, query.limit, query.offset)
+  artifacts.value = page.items
+  artifactTotal.value = page.total
+}
+
+async function withPageLoading(request: () => Promise<void>, fallbackMessage: string) {
+  loading.value = true
+  try {
+    await request()
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : fallbackMessage)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadSessionsPage() {
+  applySessionPage(await fetchSandboxSessions(currentSessionQuery()))
+}
+
+async function loadExecutionsPage() {
+  applyExecutionPage(await fetchSandboxExecutions(currentExecutionQuery()))
+}
+
+async function loadArtifactsPage() {
+  applyArtifactPage(await fetchSandboxArtifacts(currentArtifactQuery()))
+}
+
+async function reloadSessionsPage(page = sessionPage.value) {
+  sessionPage.value = page
+  await withPageLoading(loadSessionsPage, '加载 Sandbox 会话失败')
+}
+
+async function reloadExecutionsPage(page = executionPage.value) {
+  executionPage.value = page
+  await withPageLoading(loadExecutionsPage, '加载 Sandbox 执行失败')
+}
+
+async function reloadArtifactsPage(page = artifactPage.value) {
+  artifactPage.value = page
+  await withPageLoading(loadArtifactsPage, '加载 Sandbox 产物失败')
+}
+
 async function loadAll() {
   loading.value = true
   try {
     const [overviewData, resourceData, sessionData, executionData, artifactData] = await Promise.all([
       fetchSandboxOverview(),
       fetchSandboxResources(),
-      fetchSandboxSessions({ limit: PAGE_SIZE, offset: 0 }),
-      fetchSandboxExecutions({ limit: PAGE_SIZE, offset: 0 }),
-      fetchSandboxArtifacts({ limit: PAGE_SIZE, offset: 0 })
+      fetchSandboxSessions(currentSessionQuery()),
+      fetchSandboxExecutions(currentExecutionQuery()),
+      fetchSandboxArtifacts(currentArtifactQuery())
     ])
     overview.value = overviewData
     riskPage.value = 1
     resources.value = resourceData
-    sessions.value = sessionData
-    executions.value = executionData
-    artifacts.value = artifactData
+    applySessionPage(sessionData)
+    applyExecutionPage(executionData)
+    applyArtifactPage(artifactData)
   } catch (error) {
     message.error(error instanceof Error ? error.message : '加载 Sandbox 运维数据失败')
   } finally {
@@ -805,6 +918,16 @@ function resetRefreshTimer() {
     }, refreshIntervalSeconds.value * 1000)
   }
 }
+
+watch(sessionStatusFilter, () => {
+  sessionPage.value = 1
+  void reloadSessionsPage()
+})
+
+watch(executionStatusFilter, () => {
+  executionPage.value = 1
+  void reloadExecutionsPage()
+})
 
 watch([autoRefresh, refreshIntervalSeconds], resetRefreshTimer)
 

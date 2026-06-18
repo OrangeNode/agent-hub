@@ -56,6 +56,30 @@ class CommandPolicyTest {
     }
 
     @Test
+    void shouldAllowNonSensitiveDevelopmentCommandsWithoutStrictEntrypointWhitelist() {
+        assertThatCode(() -> policy.validate("uv pip install -r requirements.txt", "/workspace", 30))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate("zsh -c \"echo ok\"", "/workspace", 30))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate(
+                "cp /workspace/artifacts/Program.cs /tmp/docx-work/Program.cs", "/workspace", 30))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate("dotnet build /tmp/docx-work/Docx.csproj", "/workspace", 30))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate(
+                "bash /workspace/skills/docx/scripts/docx build /workspace/artifacts/report.docx 2>&1",
+                "/workspace",
+                30))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void shouldAllowTemporaryBuildWorkingDirectory() {
+        assertThatCode(() -> policy.validate("dotnet build Docx.csproj", "/tmp/docx-work", 30))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
     void shouldNormalizeRelativeWorkspacePath() {
         assertThat(policy.validateWorkspacePath("reports/out.txt", "路径不在允许访问范围内"))
                 .isEqualTo("/workspace/reports/out.txt");
@@ -98,19 +122,9 @@ class CommandPolicyTest {
     }
 
     @Test
-    void shouldRejectUnknownShellEntrypoint() {
-        assertThatThrownBy(() -> policy.validate("zsh -c ls", "/workspace", 30))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode")
-                .isEqualTo(ErrorCode.COMMAND_DENIED);
-    }
-
-    @Test
-    void shouldRejectCommandBuiltinWhenItExecutesCommands() {
-        assertThatThrownBy(() -> policy.validate("command sh -lc \"echo ok\"", "/workspace", 30))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode")
-                .isEqualTo(ErrorCode.COMMAND_DENIED);
+    void shouldAllowCommandBuiltinWhenContentIsSafe() {
+        assertThatCode(() -> policy.validate("command sh -lc \"echo ok\"", "/workspace", 30))
+                .doesNotThrowAnyException();
     }
 
     @Test
@@ -132,6 +146,50 @@ class CommandPolicyTest {
     @Test
     void shouldRejectDangerousPath() {
         assertThatThrownBy(() -> policy.validate("cat /etc/passwd", "/workspace", 30))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.COMMAND_DENIED);
+        assertThatThrownBy(() -> policy.validate("cat /proc/self/environ", "/workspace", 30))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.COMMAND_DENIED);
+        assertThatThrownBy(() -> policy.validate("cat /root/.ssh/id_rsa", "/workspace", 30))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.COMMAND_DENIED);
+        assertThatThrownBy(() -> policy.validate("cat /home/app/.ssh/id_rsa", "/workspace", 30))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.COMMAND_DENIED);
+        assertThatThrownBy(() -> policy.validate("stat /dev/kvm", "/workspace", 30))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.COMMAND_DENIED);
+        assertThatThrownBy(() -> policy.validate("cat unix:///var/run/docker.sock", "/workspace", 30))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.COMMAND_DENIED);
+    }
+
+    @Test
+    void shouldRejectEscapeOrHostControlCommands() {
+        assertThatThrownBy(() -> policy.validate("docker ps", "/workspace", 30))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.COMMAND_DENIED);
+        assertThatThrownBy(() -> policy.validate("kubectl get pods", "/workspace", 30))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.COMMAND_DENIED);
+        assertThatThrownBy(() -> policy.validate("nsenter --target 1 --mount sh", "/workspace", 30))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.COMMAND_DENIED);
+        assertThatThrownBy(() -> policy.validate("unshare --mount sh", "/workspace", 30))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.COMMAND_DENIED);
+        assertThatThrownBy(() -> policy.validate("chroot /workspace/rootfs sh", "/workspace", 30))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(ErrorCode.COMMAND_DENIED);

@@ -7,7 +7,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
-import java.util.Set;
 import java.util.regex.Pattern;
 
 public class CommandPolicy {
@@ -16,18 +15,13 @@ public class CommandPolicy {
     private static final String INPUT_DIR = "/workspace/input";
     private static final String ARTIFACTS_DIR = "/workspace/artifacts";
     private static final String OUTPUT_DIR = "/workspace/output";
+    private static final String TEMP_ROOT = "/tmp";
     private static final Pattern COMMAND_TOKEN_SEPARATOR = Pattern.compile("[\\s;|&<>\"'`$(){}\\[\\],]+");
-    private static final Pattern COMMAND_LOOKUP_NAME = Pattern.compile("[A-Za-z0-9._+-]+");
     private static final List<String> DANGEROUS_KEYWORDS = List.of(
             "shutdown", "reboot", "poweroff", "halt", "mount", "umount",
-            "modprobe", "insmod", "sysctl", "sudo", "su", "systemctl", "service"
-    );
-    private static final Set<String> ALLOWED_COMMANDS = Set.of(
-            "sh", "bash", "python", "python3", "node", "npm", "npx", "pip", "pip3",
-            "go", "java", "javac", "mvn", "gradle", "cat", "ls", "pwd", "find",
-            "grep", "sed", "awk", "head", "tail", "wc", "sort", "uniq", "printf",
-            "mkdir", "cp", "mv", "rm", "touch", "chmod", "echo", "zip", "unzip", "tar",
-            "dotnet", "pandoc", "soffice", "libreoffice", "which", "test", "file", "stat"
+            "modprobe", "insmod", "sysctl", "sudo", "su", "systemctl", "service",
+            "docker", "podman", "kubectl", "ctr", "runc", "nsenter", "unshare",
+            "chroot", "iptables", "ip", "ifconfig"
     );
 
     private final int maxCommandLength;
@@ -45,34 +39,16 @@ public class CommandPolicy {
         if (command.length() > maxCommandLength) {
             throw new BusinessException(ErrorCode.COMMAND_DENIED, "命令长度超过限制");
         }
-        validateWorkspacePath(workingDir, "工作目录必须位于 /workspace");
+        validateExecutionWorkingDir(workingDir);
         if (timeoutSeconds <= 0 || timeoutSeconds > maxTimeoutSeconds) {
             throw new BusinessException(ErrorCode.COMMAND_TIMEOUT, "命令超时时间超过限制");
         }
         rejectDangerousContent(command);
         String[] parts = command.strip().split("\\s+");
         String entrypoint = parts.length == 0 ? "" : parts[0];
-        if (entrypoint.contains("/") || entrypoint.contains("\\")
-                || (!ALLOWED_COMMANDS.contains(entrypoint) && !isAllowedCommandLookup(parts))) {
+        if (entrypoint.contains("/") || entrypoint.contains("\\")) {
             throw new BusinessException(ErrorCode.COMMAND_DENIED, "命令未通过安全校验");
         }
-    }
-
-    private boolean isAllowedCommandLookup(String[] parts) {
-        if (parts.length < 3 || !"command".equals(parts[0])) {
-            return false;
-        }
-        if (!"-v".equals(parts[1]) && !"-V".equals(parts[1])) {
-            return false;
-        }
-        for (int index = 2; index < parts.length; index++) {
-            String name = removeQuotes(parts[index]);
-            if (name.isBlank() || name.startsWith("-") || name.contains("/") || name.contains("\\")
-                    || !COMMAND_LOOKUP_NAME.matcher(name).matches()) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private void rejectDangerousContent(String command) {
@@ -95,7 +71,7 @@ public class CommandPolicy {
                 continue;
             }
             for (String candidate : pathCandidates(part)) {
-                if (hasParentTraversal(candidate) || isAbsoluteOutsideWorkspace(candidate)) {
+                if (hasParentTraversal(candidate) || isAbsoluteOutsideExecutionRoots(candidate)) {
                     throw new BusinessException(ErrorCode.COMMAND_DENIED, "命令未通过安全校验");
                 }
             }
@@ -125,8 +101,8 @@ public class CommandPolicy {
                 .anyMatch(".."::equals);
     }
 
-    private boolean isAbsoluteOutsideWorkspace(String value) {
-        return value.startsWith("/") && !value.equals("/workspace") && !value.startsWith("/workspace/");
+    private boolean isAbsoluteOutsideExecutionRoots(String value) {
+        return value.startsWith("/") && !isAllowedExecutionPath(value);
     }
 
     private boolean containsWord(String value, String word) {
@@ -147,6 +123,14 @@ public class CommandPolicy {
         String normalized = normalizeWorkspacePath(path, WORKSPACE_ROOT);
         if (!isUnder(normalized, WORKSPACE_ROOT)) {
             throw new BusinessException(ErrorCode.PATH_DENIED, message);
+        }
+        return normalized;
+    }
+
+    private String validateExecutionWorkingDir(String path) {
+        String normalized = normalizeWorkspacePath(path, WORKSPACE_ROOT);
+        if (!isAllowedExecutionPath(normalized)) {
+            throw new BusinessException(ErrorCode.PATH_DENIED, "工作目录必须位于 /workspace 或 /tmp");
         }
         return normalized;
     }
@@ -207,5 +191,9 @@ public class CommandPolicy {
 
     private boolean isUnder(String path, String base) {
         return path.equals(base) || path.startsWith(base + "/");
+    }
+
+    private boolean isAllowedExecutionPath(String path) {
+        return isUnder(path, WORKSPACE_ROOT) || isUnder(path, TEMP_ROOT);
     }
 }

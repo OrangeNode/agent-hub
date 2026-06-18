@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -199,6 +200,34 @@ func TestServerReadFileUsesDefaultLimit(t *testing.T) {
 	}
 	if !strings.Contains(readRec.Body.String(), `"truncated":true`) {
 		t.Fatalf("expected default read to be truncated, body = %s", readRec.Body.String())
+	}
+}
+
+func TestServerReadFileIncludesBase64Content(t *testing.T) {
+	root := t.TempDir()
+	content := []byte{0x50, 0x4b, 0x03, 0x04, 0xff, 0x00, 0x80}
+	if err := os.WriteFile(filepath.Join(root, "binary.docx"), content, 0o644); err != nil {
+		t.Fatalf("WriteFile binary error = %v", err)
+	}
+	server := NewServer(NewExecutor(1024), NewFileService(root))
+	req := httptest.NewRequest(http.MethodGet, "/files/content?path=binary.docx&maxBytes=20", nil)
+	rec := httptest.NewRecorder()
+
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Content       string `json:"content"`
+		ContentBase64 string `json:"contentBase64"`
+		Truncated     bool   `json:"truncated"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if response.ContentBase64 != base64.StdEncoding.EncodeToString(content) {
+		t.Fatalf("contentBase64 = %q", response.ContentBase64)
 	}
 }
 

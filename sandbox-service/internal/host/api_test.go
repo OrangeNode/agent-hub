@@ -3,6 +3,7 @@ package host
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -222,6 +223,60 @@ func TestExecStreamRetriesArtifactUploadUntilMarkedSynced(t *testing.T) {
 	}
 	if uploader.Attempts() != 2 {
 		t.Fatalf("third attempts = %d, want 2", uploader.Attempts())
+	}
+}
+
+func TestExecStreamSyncsBinaryArtifactFromBase64Content(t *testing.T) {
+	binary := []byte{0x50, 0x4b, 0x03, 0x04, 0xff, 0x00, 0x80}
+	sum := sha256.Sum256(binary)
+	artifactSHA := fmt.Sprintf("%x", sum)
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/exec/stream":
+			w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+			_, _ = w.Write([]byte("event: completed\n"))
+			_, _ = w.Write([]byte(`data: {"exitCode":0}` + "\n\n"))
+		case "/artifacts":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"artifacts": []map[string]any{
+					{"relativePath": "report.docx", "sha256": artifactSHA, "size": len(binary)},
+				},
+			})
+		case "/files/content":
+			if r.URL.Query().Get("path") != "/workspace/artifacts/report.docx" {
+				t.Fatalf("read path = %q", r.URL.Query().Get("path"))
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"contentBase64": base64.StdEncoding.EncodeToString(binary),
+				"truncated":     false,
+			})
+		default:
+			t.Fatalf("unexpected guest path %s", r.URL.Path)
+		}
+	}))
+	defer guest.Close()
+
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	uploader := &recordingUploader{}
+	router := NewRouterWithManager(manager, WithUploader(uploader), WithArtifactSyncer(NewArtifactSyncer("bucket")))
+	body := bytes.NewBufferString(`{"command":"python3 create_docx.py","workingDir":"/workspace","timeoutSeconds":5}`)
+	req := httptest.NewRequest(http.MethodPost, "/internal/sandbox/sessions/"+session.ID+"/exec/stream", body)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if !strings.Contains(rec.Body.String(), "event: artifact_synced") {
+		t.Fatalf("expected artifact_synced event, got %s", rec.Body.String())
+	}
+	if len(uploader.uploads) != 1 {
+		t.Fatalf("uploads = %d, want 1", len(uploader.uploads))
+	}
+	if got := []byte(uploader.uploads[0].Content); !bytes.Equal(got, binary) {
+		t.Fatalf("uploaded bytes = %v, want %v", got, binary)
 	}
 }
 

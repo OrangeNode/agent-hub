@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -129,8 +130,9 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"content":   string(content.Content),
-		"truncated": content.Truncated,
+		"content":       string(content.Content),
+		"contentBase64": base64.StdEncoding.EncodeToString(content.Content),
+		"truncated":     content.Truncated,
 	})
 }
 

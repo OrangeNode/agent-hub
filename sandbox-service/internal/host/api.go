@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -718,16 +719,25 @@ func (s *apiServer) readGuestArtifact(r *http.Request, session Session, relative
 		return nil, fmt.Errorf("guest-agent 产物内容返回异常状态: %d", resp.StatusCode)
 	}
 	var body struct {
-		Content   string `json:"content"`
-		Truncated bool   `json:"truncated"`
+		Content       string `json:"content"`
+		ContentBase64 string `json:"contentBase64"`
+		Truncated     bool   `json:"truncated"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return nil, fmt.Errorf("解析产物内容失败: %w", err)
 	}
-	if body.Truncated || len([]byte(body.Content)) > maxArtifactBytes {
+	content := []byte(body.Content)
+	if strings.TrimSpace(body.ContentBase64) != "" {
+		decoded, err := base64.StdEncoding.DecodeString(body.ContentBase64)
+		if err != nil {
+			return nil, fmt.Errorf("解析产物 base64 内容失败: %w", err)
+		}
+		content = decoded
+	}
+	if body.Truncated || len(content) > maxArtifactBytes {
 		return nil, errors.New("产物超过大小上限，无法同步")
 	}
-	return []byte(body.Content), nil
+	return content, nil
 }
 
 func (s *apiServer) validateRestoreArtifacts(artifacts []restoreArtifact) error {

@@ -42,6 +42,27 @@ func TestValidateCommandAllowsDocumentToolchainAndProbeCommands(t *testing.T) {
 	}
 }
 
+func TestValidateCommandAllowsTmpExecutionPaths(t *testing.T) {
+	policy := NewCommandPolicy(300, 60)
+	for _, command := range []string{
+		"mkdir -p /tmp/docx-work",
+		"cp /workspace/artifacts/Program.cs /tmp/docx-work/Program.cs",
+		"ls -la /tmp/docx-work/",
+		"go build -o/tmp/app",
+		"javac -d/tmp/classes",
+	} {
+		req := CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30}
+		if err := policy.Validate(req); err != nil {
+			t.Fatalf("Validate(%q) error = %v", command, err)
+		}
+	}
+
+	req := CommandRequest{Command: "pwd", WorkingDir: "/tmp/docx-work", TimeoutSeconds: 30}
+	if err := policy.Validate(req); err != nil {
+		t.Fatalf("Validate working dir %q error = %v", req.WorkingDir, err)
+	}
+}
+
 func TestValidateCommandRejectsBlankCommand(t *testing.T) {
 	policy := NewCommandPolicy(200, 60)
 	for _, command := range []string{"", "   ", "\t\n"} {
@@ -109,8 +130,8 @@ func TestValidateCommandRejectsDangerousPaths(t *testing.T) {
 		"go build -o=/etc/app",
 		"mvn -Dmaven.repo.local=/root/.m2",
 		"npm --prefix=/var/run install",
-		"go build -o/tmp/app",
-		"javac -d/tmp/classes",
+		"go build -o/tmp2/app",
+		"javac -d/tmp2/classes",
 		"sed -f/etc/passwd",
 	} {
 		err := policy.Validate(CommandRequest{Command: command, WorkingDir: "/workspace", TimeoutSeconds: 30})
@@ -187,7 +208,7 @@ func TestValidateCommandRejectsEntrypointWithDifferentCase(t *testing.T) {
 
 func TestValidateCommandRejectsOutOfWorkspaceWorkingDir(t *testing.T) {
 	policy := NewCommandPolicy(200, 60)
-	for _, workingDir := range []string{"/tmp", "/workspace2", "/workspace/../tmp"} {
+	for _, workingDir := range []string{"/tmp2", "/workspace2", "/workspace/../tmp2", "/tmp/../etc"} {
 		err := policy.Validate(CommandRequest{Command: "pwd", WorkingDir: workingDir, TimeoutSeconds: 30})
 		if err == nil {
 			t.Fatalf("expected %q working dir to be rejected", workingDir)

@@ -247,7 +247,7 @@ func isForbiddenAbsolutePath(value string) bool {
 	if cleaned == "/" {
 		return true
 	}
-	if cleaned == "/workspace" || strings.HasPrefix(cleaned, "/workspace/") {
+	if isAllowedExecutionPath(cleaned) {
 		return false
 	}
 	return strings.HasPrefix(cleaned, "/")
@@ -276,7 +276,14 @@ func hasPathSeparator(value string) bool {
 
 func isWorkspacePath(value string) bool {
 	cleaned := path.Clean(cleanSlash(value))
-	return cleaned == "/workspace" || strings.HasPrefix(cleaned, "/workspace/")
+	return isAllowedExecutionPath(cleaned)
+}
+
+func isAllowedExecutionPath(value string) bool {
+	return value == "/workspace" ||
+		strings.HasPrefix(value, "/workspace/") ||
+		value == "/tmp" ||
+		strings.HasPrefix(value, "/tmp/")
 }
 
 func cleanSlash(value string) string {

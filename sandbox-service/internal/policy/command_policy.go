@@ -6,6 +6,13 @@ import (
 	"strings"
 )
 
+const (
+	WorkspaceRoot = "/workspace"
+	TempRoot      = "/tmp"
+)
+
+var allowedExecutionRoots = []string{WorkspaceRoot, TempRoot}
+
 type CommandRequest struct {
 	Command        string
 	WorkingDir     string
@@ -30,7 +37,7 @@ func (p CommandPolicy) Validate(req CommandRequest) error {
 		return errors.New("命令长度超过限制")
 	}
 	if !isWorkspacePath(req.WorkingDir) {
-		return errors.New("工作目录必须位于 /workspace")
+		return errors.New("工作目录必须位于 " + AllowedExecutionRootsDescription())
 	}
 	if req.TimeoutSeconds <= 0 || req.TimeoutSeconds > p.maxTimeout {
 		return errors.New("命令超时时间超过限制")
@@ -248,7 +255,7 @@ func isForbiddenAbsolutePath(value string) bool {
 	if cleaned == "/" {
 		return true
 	}
-	if isAllowedExecutionPath(cleaned) {
+	if IsAllowedExecutionPath(cleaned) {
 		return false
 	}
 	return strings.HasPrefix(cleaned, "/")
@@ -277,14 +284,20 @@ func hasPathSeparator(value string) bool {
 
 func isWorkspacePath(value string) bool {
 	cleaned := path.Clean(cleanSlash(value))
-	return isAllowedExecutionPath(cleaned)
+	return IsAllowedExecutionPath(cleaned)
 }
 
-func isAllowedExecutionPath(value string) bool {
-	return value == "/workspace" ||
-		strings.HasPrefix(value, "/workspace/") ||
-		value == "/tmp" ||
-		strings.HasPrefix(value, "/tmp/")
+func IsAllowedExecutionPath(value string) bool {
+	for _, root := range allowedExecutionRoots {
+		if value == root || strings.HasPrefix(value, root+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func AllowedExecutionRootsDescription() string {
+	return strings.Join(allowedExecutionRoots, " 或 ")
 }
 
 func cleanSlash(value string) string {

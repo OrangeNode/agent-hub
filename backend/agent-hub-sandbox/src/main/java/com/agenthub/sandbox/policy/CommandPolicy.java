@@ -16,6 +16,7 @@ public class CommandPolicy {
     private static final String ARTIFACTS_DIR = "/workspace/artifacts";
     private static final String OUTPUT_DIR = "/workspace/output";
     private static final String TEMP_ROOT = "/tmp";
+    private static final List<String> ALLOWED_EXECUTION_ROOTS = List.of(WORKSPACE_ROOT, TEMP_ROOT);
     private static final Pattern COMMAND_TOKEN_SEPARATOR = Pattern.compile("[\\s;|&<>\"'`$(){}\\[\\],]+");
     private static final List<String> DANGEROUS_KEYWORDS = List.of(
             "shutdown", "reboot", "poweroff", "halt", "mount", "umount",
@@ -130,7 +131,8 @@ public class CommandPolicy {
     private String validateExecutionWorkingDir(String path) {
         String normalized = normalizeWorkspacePath(path, WORKSPACE_ROOT);
         if (!isAllowedExecutionPath(normalized)) {
-            throw new BusinessException(ErrorCode.PATH_DENIED, "工作目录必须位于 /workspace 或 /tmp");
+            throw new BusinessException(ErrorCode.PATH_DENIED,
+                    "工作目录必须位于 " + String.join(" 或 ", ALLOWED_EXECUTION_ROOTS));
         }
         return normalized;
     }
@@ -194,6 +196,6 @@ public class CommandPolicy {
     }
 
     private boolean isAllowedExecutionPath(String path) {
-        return isUnder(path, WORKSPACE_ROOT) || isUnder(path, TEMP_ROOT);
+        return ALLOWED_EXECUTION_ROOTS.stream().anyMatch(root -> isUnder(path, root));
     }
 }

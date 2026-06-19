@@ -1348,7 +1348,7 @@ class ChatServiceImplTest {
         assertThat(llmClient.lastRequest).isNotNull();
         assertThat(llmClient.lastRequest.messages().getFirst().role()).isEqualTo("system");
         assertThat(llmClient.lastRequest.messages().getFirst().content())
-                .contains("/workspace/input", "/workspace/artifacts", "相对路径",
+                .contains("/workspace/input", "/workspace/artifacts", "/tmp", "相对路径",
                         "sandbox.write_file", "下载", "sandbox.exec")
                 .doesNotContain("调用 write_file", "- exec 可以");
     }

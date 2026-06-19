@@ -100,6 +100,62 @@ func TestServerExecStreamRejectsSymlinkWorkingDir(t *testing.T) {
 	}
 }
 
+func TestServerExecStreamAllowsTmpWorkingDirAndArguments(t *testing.T) {
+	tmpDocxWork := filepath.Join(os.TempDir(), "docx-work")
+	if _, err := os.Stat(tmpDocxWork); os.IsNotExist(err) {
+		if err := os.MkdirAll(tmpDocxWork, 0o755); err != nil {
+			t.Fatalf("MkdirAll tmp docx work error = %v", err)
+		}
+		t.Cleanup(func() {
+			_ = os.RemoveAll(tmpDocxWork)
+		})
+	} else if err != nil {
+		t.Fatalf("Stat tmp docx work error = %v", err)
+	}
+	executor := &recordingExecutor{}
+	server := NewServer(executor, NewFileService(t.TempDir()))
+	tests := []struct {
+		name       string
+		body       string
+		workingDir string
+	}{
+		{
+			name:       "tmp argument",
+			body:       `{"command":"cp /workspace/artifacts/Program.cs /tmp/docx-work/Program.cs","workingDir":"/workspace","timeoutSeconds":5}`,
+			workingDir: "/workspace",
+		},
+		{
+			name:       "tmp working dir",
+			body:       `{"command":"pwd","workingDir":"/tmp/docx-work","timeoutSeconds":5}`,
+			workingDir: "/tmp/docx-work",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			executor.called = false
+			executor.req = ExecRequest{}
+			req := httptest.NewRequest(http.MethodPost, "/exec/stream", bytes.NewBufferString(tt.body))
+			rec := httptest.NewRecorder()
+
+			server.Router().ServeHTTP(rec, req)
+
+			response := rec.Body.String()
+			if !strings.Contains(response, "event: started") {
+				t.Fatalf("expected started SSE, got %s", response)
+			}
+			if strings.Contains(response, "event: error") {
+				t.Fatalf("unexpected error SSE, got %s", response)
+			}
+			if !executor.called {
+				t.Fatal("executor should be called when /tmp exec paths pass validation")
+			}
+			if executor.req.WorkingDir != tt.workingDir {
+				t.Fatalf("workingDir = %q, want %q", executor.req.WorkingDir, tt.workingDir)
+			}
+		})
+	}
+}
+
 func TestServerExecStreamRejectsSymlinkFollowingOptions(t *testing.T) {
 	for _, command := range []string{"find -L /workspace", "find /workspace -follow"} {
 		executor := &recordingExecutor{}
@@ -233,9 +289,11 @@ func TestServerReadFileIncludesBase64Content(t *testing.T) {
 
 type recordingExecutor struct {
 	called bool
+	req    ExecRequest
 }
 
 func (e *recordingExecutor) Exec(ctx context.Context, req ExecRequest, emit func(ExecEvent)) ExecResult {
 	e.called = true
+	e.req = req
 	return ExecResult{ExitCode: 0}
 }

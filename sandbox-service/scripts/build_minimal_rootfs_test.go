@@ -43,6 +43,22 @@ func TestMinimalRootfsIncludesDocxSkillRuntimeDependencies(t *testing.T) {
 	}
 }
 
+func TestMinimalRootfsWarmsDotnetOpenXmlPackageCache(t *testing.T) {
+	content := readScript(t, "build-minimal-rootfs.sh")
+
+	for _, expected := range []string{
+		"DocumentFormat.OpenXml",
+		"--version 3.0.2",
+		"NUGET_PACKAGES=/opt/nuget/packages",
+		"DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1",
+		"DOTNET_CLI_TELEMETRY_OPTOUT=1",
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("build-minimal-rootfs.sh missing dotnet package cache setup %q", expected)
+		}
+	}
+}
+
 func TestStartScriptExportsAdminLogFile(t *testing.T) {
 	content := readScript(t, "start-sandbox-service.sh")
 

@@ -72,6 +72,32 @@ func TestFileServiceWriteTempWorkFile(t *testing.T) {
 	}
 }
 
+func TestFileServiceReadAndListTempWorkFile(t *testing.T) {
+	service := NewFileService(t.TempDir())
+	target := "/tmp/agent-hub-file-service-test-read/data.txt"
+	t.Cleanup(func() {
+		_ = os.RemoveAll(filepath.Join(os.TempDir(), "agent-hub-file-service-test-read"))
+	})
+
+	if err := service.WriteFile(target, []byte("tmp-ok"), false); err != nil {
+		t.Fatalf("WriteFile temp work error = %v", err)
+	}
+	content, err := service.ReadFile(target, 100)
+	if err != nil {
+		t.Fatalf("ReadFile temp work error = %v", err)
+	}
+	if string(content.Content) != "tmp-ok" {
+		t.Fatalf("content = %q, want tmp-ok", string(content.Content))
+	}
+	files, err := service.ListFiles("/tmp/agent-hub-file-service-test-read", false, 20)
+	if err != nil {
+		t.Fatalf("ListFiles temp work error = %v", err)
+	}
+	if len(files) != 1 || files[0].RelativePath != "/tmp/agent-hub-file-service-test-read/data.txt" {
+		t.Fatalf("files = %#v, want temp data file", files)
+	}
+}
+
 func TestFileServiceRejectsPathOutsideWorkspaceAndTempWrite(t *testing.T) {
 	service := NewFileService(t.TempDir())
 	outside := filepath.Join(t.TempDir(), "Program.cs")

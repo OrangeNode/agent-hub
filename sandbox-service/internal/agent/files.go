@@ -106,8 +106,11 @@ func (s *FileService) ReadFile(path string, maxBytes int64) (FileContent, error)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	target, err := s.resolveExistingNoSymlink(path)
+	target, targetRoot, outsideMessage, err := s.resolveReadablePath(path)
 	if err != nil {
+		return FileContent{}, err
+	}
+	if _, err := s.ensureNoSymlinkInExistingComponentsWithin(target, targetRoot, true, outsideMessage); err != nil {
 		return FileContent{}, err
 	}
 	if maxBytes < 0 {
@@ -138,8 +141,11 @@ func (s *FileService) ListFiles(path string, recursive bool, maxFiles int) ([]Fi
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	target, err := s.resolveExistingNoSymlink(path)
+	target, targetRoot, outsideMessage, err := s.resolveReadablePath(path)
 	if err != nil {
+		return nil, err
+	}
+	if _, err := s.ensureNoSymlinkInExistingComponentsWithin(target, targetRoot, true, outsideMessage); err != nil {
 		return nil, err
 	}
 	if maxFiles <= 0 {
@@ -154,14 +160,14 @@ func (s *FileService) ListFiles(path string, recursive bool, maxFiles int) ([]Fi
 			if current == target {
 				return nil
 			}
-			if _, err := s.ensureNoSymlinkInExistingComponents(current, true); err != nil {
+			if _, err := s.ensureNoSymlinkInExistingComponentsWithin(current, targetRoot, true, outsideMessage); err != nil {
 				return err
 			}
 			info, err := entry.Info()
 			if err != nil {
 				return err
 			}
-			files = append(files, s.fileInfo(current, info))
+			files = append(files, s.fileInfo(current, info, targetRoot))
 			if len(files) >= maxFiles {
 				return filepath.SkipAll
 			}
@@ -181,14 +187,14 @@ func (s *FileService) ListFiles(path string, recursive bool, maxFiles int) ([]Fi
 		if len(files) >= maxFiles {
 			break
 		}
-		if _, err := s.ensureNoSymlinkInExistingComponents(filepath.Join(target, entry.Name()), true); err != nil {
+		if _, err := s.ensureNoSymlinkInExistingComponentsWithin(filepath.Join(target, entry.Name()), targetRoot, true, outsideMessage); err != nil {
 			return nil, err
 		}
 		info, err := entry.Info()
 		if err != nil {
 			return nil, err
 		}
-		files = append(files, s.fileInfo(filepath.Join(target, entry.Name()), info))
+		files = append(files, s.fileInfo(filepath.Join(target, entry.Name()), info, targetRoot))
 	}
 	return files, nil
 }
@@ -337,6 +343,21 @@ func (s *FileService) resolveWritablePath(input string) (string, string, string,
 		relative = strings.TrimPrefix(relative, "/")
 		target, err := resolveWithinBase(s.canonicalTempRoot, relative, "路径只能写入 /tmp")
 		return target, s.canonicalTempRoot, "路径只能写入 /tmp", err
+	}
+	target, err := s.resolveLexical(input)
+	return target, s.canonicalRoot, "路径不能超出工作目录", err
+}
+
+func (s *FileService) resolveReadablePath(input string) (string, string, string, error) {
+	cleaned := filepath.ToSlash(filepath.Clean(strings.TrimSpace(input)))
+	if cleaned == "." || cleaned == "" {
+		cleaned = policy.WorkspaceRoot
+	}
+	if cleaned == policy.TempRoot || strings.HasPrefix(cleaned, policy.TempRoot+"/") {
+		relative := strings.TrimPrefix(cleaned, policy.TempRoot)
+		relative = strings.TrimPrefix(relative, "/")
+		target, err := resolveWithinBase(s.canonicalTempRoot, relative, "路径只能位于 /workspace 或 /tmp")
+		return target, s.canonicalTempRoot, "路径只能位于 /workspace 或 /tmp", err
 	}
 	target, err := s.resolveLexical(input)
 	return target, s.canonicalRoot, "路径不能超出工作目录", err
@@ -559,13 +580,17 @@ func validSkillKey(value string) bool {
 	return true
 }
 
-func (s *FileService) fileInfo(path string, info os.FileInfo) FileInfo {
-	relative, err := filepath.Rel(s.canonicalRoot, path)
+func (s *FileService) fileInfo(path string, info os.FileInfo, base string) FileInfo {
+	relative, err := filepath.Rel(base, path)
 	if err != nil {
 		relative = info.Name()
 	}
+	relative = filepath.ToSlash(relative)
+	if base == s.canonicalTempRoot {
+		relative = policy.TempRoot + "/" + strings.TrimPrefix(relative, "./")
+	}
 	return FileInfo{
-		RelativePath: filepath.ToSlash(relative),
+		RelativePath: relative,
 		Size:         info.Size(),
 		IsDir:        info.IsDir(),
 	}

@@ -56,6 +56,7 @@ func TestValidateCommandAllowsTmpExecutionPaths(t *testing.T) {
 	for _, command := range []string{
 		"mkdir -p /tmp/docx-work",
 		"cp /workspace/artifacts/Program.cs /tmp/docx-work/Program.cs",
+		"mkdir -p /tmp/docx-work && cp /workspace/work/test.txt /tmp/docx-work/test.txt && ls -l /tmp/docx-work/test.txt",
 		"ls -la /tmp/docx-work/",
 		"go build -o/tmp/app",
 		"javac -d/tmp/classes",

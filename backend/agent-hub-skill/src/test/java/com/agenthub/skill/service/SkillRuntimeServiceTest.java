@@ -71,6 +71,7 @@ class SkillRuntimeServiceTest {
                 .contains("sandbox.write_workspace_file")
                 .contains("/tmp/docx-work/Program.cs")
                 .contains("bash /workspace/skills/docx/scripts/docx build")
+                .contains("timeout_seconds to 300")
                 .contains("/workspace/artifacts")
                 .contains(".docx");
     }

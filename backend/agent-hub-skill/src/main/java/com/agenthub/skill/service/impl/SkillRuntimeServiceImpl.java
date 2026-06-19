@@ -125,6 +125,8 @@ public class SkillRuntimeServiceImpl implements SkillRuntimeService {
                 .append("Do not use /workspace/work/docx/Program.cs for docx Program.cs. ")
                 .append("Build with sandbox.exec command `bash /workspace/skills/docx/scripts/docx build ")
                 .append("/workspace/artifacts/南宁市政府端午放假通知.docx` and working_dir `/workspace`. ")
+                .append("For docx init/build, always set timeout_seconds to 300; never use 120 seconds. ")
+                .append("Do not loop on init/build probes after a timeout; retry once with timeout_seconds=300 and then report the exact error. ")
                 .append("Do not use `cd /workspace/skills/docx && ./scripts/docx ...`.\n");
     }
 

@@ -115,18 +115,24 @@ public class SkillRuntimeServiceImpl implements SkillRuntimeService {
             return;
         }
         builder.append("docx skill 工作流：必须先调用 skill.read 读取完整说明；")
-                .append("中间源码请用 sandbox.write_workspace_file 写入 /tmp/docx-work/Program.cs；")
+                .append("C# 中间源码请用 sandbox.write_workspace_file 写入 /tmp/docx-work/Program.cs；")
                 .append("运行 /workspace/skills/docx/scripts 下的脚本或 python-docx 时，")
                 .append("最终 .docx 必须生成到 /workspace/artifacts；")
                 .append("不要把 .cs/.py/.md 中间文件写入 /workspace/artifacts，")
                 .append("只有最终 .docx 才是交付文件。\n");
+        builder.append("docx fast path: for simple Chinese official notices/red-head documents without a supplied template, ")
+                .append("prefer python-docx first. Write /workspace/work/docx_gen.py with sandbox.write_workspace_file, ")
+                .append("execute `python3 /workspace/work/docx_gen.py` with timeout_seconds=120, and save the final .docx under ")
+                .append("/workspace/artifacts. When setting CJK fonts, use run._element.get_or_add_rPr() plus ")
+                .append("OxmlElement('w:rFonts'); do not access run.font.element.rPr. ")
+                .append("If this fast path succeeds, do not attempt the C# build route.\n");
         builder.append("docx create override: for the C# creation route, write Program.cs directly to ")
                 .append("/tmp/docx-work/Program.cs with sandbox.write_workspace_file. ")
                 .append("Do not use /workspace/work/docx/Program.cs for docx Program.cs. ")
                 .append("Build with sandbox.exec command `bash /workspace/skills/docx/scripts/docx build ")
                 .append("/workspace/artifacts/南宁市政府端午放假通知.docx` and working_dir `/workspace`. ")
                 .append("For docx init/build, always set timeout_seconds to 300; never use 120 seconds. ")
-                .append("Do not loop on init/build probes after a timeout; retry once with timeout_seconds=300 and then report the exact error. ")
+                .append("Do not loop on init/build probes after a timeout; immediately fall back to python-docx once with timeout_seconds=120. ")
                 .append("Do not use `cd /workspace/skills/docx && ./scripts/docx ...`.\n");
     }
 

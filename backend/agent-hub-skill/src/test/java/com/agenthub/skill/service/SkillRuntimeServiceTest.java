@@ -69,6 +69,9 @@ class SkillRuntimeServiceTest {
         assertThat(context.prompt()).contains("/workspace/skills/docx");
         assertThat(context.prompt())
                 .contains("sandbox.write_workspace_file")
+                .contains("docx fast path")
+                .contains("/workspace/work/docx_gen.py")
+                .contains("timeout_seconds=120")
                 .contains("/tmp/docx-work/Program.cs")
                 .contains("bash /workspace/skills/docx/scripts/docx build")
                 .contains("timeout_seconds to 300")

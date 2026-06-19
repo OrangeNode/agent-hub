@@ -53,30 +53,31 @@ func TestFileServiceReadTruncates(t *testing.T) {
 	}
 }
 
-func TestFileServiceWriteDocxTempWorkFile(t *testing.T) {
+func TestFileServiceWriteTempWorkFile(t *testing.T) {
 	service := NewFileService(t.TempDir())
-	target := "/tmp/docx-work/agent-hub-file-service-test/Program.cs"
+	target := "/tmp/agent-hub-file-service-test/Program.cs"
 	t.Cleanup(func() {
-		_ = os.RemoveAll(filepath.Join(os.TempDir(), "docx-work", "agent-hub-file-service-test"))
+		_ = os.RemoveAll(filepath.Join(os.TempDir(), "agent-hub-file-service-test"))
 	})
 
 	if err := service.WriteFile(target, []byte("class Program {}"), false); err != nil {
-		t.Fatalf("WriteFile temp docx work error = %v", err)
+		t.Fatalf("WriteFile temp work error = %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(os.TempDir(), "docx-work", "agent-hub-file-service-test", "Program.cs"))
+	data, err := os.ReadFile(filepath.Join(os.TempDir(), "agent-hub-file-service-test", "Program.cs"))
 	if err != nil {
-		t.Fatalf("ReadFile temp docx work error = %v", err)
+		t.Fatalf("ReadFile temp work error = %v", err)
 	}
 	if string(data) != "class Program {}" {
 		t.Fatalf("content = %q, want class Program {}", string(data))
 	}
 }
 
-func TestFileServiceRejectsOtherTempWrite(t *testing.T) {
+func TestFileServiceRejectsPathOutsideWorkspaceAndTempWrite(t *testing.T) {
 	service := NewFileService(t.TempDir())
+	outside := filepath.Join(t.TempDir(), "Program.cs")
 
-	if err := service.WriteFile("/tmp/other/Program.cs", []byte("bad"), false); err == nil {
-		t.Fatal("expected WriteFile to reject temp path outside /tmp/docx-work")
+	if err := service.WriteFile(outside, []byte("bad"), false); err == nil {
+		t.Fatal("expected WriteFile to reject path outside workspace and temp")
 	}
 }
 

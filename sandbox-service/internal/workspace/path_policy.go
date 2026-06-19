@@ -11,7 +11,7 @@ type PathPolicy struct {
 	root string
 }
 
-const tempDocxWorkRoot = "/tmp/docx-work"
+const tempRoot = "/tmp"
 
 func NewPathPolicy(root string) PathPolicy {
 	return PathPolicy{root: strings.TrimRight(root, "/")}
@@ -54,7 +54,7 @@ func (p PathPolicy) resolveWithDefault(input string, defaultDir string, rejectEm
 		cleaned = defaultDir + "/" + cleaned
 	}
 	cleaned = path.Clean(cleaned)
-	if cleaned == tempDocxWorkRoot || strings.HasPrefix(cleaned, tempDocxWorkRoot+"/") {
+	if cleaned == tempRoot || strings.HasPrefix(cleaned, tempRoot+"/") {
 		return cleaned, nil
 	}
 	if !strings.HasPrefix(cleaned, p.root+"/") && cleaned != p.root {

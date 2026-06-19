@@ -212,7 +212,7 @@ class SandboxToolServiceImplTest {
     }
 
     @Test
-    void shouldWriteDocxTempWorkFileWithoutPersistingArtifact() {
+    void shouldWriteTempWorkFileWithoutPersistingArtifact() {
         SandboxClient client = mock(SandboxClient.class);
         SandboxArtifactMapper artifactMapper = mock(SandboxArtifactMapper.class);
         SandboxSessionMapper sessionMapper = mock(SandboxSessionMapper.class);
@@ -226,9 +226,9 @@ class SandboxToolServiceImplTest {
         );
 
         service.writeWorkspaceFile(7L, 100L, "sbx_1",
-                "/tmp/docx-work/Program.cs", "class Program {}", false);
+                "/tmp/other-skill/Program.cs", "class Program {}", false);
 
-        verify(client).writeFile("sbx_1", "/tmp/docx-work/Program.cs", "class Program {}", false);
+        verify(client).writeFile("sbx_1", "/tmp/other-skill/Program.cs", "class Program {}", false);
         verify(artifactMapper, never()).insert(any(com.agenthub.sandbox.artifact.entity.SandboxArtifact.class));
     }
 

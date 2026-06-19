@@ -46,21 +46,21 @@ func TestResolveNormalizesBackslash(t *testing.T) {
 	}
 }
 
-func TestResolveAllowsDocxTempWorkPath(t *testing.T) {
+func TestResolveAllowsTempPath(t *testing.T) {
 	p := NewPathPolicy("/workspace")
-	path, err := p.Resolve("/tmp/docx-work/Program.cs")
+	path, err := p.Resolve("/tmp/other-skill/Program.cs")
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	if path != "/tmp/docx-work/Program.cs" {
+	if path != "/tmp/other-skill/Program.cs" {
 		t.Fatalf("path = %q", path)
 	}
 }
 
-func TestResolveRejectsOtherTempPath(t *testing.T) {
+func TestResolveRejectsPathOutsideWorkspaceAndTemp(t *testing.T) {
 	p := NewPathPolicy("/workspace")
-	if _, err := p.Resolve("/tmp/other/Program.cs"); err == nil {
-		t.Fatal("expected other temp path to be rejected")
+	if _, err := p.Resolve("/var/tmp/Program.cs"); err == nil {
+		t.Fatal("expected path outside workspace and temp to be rejected")
 	}
 }
 

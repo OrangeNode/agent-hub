@@ -332,14 +332,11 @@ func (s *FileService) resolveWritablePath(input string) (string, string, string,
 	if cleaned == "." || cleaned == "" {
 		cleaned = policy.WorkspaceRoot
 	}
-	if cleaned == policy.TempRoot+"/docx-work" || strings.HasPrefix(cleaned, policy.TempRoot+"/docx-work/") {
+	if cleaned == policy.TempRoot || strings.HasPrefix(cleaned, policy.TempRoot+"/") {
 		relative := strings.TrimPrefix(cleaned, policy.TempRoot)
 		relative = strings.TrimPrefix(relative, "/")
-		target, err := resolveWithinBase(s.canonicalTempRoot, relative, "路径只能写入 /tmp/docx-work")
-		return target, s.canonicalTempRoot, "路径只能写入 /tmp/docx-work", err
-	}
-	if cleaned == policy.TempRoot || strings.HasPrefix(cleaned, policy.TempRoot+"/") {
-		return "", "", "路径只能写入 /tmp/docx-work", errors.New("路径只能写入 /tmp/docx-work")
+		target, err := resolveWithinBase(s.canonicalTempRoot, relative, "路径只能写入 /tmp")
+		return target, s.canonicalTempRoot, "路径只能写入 /tmp", err
 	}
 	target, err := s.resolveLexical(input)
 	return target, s.canonicalRoot, "路径不能超出工作目录", err

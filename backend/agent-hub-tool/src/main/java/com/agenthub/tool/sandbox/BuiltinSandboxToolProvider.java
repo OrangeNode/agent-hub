@@ -73,7 +73,7 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
             ),
             new LlmToolDefinition(
                     "sandbox.write_workspace_file",
-                    "写入中间工作文件，不作为交付文件登记；路径必须位于 /workspace/work 或 /tmp/docx-work，最终文档请用 sandbox.exec 生成到 /workspace/artifacts",
+                    "写入中间工作文件，不作为交付文件登记；路径必须位于 /workspace/work 或 /tmp，最终文档请用 sandbox.exec 生成到 /workspace/artifacts",
                     objectParameters(
                             properties(
                                     property("path", "string"),

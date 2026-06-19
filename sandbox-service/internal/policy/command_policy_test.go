@@ -56,6 +56,7 @@ func TestValidateCommandAllowsTmpExecutionPaths(t *testing.T) {
 	for _, command := range []string{
 		"mkdir -p /tmp/docx-work",
 		"cp /workspace/artifacts/Program.cs /tmp/docx-work/Program.cs",
+		"cp /workspace/work/data.txt /tmp/other-skill/data.txt",
 		"mkdir -p /tmp/docx-work && cp /workspace/work/test.txt /tmp/docx-work/test.txt && ls -l /tmp/docx-work/test.txt",
 		"ls -la /tmp/docx-work/",
 		"go build -o/tmp/app",
@@ -68,6 +69,10 @@ func TestValidateCommandAllowsTmpExecutionPaths(t *testing.T) {
 	}
 
 	req := CommandRequest{Command: "pwd", WorkingDir: "/tmp/docx-work", TimeoutSeconds: 30}
+	if err := policy.Validate(req); err != nil {
+		t.Fatalf("Validate working dir %q error = %v", req.WorkingDir, err)
+	}
+	req = CommandRequest{Command: "pwd", WorkingDir: "/tmp/other-skill", TimeoutSeconds: 30}
 	if err := policy.Validate(req); err != nil {
 		t.Fatalf("Validate working dir %q error = %v", req.WorkingDir, err)
 	}

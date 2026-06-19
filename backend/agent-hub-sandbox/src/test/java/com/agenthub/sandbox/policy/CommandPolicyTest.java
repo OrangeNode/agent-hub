@@ -64,6 +64,9 @@ class CommandPolicyTest {
         assertThatCode(() -> policy.validate(
                 "cp /workspace/artifacts/Program.cs /tmp/docx-work/Program.cs", "/workspace", 30))
                 .doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate(
+                "cp /workspace/work/data.txt /tmp/other-skill/data.txt", "/workspace", 30))
+                .doesNotThrowAnyException();
         assertThatCode(() -> policy.validate("dotnet build /tmp/docx-work/Docx.csproj", "/workspace", 30))
                 .doesNotThrowAnyException();
         assertThatCode(() -> policy.validate(
@@ -76,6 +79,8 @@ class CommandPolicyTest {
     @Test
     void shouldAllowTemporaryBuildWorkingDirectory() {
         assertThatCode(() -> policy.validate("dotnet build Docx.csproj", "/tmp/docx-work", 30))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate("python3 build.py", "/tmp/other-skill", 30))
                 .doesNotThrowAnyException();
     }
 
@@ -99,10 +104,8 @@ class CommandPolicyTest {
                 .isEqualTo("/workspace/work/docx/Program.cs");
         assertThat(policy.validateWorkspaceWorkPath("/tmp/docx-work/Program.cs"))
                 .isEqualTo("/tmp/docx-work/Program.cs");
-        assertThatThrownBy(() -> policy.validateWorkspaceWorkPath("/tmp/other/Program.cs"))
-                .isInstanceOf(BusinessException.class)
-                .extracting("errorCode")
-                .isEqualTo(ErrorCode.PATH_DENIED);
+        assertThat(policy.validateWorkspaceWorkPath("/tmp/other/Program.cs"))
+                .isEqualTo("/tmp/other/Program.cs");
         assertThatThrownBy(() -> policy.validateWorkspaceWorkPath("/workspace/artifacts/Program.cs"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")

@@ -259,6 +259,24 @@ class BuiltinSandboxToolProviderTest {
     }
 
     @Test
+    void shouldWriteTempWorkspaceFileWithoutUsingDeliverableWriter() {
+        when(sandboxSessionService.ensureSession(7L, 100L)).thenReturn("session-1");
+
+        ToolExecutionResult result = provider.execute(
+                request("call-1", "sandbox.write_workspace_file", Map.of(
+                        "path", "/tmp/other-skill/cache.txt",
+                        "content", "cache"
+                )),
+                context(ToolEventSink.noop())
+        );
+
+        assertThat(result.status()).isEqualTo("completed");
+        assertThat(result.content()).contains("/tmp/other-skill/cache.txt");
+        verify(sandboxToolService).writeWorkspaceFile(7L, 100L, "session-1",
+                "/tmp/other-skill/cache.txt", "cache", false);
+    }
+
+    @Test
     void shouldParseStringNumberAndFallbackNullForUploadAttachmentId() {
         when(sandboxSessionService.ensureSession(7L, 100L)).thenReturn("session-1");
 

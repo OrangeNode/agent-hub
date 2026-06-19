@@ -184,6 +184,14 @@ public class SandboxToolServiceImpl implements SandboxToolService {
     }
 
     @Override
+    public void writeWorkspaceFile(Long userId, Long conversationId, String sandboxSessionId,
+                                   String path, String content, boolean append) {
+        requireOwnedSession(userId, conversationId, sandboxSessionId);
+        String normalizedPath = commandPolicy.validateWorkspaceWorkPath(path);
+        client.writeFile(sandboxSessionId, normalizedPath, content == null ? "" : content, append);
+    }
+
+    @Override
     public void uploadFile(Long userId, Long conversationId, String sandboxSessionId, Long attachmentId, String targetPath) {
         requireOwnedSession(userId, conversationId, sandboxSessionId);
         String normalizedPath = commandPolicy.validateInputPath(targetPath);

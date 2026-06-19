@@ -15,6 +15,8 @@ public class CommandPolicy {
     private static final String INPUT_DIR = "/workspace/input";
     private static final String ARTIFACTS_DIR = "/workspace/artifacts";
     private static final String OUTPUT_DIR = "/workspace/output";
+    private static final String WORK_DIR = "/workspace/work";
+    private static final String DOCX_TEMP_WORK_DIR = "/tmp/docx-work";
     private static final String TEMP_ROOT = "/tmp";
     private static final List<String> ALLOWED_EXECUTION_ROOTS = List.of(WORKSPACE_ROOT, TEMP_ROOT);
     private static final Pattern COMMAND_TOKEN_SEPARATOR = Pattern.compile("[\\s;|&<>\"'`$(){}\\[\\],]+");
@@ -149,6 +151,14 @@ public class CommandPolicy {
         }
         if (!isUnder(normalized, ARTIFACTS_DIR)) {
             throw new BusinessException(ErrorCode.PATH_DENIED, "输出文件只能写入 /workspace/artifacts");
+        }
+        return normalized;
+    }
+
+    public String validateWorkspaceWorkPath(String path) {
+        String normalized = normalizeWorkspacePath(path, WORK_DIR);
+        if (!isUnder(normalized, WORK_DIR) && !isUnder(normalized, DOCX_TEMP_WORK_DIR)) {
+            throw new BusinessException(ErrorCode.PATH_DENIED, "工作文件只能写入 /workspace/work 或 /tmp/docx-work");
         }
         return normalized;
     }

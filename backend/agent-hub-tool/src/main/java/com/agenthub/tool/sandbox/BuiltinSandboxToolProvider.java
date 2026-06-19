@@ -21,14 +21,16 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
 
     private static final String DEFAULT_WORKING_DIR = "/workspace";
     private static final int DEFAULT_EXEC_TIMEOUT_SECONDS = 300;
-    private static final int DEFAULT_READ_MAX_BYTES = 4096;
+    private static final int DEFAULT_READ_MAX_BYTES = 32768;
     private static final String DEFAULT_OUTPUT_PATH = "/workspace/artifacts/output.txt";
+    private static final String DEFAULT_WORK_FILE_PATH = "/workspace/work/output.txt";
     private static final String DEFAULT_UPLOAD_PATH = "/workspace/input/upload.bin";
     private static final int WRITE_FILE_PREVIEW_MAX_LENGTH = 4000;
     private static final Set<String> SUPPORTED_TOOL_NAMES = Set.of(
             "sandbox.exec",
             "sandbox.read_file",
             "sandbox.write_file",
+            "sandbox.write_workspace_file",
             "sandbox.list_files",
             "sandbox.upload_file"
     );
@@ -60,6 +62,18 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
             new LlmToolDefinition(
                     "sandbox.write_file",
                     "写入交付给用户的输出文件，路径必须位于 /workspace/artifacts",
+                    objectParameters(
+                            properties(
+                                    property("path", "string"),
+                                    property("content", "string"),
+                                    property("append", "boolean")
+                            ),
+                            List.of("path", "content")
+                    )
+            ),
+            new LlmToolDefinition(
+                    "sandbox.write_workspace_file",
+                    "写入中间工作文件，不作为交付文件登记；路径必须位于 /workspace/work 或 /tmp/docx-work，最终文档请用 sandbox.exec 生成到 /workspace/artifacts",
                     objectParameters(
                             properties(
                                     property("path", "string"),
@@ -126,6 +140,7 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
                 case "sandbox.exec" -> executeCommand(request, context, sandboxSessionId);
                 case "sandbox.read_file" -> readFile(request, context, sandboxSessionId);
                 case "sandbox.write_file" -> writeFile(request, context, sandboxSessionId);
+                case "sandbox.write_workspace_file" -> writeWorkspaceFile(request, context, sandboxSessionId);
                 case "sandbox.list_files" -> listFiles(request, context, sandboxSessionId);
                 case "sandbox.upload_file" -> uploadFile(request, context, sandboxSessionId);
                 default -> throw new IllegalStateException("不支持的工具: " + toolName);
@@ -189,6 +204,26 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
                 booleanArg(request, "append", false)
         );
         return "文件写入完成: " + path;
+    }
+
+    private String writeWorkspaceFile(
+            ToolExecutionRequest request,
+            ToolExecutionContext context,
+            String sandboxSessionId
+    ) {
+        String path = stringArg(request, "path", DEFAULT_WORK_FILE_PATH);
+        String content = stringArg(request, "content", "");
+        context.eventSink().output(request.toolCallId(), request.toolName(), "stdout",
+                formatWriteFilePreview(path, content));
+        sandboxToolService.writeWorkspaceFile(
+                context.userId(),
+                context.conversationId(),
+                sandboxSessionId,
+                path,
+                content,
+                booleanArg(request, "append", false)
+        );
+        return "工作文件写入完成: " + path;
     }
 
     private String listFiles(

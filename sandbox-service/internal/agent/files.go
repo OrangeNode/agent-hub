@@ -66,22 +66,22 @@ func (s *FileService) WriteFile(path string, content []byte, appendMode bool) er
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	target, err := s.resolveLexical(path)
+	target, targetRoot, outsideMessage, err := s.resolveWritablePath(path)
 	if err != nil {
 		return err
 	}
 	parent := filepath.Dir(target)
-	if _, err := s.ensureNoSymlinkInExistingComponents(parent, false); err != nil {
+	if _, err := s.ensureNoSymlinkInExistingComponentsWithin(parent, targetRoot, false, outsideMessage); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return err
 	}
-	if _, err := s.ensureNoSymlinkInExistingComponents(parent, true); err != nil {
+	if _, err := s.ensureNoSymlinkInExistingComponentsWithin(parent, targetRoot, true, outsideMessage); err != nil {
 		return err
 	}
 	if _, err := os.Lstat(target); err == nil {
-		if _, err := s.ensureNoSymlinkInExistingComponents(target, true); err != nil {
+		if _, err := s.ensureNoSymlinkInExistingComponentsWithin(target, targetRoot, true, outsideMessage); err != nil {
 			return err
 		}
 	} else if !os.IsNotExist(err) {
@@ -325,6 +325,24 @@ func (s *FileService) resolveLexical(input string) (string, error) {
 		return "", errors.New("路径不能超出工作目录")
 	}
 	return cleanTarget, nil
+}
+
+func (s *FileService) resolveWritablePath(input string) (string, string, string, error) {
+	cleaned := filepath.ToSlash(filepath.Clean(strings.TrimSpace(input)))
+	if cleaned == "." || cleaned == "" {
+		cleaned = policy.WorkspaceRoot
+	}
+	if cleaned == policy.TempRoot+"/docx-work" || strings.HasPrefix(cleaned, policy.TempRoot+"/docx-work/") {
+		relative := strings.TrimPrefix(cleaned, policy.TempRoot)
+		relative = strings.TrimPrefix(relative, "/")
+		target, err := resolveWithinBase(s.canonicalTempRoot, relative, "路径只能写入 /tmp/docx-work")
+		return target, s.canonicalTempRoot, "路径只能写入 /tmp/docx-work", err
+	}
+	if cleaned == policy.TempRoot || strings.HasPrefix(cleaned, policy.TempRoot+"/") {
+		return "", "", "路径只能写入 /tmp/docx-work", errors.New("路径只能写入 /tmp/docx-work")
+	}
+	target, err := s.resolveLexical(input)
+	return target, s.canonicalRoot, "路径不能超出工作目录", err
 }
 
 func (s *FileService) resolveExistingNoSymlink(input string) (string, error) {

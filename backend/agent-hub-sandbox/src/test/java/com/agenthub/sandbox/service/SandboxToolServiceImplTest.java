@@ -191,6 +191,48 @@ class SandboxToolServiceImplTest {
     }
 
     @Test
+    void shouldWriteWorkspaceWorkFileWithoutPersistingArtifact() {
+        SandboxClient client = mock(SandboxClient.class);
+        SandboxArtifactMapper artifactMapper = mock(SandboxArtifactMapper.class);
+        SandboxSessionMapper sessionMapper = mock(SandboxSessionMapper.class);
+        when(sessionMapper.selectBySandboxSessionId("sbx_1")).thenReturn(session(55L));
+        SandboxToolServiceImpl service = new SandboxToolServiceImpl(
+                client,
+                new CommandPolicy(200, 60),
+                sessionMapper,
+                mock(SandboxExecutionMapper.class),
+                artifactMapper
+        );
+
+        service.writeWorkspaceFile(7L, 100L, "sbx_1",
+                "/workspace/work/docx/Program.cs", "class Program {}", false);
+
+        verify(client).writeFile("sbx_1", "/workspace/work/docx/Program.cs", "class Program {}", false);
+        verify(artifactMapper, never()).insert(any(com.agenthub.sandbox.artifact.entity.SandboxArtifact.class));
+    }
+
+    @Test
+    void shouldWriteDocxTempWorkFileWithoutPersistingArtifact() {
+        SandboxClient client = mock(SandboxClient.class);
+        SandboxArtifactMapper artifactMapper = mock(SandboxArtifactMapper.class);
+        SandboxSessionMapper sessionMapper = mock(SandboxSessionMapper.class);
+        when(sessionMapper.selectBySandboxSessionId("sbx_1")).thenReturn(session(55L));
+        SandboxToolServiceImpl service = new SandboxToolServiceImpl(
+                client,
+                new CommandPolicy(200, 60),
+                sessionMapper,
+                mock(SandboxExecutionMapper.class),
+                artifactMapper
+        );
+
+        service.writeWorkspaceFile(7L, 100L, "sbx_1",
+                "/tmp/docx-work/Program.cs", "class Program {}", false);
+
+        verify(client).writeFile("sbx_1", "/tmp/docx-work/Program.cs", "class Program {}", false);
+        verify(artifactMapper, never()).insert(any(com.agenthub.sandbox.artifact.entity.SandboxArtifact.class));
+    }
+
+    @Test
     void shouldPersistArtifactsReturnedByWriteFile() {
         SandboxClient client = mock(SandboxClient.class);
         SandboxArtifactMapper artifactMapper = mock(SandboxArtifactMapper.class);

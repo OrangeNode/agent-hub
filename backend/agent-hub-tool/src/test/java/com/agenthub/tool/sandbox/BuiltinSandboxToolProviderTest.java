@@ -44,6 +44,7 @@ class BuiltinSandboxToolProviderTest {
                         "sandbox.exec",
                         "sandbox.read_file",
                         "sandbox.write_file",
+                        "sandbox.write_workspace_file",
                         "sandbox.list_files",
                         "sandbox.upload_file"
                 );
@@ -100,7 +101,7 @@ class BuiltinSandboxToolProviderTest {
         );
 
         verify(sandboxToolService).readFile(7L, 100L, "session-1", "/workspace/a.txt", 2048);
-        verify(sandboxToolService).readFile(7L, 100L, "session-1", "/workspace/b.txt", 4096);
+        verify(sandboxToolService).readFile(7L, 100L, "session-1", "/workspace/b.txt", 32768);
     }
 
     @Test
@@ -240,6 +241,24 @@ class BuiltinSandboxToolProviderTest {
     }
 
     @Test
+    void shouldWriteWorkspaceFileWithoutUsingDeliverableWriter() {
+        when(sandboxSessionService.ensureSession(7L, 100L)).thenReturn("session-1");
+
+        ToolExecutionResult result = provider.execute(
+                request("call-1", "sandbox.write_workspace_file", Map.of(
+                        "path", "/workspace/work/docx/Program.cs",
+                        "content", "class Program {}"
+                )),
+                context(ToolEventSink.noop())
+        );
+
+        assertThat(result.status()).isEqualTo("completed");
+        assertThat(result.content()).contains("/workspace/work/docx/Program.cs");
+        verify(sandboxToolService).writeWorkspaceFile(7L, 100L, "session-1",
+                "/workspace/work/docx/Program.cs", "class Program {}", false);
+    }
+
+    @Test
     void shouldParseStringNumberAndFallbackNullForUploadAttachmentId() {
         when(sandboxSessionService.ensureSession(7L, 100L)).thenReturn("session-1");
 
@@ -266,7 +285,7 @@ class BuiltinSandboxToolProviderTest {
     @Test
     void shouldReturnFailedResultWhenSandboxDependencyThrows() {
         when(sandboxSessionService.ensureSession(7L, 100L)).thenReturn("session-1");
-        when(sandboxToolService.readFile(7L, 100L, "session-1", "/workspace/missing.txt", 4096))
+        when(sandboxToolService.readFile(7L, 100L, "session-1", "/workspace/missing.txt", 32768))
                 .thenThrow(new IllegalStateException("文件不存在"));
 
         ToolExecutionResult result = provider.execute(

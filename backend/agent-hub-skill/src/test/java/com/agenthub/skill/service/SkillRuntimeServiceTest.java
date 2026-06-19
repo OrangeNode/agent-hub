@@ -67,6 +67,12 @@ class SkillRuntimeServiceTest {
                     assertThat(runtimePackage.zipSha256()).hasSize(64);
                 });
         assertThat(context.prompt()).contains("/workspace/skills/docx");
+        assertThat(context.prompt())
+                .contains("sandbox.write_workspace_file")
+                .contains("/tmp/docx-work/Program.cs")
+                .contains("bash /workspace/skills/docx/scripts/docx build")
+                .contains("/workspace/artifacts")
+                .contains(".docx");
     }
 
     @Test

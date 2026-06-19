@@ -20,6 +20,9 @@ public interface SandboxToolService {
     void writeFile(Long userId, Long conversationId, String sandboxSessionId,
                    String path, String content, boolean append);
 
+    void writeWorkspaceFile(Long userId, Long conversationId, String sandboxSessionId,
+                            String path, String content, boolean append);
+
     void uploadFile(Long userId, Long conversationId, String sandboxSessionId,
                     Long attachmentId, String targetPath);
 

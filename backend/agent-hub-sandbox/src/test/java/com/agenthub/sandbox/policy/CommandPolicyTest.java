@@ -92,6 +92,24 @@ class CommandPolicyTest {
     }
 
     @Test
+    void shouldNormalizeWorkspaceWorkPathAndRejectArtifactsForWorkFiles() {
+        assertThat(policy.validateWorkspaceWorkPath("docx/Program.cs"))
+                .isEqualTo("/workspace/work/docx/Program.cs");
+        assertThat(policy.validateWorkspaceWorkPath("/workspace/work/docx/Program.cs"))
+                .isEqualTo("/workspace/work/docx/Program.cs");
+        assertThat(policy.validateWorkspaceWorkPath("/tmp/docx-work/Program.cs"))
+                .isEqualTo("/tmp/docx-work/Program.cs");
+        assertThatThrownBy(() -> policy.validateWorkspaceWorkPath("/tmp/other/Program.cs"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.PATH_DENIED);
+        assertThatThrownBy(() -> policy.validateWorkspaceWorkPath("/workspace/artifacts/Program.cs"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.PATH_DENIED);
+    }
+
+    @Test
     void shouldNormalizeRelativeInputPathToInputDirectory() {
         assertThat(policy.validateInputPath("data.csv"))
                 .isEqualTo("/workspace/input/data.csv");

@@ -49,7 +49,9 @@ func TestMinimalRootfsIncludesPdfAndEditablePptRuntimeDependencies(t *testing.T)
 	for _, expected := range []string{
 		"python3-reportlab",
 		"python3-pil",
-		"python3-pptx",
+		"python-pptx",
+		"PIP_BREAK_SYSTEM_PACKAGES=1",
+		"--break-system-packages",
 		"python3-pypdf",
 		"python-is-python3",
 		"poppler-utils",

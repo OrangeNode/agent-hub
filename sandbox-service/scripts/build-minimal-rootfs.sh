@@ -61,7 +61,6 @@ RUNTIME_PACKAGES=(
   python3-pandas
   python3-pil
   python3-pip
-  python3-pptx
   python3-pypdf
   python3-reportlab
   python3-venv
@@ -74,10 +73,20 @@ RUNTIME_PACKAGES=(
   zip
 )
 
+PYTHON_PACKAGES=(
+  python-pptx
+)
+
 EXTRA_PACKAGES=()
 if [[ -n "${SANDBOX_ROOTFS_EXTRA_PACKAGES:-}" ]]; then
   # shellcheck disable=SC2206
   EXTRA_PACKAGES=(${SANDBOX_ROOTFS_EXTRA_PACKAGES})
+fi
+
+EXTRA_PYTHON_PACKAGES=()
+if [[ -n "${SANDBOX_ROOTFS_EXTRA_PYTHON_PACKAGES:-}" ]]; then
+  # shellcheck disable=SC2206
+  EXTRA_PYTHON_PACKAGES=(${SANDBOX_ROOTFS_EXTRA_PYTHON_PACKAGES})
 fi
 
 require_linux() {
@@ -159,8 +168,20 @@ EOF
   trap cleanup_chroot_mounts RETURN
   sudo chroot "${ROOTFS_DIR}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get update
   sudo chroot "${ROOTFS_DIR}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${all_packages[@]}"
+  install_python_packages
   warm_dotnet_package_cache
   sudo chroot "${ROOTFS_DIR}" apt-get clean
+}
+
+install_python_packages() {
+  local python_packages=("${PYTHON_PACKAGES[@]}" "${EXTRA_PYTHON_PACKAGES[@]}")
+  if (( ${#python_packages[@]} == 0 )); then
+    return
+  fi
+  echo "瀹夎 rootfs Python 鍖? ${python_packages[*]}"
+  sudo chroot "${ROOTFS_DIR}" /usr/bin/env \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    python3 -m pip install --no-cache-dir --break-system-packages "${python_packages[@]}"
 }
 
 warm_dotnet_package_cache() {

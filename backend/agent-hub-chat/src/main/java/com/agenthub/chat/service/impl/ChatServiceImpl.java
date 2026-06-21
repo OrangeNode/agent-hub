@@ -86,6 +86,7 @@ public class ChatServiceImpl implements ChatService {
     private static final String STATUS_DELETED = "DELETED";
     private static final String STATUS_COMPLETED = "COMPLETED";
     private static final String STATUS_STREAMING = "STREAMING";
+    private static final String STATUS_STOPPED = "STOPPED";
     private static final String STATUS_FAILED = "FAILED";
     private static final String ROLE_USER = "USER";
     private static final String ROLE_ASSISTANT = "ASSISTANT";
@@ -766,6 +767,7 @@ public class ChatServiceImpl implements ChatService {
         StringBuilder reasoningContent = new StringBuilder();
         ProcessEventRecorder processRecorder = new ProcessEventRecorder();
         List<Long> skillIds = skillContext == null ? List.of() : skillContext.skillIds();
+        AtomicBoolean finished = new AtomicBoolean(false);
         ToolExecutionContext toolContext = new ToolExecutionContext(
                 userId,
                 conversationId,
@@ -776,11 +778,14 @@ public class ChatServiceImpl implements ChatService {
                     String safeStream = hasText(stream) ? stream : "stdout";
                     String safeOutput = defaultString(output);
                     processRecorder.appendToolOutput(toolCallId, toolName, safeStream, safeOutput);
-                    send(emitter, SseEventType.TOOL_OUTPUT,
-                            new SseEventData.ToolOutput(toolCallId, safeStream, safeOutput));
+                    if (!send(emitter, SseEventType.TOOL_OUTPUT,
+                            new SseEventData.ToolOutput(toolCallId, safeStream, safeOutput))
+                            && finished.compareAndSet(false, true)) {
+                        stopAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED,
+                                processRecorder);
+                    }
                 }
         );
-        AtomicBoolean finished = new AtomicBoolean(false);
         // 只有用户开启思考且模型声明支持时，才向前端透出推理片段。
         boolean reasoningRequested = thinkingEnabled && runtimeConfig.reasoningSupported();
         List<LlmToolDefinition> availableTools = List.of();
@@ -818,7 +823,14 @@ public class ChatServiceImpl implements ChatService {
                 toolCallCount += outcome.toolCalls().size();
                 loopMessages.add(LlmMessage.assistantToolCalls(outcome.toolCalls()));
                 for (LlmToolCall toolCall : outcome.toolCalls()) {
-                    String result = executeToolCall(emitter, toolCall, processRecorder, toolContext);
+                    if (finished.get()) {
+                        return;
+                    }
+                    String result = executeToolCall(emitter, toolCall, processRecorder, toolContext,
+                            assistantMessage, content, reasoningContent, finished);
+                    if (finished.get()) {
+                        return;
+                    }
                     loopMessages.add(LlmMessage.tool(toolCall.id(), toolCall.name(), result));
                 }
             }
@@ -948,10 +960,18 @@ public class ChatServiceImpl implements ChatService {
                 return;
             }
             if (chunk.type() == LlmStreamChunkType.TOOL_CALL) {
+                if (finished.get()) {
+                    return;
+                }
+                if (!send(emitter, SseEventType.TOOL_CALL,
+                        new SseEventData.ToolCall(chunk.toolCall().id(), chunk.toolCall().name()))
+                        && finished.compareAndSet(false, true)) {
+                    stopAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED,
+                            processRecorder);
+                    return;
+                }
                 toolCalls.add(chunk.toolCall());
                 processRecorder.startTool(chunk.toolCall().id(), chunk.toolCall().name());
-                send(emitter, SseEventType.TOOL_CALL,
-                        new SseEventData.ToolCall(chunk.toolCall().id(), chunk.toolCall().name()));
                 return;
             }
             if (chunk.type() == LlmStreamChunkType.DONE && !toolCalls.isEmpty()) {
@@ -1020,7 +1040,11 @@ public class ChatServiceImpl implements ChatService {
             SseEmitter emitter,
             LlmToolCall toolCall,
             ProcessEventRecorder processRecorder,
-            ToolExecutionContext toolContext
+            ToolExecutionContext toolContext,
+            ChatMessage assistantMessage,
+            StringBuilder content,
+            StringBuilder reasoningContent,
+            AtomicBoolean finished
     ) {
         ToolExecutionResult result;
         try {
@@ -1032,13 +1056,21 @@ public class ChatServiceImpl implements ChatService {
             String message = hasText(exception.getMessage()) ? exception.getMessage() : "工具调用失败";
             result = ToolExecutionResult.failed(message);
             processRecorder.completeTool(toolCall.id(), toolCall.name(), result.status(), result.content());
-            send(emitter, SseEventType.TOOL_RESULT,
-                    new SseEventData.ToolResult(toolCall.id(), toolCall.name(), result.status(), result.content()));
+            if (!send(emitter, SseEventType.TOOL_RESULT,
+                    new SseEventData.ToolResult(toolCall.id(), toolCall.name(), result.status(), result.content()))
+                    && finished.compareAndSet(false, true)) {
+                stopAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED,
+                        processRecorder);
+            }
             throw exception;
         }
         processRecorder.completeTool(toolCall.id(), toolCall.name(), result.status(), result.content());
-        send(emitter, SseEventType.TOOL_RESULT,
-                new SseEventData.ToolResult(toolCall.id(), toolCall.name(), result.status(), result.content()));
+        if (!send(emitter, SseEventType.TOOL_RESULT,
+                new SseEventData.ToolResult(toolCall.id(), toolCall.name(), result.status(), result.content()))
+                && finished.compareAndSet(false, true)) {
+            stopAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED,
+                    processRecorder);
+        }
         return result.content();
     }
     private void retryAfterContextLengthException(
@@ -1154,14 +1186,14 @@ public class ChatServiceImpl implements ChatService {
             assistantMessage.setReasoningContent(reasoningContent.toString());
             if (!send(emitter, SseEventType.REASONING_DELTA, new SseEventData.Delta(delta))
                     && finished.compareAndSet(false, true)) {
-                failAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED, processRecorder);
+                stopAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED, processRecorder);
             }
         } else if (type == LlmStreamChunkType.ANSWER_DELTA) {
             content.append(delta);
             assistantMessage.setContent(content.toString());
             if (!send(emitter, SseEventType.ANSWER_DELTA, new SseEventData.Delta(delta))
                     && finished.compareAndSet(false, true)) {
-                failAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED, processRecorder);
+                stopAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED, processRecorder);
             }
         } else if (type == LlmStreamChunkType.ERROR) {
             if (finished.compareAndSet(false, true)) {
@@ -1234,6 +1266,22 @@ public class ChatServiceImpl implements ChatService {
             String errorMessage
     ) {
         return failAssistantMessage(assistantMessage, content, reasoningContent, errorMessage, new ProcessEventRecorder());
+    }
+
+    private void stopAssistantMessage(
+            ChatMessage assistantMessage,
+            StringBuilder content,
+            StringBuilder reasoningContent,
+            String reason,
+            ProcessEventRecorder processRecorder
+    ) {
+        assistantMessage.setContent(content.toString());
+        assistantMessage.setReasoningContent(reasoningContent.toString());
+        assistantMessage.setProcessEvents(serializeProcessEvents(processRecorder.events()));
+        assistantMessage.setStatus(STATUS_STOPPED);
+        assistantMessage.setErrorMessage(reason == null || reason.isBlank() ? SSE_CONNECTION_CLOSED : reason);
+        assistantMessage.setCompletedAt(OffsetDateTime.now());
+        messageMapper.updateById(assistantMessage);
     }
 
     private String failAssistantMessage(

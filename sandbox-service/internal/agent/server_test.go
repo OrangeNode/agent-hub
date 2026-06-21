@@ -179,7 +179,7 @@ func TestServerExecStreamRejectsSymlinkFollowingOptions(t *testing.T) {
 	}
 }
 
-func TestServerExecStreamRejectsWorkspaceContainingSymlink(t *testing.T) {
+func TestServerExecStreamAllowsWorkspaceContainingUnusedSymlink(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("safe"), 0o644); err != nil {
 		t.Fatalf("WriteFile file error = %v", err)
@@ -194,6 +194,32 @@ func TestServerExecStreamRejectsWorkspaceContainingSymlink(t *testing.T) {
 	server.Router().ServeHTTP(rec, req)
 
 	response := rec.Body.String()
+	if !strings.Contains(response, "event: started") {
+		t.Fatalf("expected started SSE, got %s", response)
+	}
+	if strings.Contains(response, "event: error") {
+		t.Fatalf("unexpected error SSE, got %s", response)
+	}
+	if !executor.called {
+		t.Fatal("executor should be called when symlink is not part of command path")
+	}
+}
+
+func TestServerExecStreamRejectsExplicitSymlinkPath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("safe"), 0o644); err != nil {
+		t.Fatalf("WriteFile file error = %v", err)
+	}
+	createSymlinkOrSkip(t, filepath.Join(root, "file.txt"), filepath.Join(root, "file-link"))
+	executor := &recordingExecutor{}
+	server := NewServer(executor, NewFileService(root))
+	body := bytes.NewBufferString(`{"command":"cat /workspace/file-link","workingDir":"/workspace","timeoutSeconds":5}`)
+	req := httptest.NewRequest(http.MethodPost, "/exec/stream", body)
+	rec := httptest.NewRecorder()
+
+	server.Router().ServeHTTP(rec, req)
+
+	response := rec.Body.String()
 	if !strings.Contains(response, "event: error") {
 		t.Fatalf("expected error SSE, got %s", response)
 	}
@@ -201,7 +227,7 @@ func TestServerExecStreamRejectsWorkspaceContainingSymlink(t *testing.T) {
 		t.Fatalf("expected symlink error, got %s", response)
 	}
 	if executor.called {
-		t.Fatal("executor should not be called when workspace contains symlink")
+		t.Fatal("executor should not be called when command references symlink")
 	}
 }
 
@@ -231,6 +257,31 @@ func TestServerFileAPIWriteReadAndList(t *testing.T) {
 	server.Router().ServeHTTP(listRec, listReq)
 	if listRec.Code != http.StatusOK || !strings.Contains(listRec.Body.String(), `"relativePath":"docs/a.txt"`) {
 		t.Fatalf("list status = %d, body = %s", listRec.Code, listRec.Body.String())
+	}
+}
+
+func TestServerFileAPIWritesBase64Content(t *testing.T) {
+	root := t.TempDir()
+	server := NewServer(NewExecutor(1024), NewFileService(root))
+	content := []byte{0x50, 0x4b, 0x03, 0x04, 0xff, 0x00, 0x80}
+	writeBody, _ := json.Marshal(map[string]any{
+		"path":          "input/slide.png",
+		"contentBase64": base64.StdEncoding.EncodeToString(content),
+	})
+	writeReq := httptest.NewRequest(http.MethodPost, "/files/content", bytes.NewReader(writeBody))
+	writeRec := httptest.NewRecorder()
+
+	server.Router().ServeHTTP(writeRec, writeReq)
+
+	if writeRec.Code != http.StatusOK {
+		t.Fatalf("write status = %d, body = %s", writeRec.Code, writeRec.Body.String())
+	}
+	actual, err := os.ReadFile(filepath.Join(root, "input", "slide.png"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !bytes.Equal(actual, content) {
+		t.Fatalf("content = %v, want %v", actual, content)
 	}
 }
 

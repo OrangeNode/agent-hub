@@ -343,9 +343,10 @@ func (s *apiServer) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.manager.EndUse(session.ID)
 	var req struct {
-		Path       string `json:"path"`
-		Content    string `json:"content"`
-		AppendMode bool   `json:"appendMode"`
+		Path          string `json:"path"`
+		Content       string `json:"content"`
+		ContentBase64 string `json:"contentBase64"`
+		AppendMode    bool   `json:"appendMode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "请求体不是有效的 JSON")
@@ -357,9 +358,10 @@ func (s *apiServer) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, err := json.Marshal(map[string]any{
-		"path":       resolvedPath,
-		"content":    req.Content,
-		"appendMode": req.AppendMode,
+		"path":          resolvedPath,
+		"content":       req.Content,
+		"contentBase64": req.ContentBase64,
+		"appendMode":    req.AppendMode,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "沙箱文件代理失败")
@@ -818,8 +820,8 @@ func (artifact restoreArtifact) downloadKey() string {
 
 func (s *apiServer) writeGuestFile(r *http.Request, session Session, guestPath string, content []byte) error {
 	body, err := json.Marshal(map[string]any{
-		"path":    guestPath,
-		"content": string(content),
+		"path":          guestPath,
+		"contentBase64": base64.StdEncoding.EncodeToString(content),
 	})
 	if err != nil {
 		return fmt.Errorf("编码恢复产物失败: %w", err)

@@ -31,10 +31,16 @@ import com.agenthub.storage.object.ObjectStorageClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.ByteArrayInputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -136,6 +142,45 @@ class SkillPackageServiceImplTest {
         assertThat(preview.duplicateSkillId()).isEqualTo(8L);
         assertThat(preview.parsedName()).isEqualTo("公文写作");
         verify(packageMapper, org.mockito.Mockito.never()).insert(any(SkillPackage.class));
+    }
+
+    @Test
+    void shouldRewriteImportedZipWithNormalizedEntryNamesForSandboxSync() throws Exception {
+        byte[] sourceZip = rawZip(Map.of(
+                "SKILL.md", "---\nname: Backslash Skill\n---\ncontent",
+                "scripts\\office\\schemas\\", "",
+                "scripts\\office\\schemas\\ecma\\schema.json", "{}"
+        ));
+        SkillImport skillImport = importRecord(1L, "skill-packages/demo.zip");
+        skillImport.setFileSize((long) sourceZip.length);
+        when(importMapper.selectById(1L)).thenReturn(skillImport);
+        when(objectStorageClient.stat("skill-packages/demo.zip"))
+                .thenReturn(new ObjectMetadata(sourceZip.length, "application/zip"));
+        when(objectStorageClient.readBytes("skill-packages/demo.zip")).thenReturn(sourceZip);
+        when(packageMapper.selectByName("Backslash Skill")).thenReturn(skill(8L, "Backslash Skill", "backslash-skill"));
+
+        service.confirmImport(7L, 1L);
+
+        ArgumentCaptor<byte[]> rewrittenZipCaptor = ArgumentCaptor.forClass(byte[].class);
+        verify(objectStorageClient).putBytes(
+                eq("agent-hub"),
+                eq("skill-packages/demo.zip"),
+                eq("application/zip"),
+                rewrittenZipCaptor.capture()
+        );
+        List<String> names = zipEntryNames(rewrittenZipCaptor.getValue());
+        assertThat(names)
+                .contains("SKILL.md", "scripts/office/schemas/",
+                        "scripts/office/schemas/ecma/schema.json")
+                .doesNotContain("scripts\\office\\schemas\\",
+                        "scripts\\office\\schemas\\ecma\\schema.json");
+        assertThat(names).allSatisfy(name -> assertThat(name).doesNotContain("\\"));
+
+        ArgumentCaptor<SkillImport> importCaptor = ArgumentCaptor.forClass(SkillImport.class);
+        verify(importMapper).updateById(importCaptor.capture());
+        assertThat(importCaptor.getValue().getZipSha256()).isEqualTo(sha256(rewrittenZipCaptor.getValue()));
+        assertThat(importCaptor.getValue().getFileSize()).isEqualTo(rewrittenZipCaptor.getValue().length);
+        assertThat(importCaptor.getValue().getRootDir()).isEqualTo("");
     }
 
     @Test
@@ -342,6 +387,29 @@ class SkillPackageServiceImplTest {
             }
             return outputStream.toByteArray();
         } catch (IOException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    private byte[] rawZip(Map<String, String> files) {
+        return zip(files);
+    }
+
+    private List<String> zipEntryNames(byte[] zipBytes) throws IOException {
+        List<String> names = new ArrayList<>();
+        try (ZipInputStream inputStream = new ZipInputStream(new ByteArrayInputStream(zipBytes), StandardCharsets.UTF_8)) {
+            ZipEntry entry;
+            while ((entry = inputStream.getNextEntry()) != null) {
+                names.add(entry.getName());
+            }
+        }
+        return names;
+    }
+
+    private String sha256(byte[] bytes) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException(exception);
         }
     }

@@ -89,6 +89,41 @@ func TestServerSyncSkillZipMarksShebangScriptsExecutable(t *testing.T) {
 	}
 }
 
+func TestServerSyncSkillZipHandlesBackslashDirectoryEntries(t *testing.T) {
+	root := t.TempDir()
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	for _, entry := range []struct {
+		name    string
+		content string
+	}{
+		{name: "SKILL.md", content: "# Demo"},
+		{name: "scripts\\office\\schemas\\", content: ""},
+		{name: "scripts\\office\\schemas\\ecma\\schema.json", content: "{}"},
+	} {
+		file, err := writer.Create(entry.name)
+		if err != nil {
+			t.Fatalf("Create zip entry %s error = %v", entry.name, err)
+		}
+		if entry.content != "" {
+			if _, err := file.Write([]byte(entry.content)); err != nil {
+				t.Fatalf("Write zip entry %s error = %v", entry.name, err)
+			}
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("Close zip error = %v", err)
+	}
+
+	server := NewServer(NewExecutor(1024), NewFileService(root))
+	rec := postSkillZipSync(t, server, buffer.Bytes(), sha256Hex(buffer.Bytes()), "/workspace/skills/demo-skill")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	assertFileContent(t, filepath.Join(root, "skills", "demo-skill", "scripts", "office", "schemas", "ecma", "schema.json"), "{}")
+}
+
 func TestServerSyncSkillZipRejectsUnsafeEntries(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

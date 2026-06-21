@@ -79,6 +79,75 @@ class SkillMigrationSmokeTest {
     }
 
     @Test
+    void shouldAllowLongSkillFrontmatterDescriptions() {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+        String description = "x".repeat(1200);
+        String uniqueKey = "long-description-" + UUID.randomUUID();
+
+        jdbcTemplate.update("""
+                INSERT INTO skill_import (
+                    original_filename,
+                    bucket_name,
+                    object_key,
+                    content_type,
+                    status,
+                    parsed_description
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                uniqueKey + ".zip",
+                "test-bucket",
+                uniqueKey + "/source.zip",
+                "application/zip",
+                "PARSED",
+                description
+        );
+        jdbcTemplate.update("""
+                INSERT INTO skill_package (
+                    skill_key,
+                    name,
+                    description,
+                    original_filename,
+                    bucket_name,
+                    object_key,
+                    content_type,
+                    skill_md_path,
+                    skill_md_content
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                uniqueKey,
+                uniqueKey,
+                description,
+                uniqueKey + ".zip",
+                "test-bucket",
+                uniqueKey + "/source.zip",
+                "application/zip",
+                "SKILL.md",
+                """
+                        ---
+                        name: long-description
+                        description: long-description
+                        ---
+                        """
+        );
+
+        String parsedDescription = jdbcTemplate.queryForObject("""
+                SELECT parsed_description
+                FROM skill_import
+                WHERE object_key = ?
+                """, String.class, uniqueKey + "/source.zip");
+        String packageDescription = jdbcTemplate.queryForObject("""
+                SELECT description
+                FROM skill_package
+                WHERE skill_key = ?
+                """, String.class, uniqueKey);
+
+        assertThat(parsedDescription).hasSize(1200);
+        assertThat(packageDescription).hasSize(1200);
+    }
+
+    @Test
     void shouldUpgradeOldSkillTablesWithFullSkillZipSyncMigration() throws Exception {
         DriverManagerDataSource oldSchemaDataSource = new DriverManagerDataSource(
                 "jdbc:h2:mem:skill_v14_upgrade_" + UUID.randomUUID()

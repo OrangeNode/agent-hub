@@ -25,5 +25,7 @@ public interface SandboxClient {
 
     List<SandboxArtifactItem> writeFile(String sandboxSessionId, String path, String content, boolean append);
 
+    List<SandboxArtifactItem> writeFileBytes(String sandboxSessionId, String path, byte[] content, boolean append);
+
     SkillZipSyncResult syncSkillZips(String sandboxSessionId, SkillZipSyncRequest request);
 }

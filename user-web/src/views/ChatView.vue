@@ -113,7 +113,12 @@
       </button>
     </div>
 
-    <main class="chat-main">
+    <main
+      class="chat-main"
+      @paste="handleImagePaste"
+      @dragover.prevent
+      @drop.prevent="handleImageDrop"
+    >
       <header class="top-actions">
         <button
           v-if="sidebarCollapsed"
@@ -806,6 +811,23 @@ export function resolveSendButtonDisabled(state: SendButtonDisabledState) {
     || state.hasFailedImage
     || !state.canSubmitContent
     || state.imageInputBlocked
+}
+
+export interface AssistantDisplayMessageLike {
+  content?: string | null
+  status?: string | null
+}
+
+export function assistantDisplayContent(messageItem: AssistantDisplayMessageLike) {
+  if (messageItem.content) {
+    return messageItem.content
+  }
+
+  if (messageItem.status === 'FAILED') {
+    return '生成失败'
+  }
+
+  return messageItem.status === 'STOPPED' ? '已中止生成' : '正在生成回复...'
 }
 
 export interface StoppableAssistantMessageLike {
@@ -1590,20 +1612,46 @@ function handleImageSelected(event: Event) {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files ?? [])
 
+  enqueueImageFiles(files)
+  input.value = ''
+}
+
+function handleImagePaste(event: ClipboardEvent) {
+  const files = Array.from(event.clipboardData?.files ?? [])
+    .filter((file) => file.type.startsWith('image/'))
+
+  if (!files.length) {
+    return
+  }
+
+  event.preventDefault()
+  enqueueImageFiles(files)
+}
+
+function handleImageDrop(event: DragEvent) {
+  const files = Array.from(event.dataTransfer?.files ?? [])
+    .filter((file) => file.type.startsWith('image/'))
+
+  if (!files.length) {
+    return
+  }
+
+  enqueueImageFiles(files)
+}
+
+function enqueueImageFiles(files: File[]) {
   if (!files.length) {
     return
   }
 
   if (!selectedModelItem.value?.imageInputSupported) {
     message.warning('当前模型不支持图片输入')
-    input.value = ''
     return
   }
 
   const countError = validateImageCount(composerImageCount.value, files.length)
   if (countError) {
     message.warning(countError)
-    input.value = ''
     return
   }
 
@@ -1624,8 +1672,6 @@ function handleImageSelected(event: Event) {
     pendingImages.value.push(item)
     void uploadImage(item.localId)
   }
-
-  input.value = ''
 }
 
 function openHistoryImagePicker() {
@@ -1920,14 +1966,6 @@ function copyMessage(content: string) {
   )
 }
 
-function assistantDisplayContent(messageItem: ChatMessageItem) {
-  if (messageItem.content) {
-    return messageItem.content
-  }
-
-  return messageItem.status === 'STOPPED' ? '已中止生成' : '正在生成回复...'
-}
-
 function toggleProcess(messageItem: ChatMessageItem) {
   messageItem.processExpanded = !messageItem.processExpanded
 }
@@ -2028,6 +2066,15 @@ function markCurrentAssistantStopped() {
     finishReasoningTiming(assistantMessage)
     assistantMessage.status = 'STOPPED'
   }
+}
+
+function markAssistantFailed(assistantMessage?: ChatMessageItem) {
+  if (!assistantMessage) {
+    return
+  }
+
+  finishReasoningTiming(assistantMessage)
+  assistantMessage.status = 'FAILED'
 }
 
 function handleSend() {
@@ -2203,7 +2250,7 @@ function handleSend() {
         }
       },
       onError: (data) => {
-        finishReasoningTiming(findAssistantMessage(currentAssistantMessageId))
+        markAssistantFailed(findAssistantMessage(currentAssistantMessageId))
         message.error(data.message ?? '\u6d41\u5f0f\u54cd\u5e94\u5931\u8d25')
         closeStream()
         void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
@@ -2217,7 +2264,7 @@ function handleSend() {
         void loadConversations()
       },
       onTransportError: () => {
-        finishReasoningTiming(findAssistantMessage(currentAssistantMessageId))
+        markAssistantFailed(findAssistantMessage(currentAssistantMessageId))
         closeStream()
         void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
         void refreshActiveArtifacts()

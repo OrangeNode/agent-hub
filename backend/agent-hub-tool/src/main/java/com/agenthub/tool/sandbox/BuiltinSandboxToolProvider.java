@@ -136,8 +136,10 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
         }
         try {
             String sandboxSessionId = sandboxSessionService.ensureSession(context.userId(), context.conversationId());
+            if ("sandbox.exec".equals(toolName)) {
+                return executeCommandResult(request, context, sandboxSessionId);
+            }
             String result = switch (toolName) {
-                case "sandbox.exec" -> executeCommand(request, context, sandboxSessionId);
                 case "sandbox.read_file" -> readFile(request, context, sandboxSessionId);
                 case "sandbox.write_file" -> writeFile(request, context, sandboxSessionId);
                 case "sandbox.write_workspace_file" -> writeWorkspaceFile(request, context, sandboxSessionId);
@@ -151,7 +153,7 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
         }
     }
 
-    private String executeCommand(
+    private ToolExecutionResult executeCommandResult(
             ToolExecutionRequest request,
             ToolExecutionContext context,
             String sandboxSessionId
@@ -160,6 +162,7 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
         String toolCallId = request.toolCallId();
         StringBuilder stdout = new StringBuilder();
         StringBuilder stderr = new StringBuilder();
+        ExecOutcome outcome = new ExecOutcome();
         sandboxToolService.exec(
                 context.userId(),
                 context.conversationId(),
@@ -167,9 +170,19 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
                 stringArg(request, "command", ""),
                 stringArg(request, "working_dir", DEFAULT_WORKING_DIR),
                 intArg(request, "timeout_seconds", DEFAULT_EXEC_TIMEOUT_SECONDS),
-                event -> handleSandboxEvent(context, toolCallId, toolName, stdout, stderr, event)
+                event -> handleSandboxEvent(context, toolCallId, toolName, stdout, stderr, outcome, event)
         );
-        return "stdout:\n" + stdout + "\nstderr:\n" + stderr;
+        String content = formatExecOutput(stdout, stderr);
+        if (outcome.timedOut) {
+            return ToolExecutionResult.failed("命令执行超时\n" + content);
+        }
+        if (outcome.exitCode != null && outcome.exitCode != 0) {
+            return ToolExecutionResult.failed("命令执行失败(exitCode=" + outcome.exitCode + ")\n" + content);
+        }
+        if (outcome.errorMessage != null && !outcome.errorMessage.isBlank()) {
+            return ToolExecutionResult.failed("命令执行失败: " + outcome.errorMessage + "\n" + content);
+        }
+        return ToolExecutionResult.completed(content);
     }
 
     private String readFile(
@@ -262,6 +275,7 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
             String toolName,
             StringBuilder stdout,
             StringBuilder stderr,
+            ExecOutcome outcome,
             SandboxEvent event
     ) {
         if (event == null) {
@@ -274,7 +288,25 @@ public class BuiltinSandboxToolProvider implements ToolProvider {
         } else if ("stderr_delta".equals(event.type())) {
             stderr.append(content);
             context.eventSink().output(toolCallId, toolName, "stderr", content);
+        } else if ("completed".equals(event.type())) {
+            outcome.exitCode = event.exitCode();
+            outcome.timedOut = event.timedOut();
+        } else if ("error".equals(event.type())) {
+            outcome.errorMessage = defaultString(event.message());
+            if (outcome.errorMessage.isBlank()) {
+                outcome.errorMessage = content;
+            }
         }
+    }
+
+    private static String formatExecOutput(StringBuilder stdout, StringBuilder stderr) {
+        return "stdout:\n" + stdout + "\nstderr:\n" + stderr;
+    }
+
+    private static class ExecOutcome {
+        private Integer exitCode;
+        private boolean timedOut;
+        private String errorMessage;
     }
 
     private static String formatFiles(List<SandboxFileItem> files) {

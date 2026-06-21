@@ -141,6 +141,27 @@ class BuiltinSandboxToolProviderTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void shouldReturnFailedResultWhenExecCompletedWithNonZeroExitCode() {
+        when(sandboxSessionService.ensureSession(7L, 100L)).thenReturn("session-1");
+        doAnswer(invocation -> {
+            Consumer<SandboxEvent> consumer = invocation.getArgument(6);
+            consumer.accept(new SandboxEvent("stderr_delta", "exec-1", "boom", null, null, null, null, null, false));
+            consumer.accept(new SandboxEvent("completed", "exec-1", null, 1, 120L, null, null, null, false));
+            return null;
+        }).when(sandboxToolService).exec(any(), any(), any(), any(), any(), any(Integer.class), any(Consumer.class));
+
+        ToolExecutionResult result = provider.execute(
+                request("call-1", "sandbox.exec", Map.of("command", "python3 bad.py")),
+                context(ToolEventSink.noop())
+        );
+
+        assertThat(result.status()).isEqualTo("failed");
+        assertThat(result.content()).contains("exitCode=1");
+        assertThat(result.content()).contains("stderr:\nboom");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void shouldParseStringNumberAndFallbackDefaultForExecTimeout() {
         when(sandboxSessionService.ensureSession(7L, 100L)).thenReturn("session-1");
 

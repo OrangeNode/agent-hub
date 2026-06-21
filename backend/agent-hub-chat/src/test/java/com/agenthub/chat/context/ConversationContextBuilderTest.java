@@ -148,11 +148,44 @@ class ConversationContextBuilderTest {
         LlmMessage historyLlmMessage = result.messages().getFirst();
         assertThat(historyLlmMessage.role()).isEqualTo("user");
         assertThat(historyLlmMessage.content()).isNull();
-        assertThat(historyLlmMessage.parts()).containsExactly(
-                LlmContentPart.text("analyze historical image"),
-                LlmContentPart.imageUrl("https://example.com/history.png")
-        );
+        assertThat(historyLlmMessage.parts()).hasSize(2);
+        assertThat(historyLlmMessage.parts().getFirst().text())
+                .contains("analyze historical image")
+                .contains("attachment_id=10")
+                .contains("image.png")
+                .contains("sandbox.upload_file");
+        assertThat(historyLlmMessage.parts().get(1)).isEqualTo(LlmContentPart.imageUrl("https://example.com/history.png"));
         assertThat(result.inputTokenEstimate()).isGreaterThan(1_500);
+    }
+
+    @Test
+    void shouldExposeCurrentImageAttachmentIdsForSandboxUpload() {
+        ConversationContextBuilder builder = builder(List.of(), null, summaryClient("summary"));
+
+        ConversationContext result = builder.build(
+                7L,
+                100L,
+                runtimeConfig(10_000, 1_000),
+                "请把这张图转成 PPT",
+                List.of(new AttachmentReference(
+                        42L,
+                        "slide.png",
+                        "image/png",
+                        "data:image/png;base64,AAAA",
+                        1500
+                ))
+        );
+
+        LlmMessage currentMessage = result.messages().getLast();
+        assertThat(currentMessage.content()).isNull();
+        assertThat(currentMessage.parts()).hasSize(2);
+        assertThat(currentMessage.parts().getFirst().text())
+                .contains("请把这张图转成 PPT")
+                .contains("attachment_id=42")
+                .contains("slide.png")
+                .contains("sandbox.upload_file");
+        assertThat(currentMessage.parts().get(1))
+                .isEqualTo(LlmContentPart.imageUrl("data:image/png;base64,AAAA"));
     }
 
     @Test

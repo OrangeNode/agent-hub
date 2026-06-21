@@ -202,7 +202,12 @@ public class SandboxToolServiceImpl implements SandboxToolService {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "附件导入服务不可用");
         }
         AttachmentImportSource source = attachmentService.requireImportSource(userId, attachmentId);
-        client.writeFile(sandboxSessionId, normalizedPath, downloadText(source.downloadUrl()), false);
+        byte[] content = downloadBytes(source.downloadUrl());
+        if (isTextContent(source.contentType())) {
+            client.writeFile(sandboxSessionId, normalizedPath, new String(content, StandardCharsets.UTF_8), false);
+            return;
+        }
+        client.writeFileBytes(sandboxSessionId, normalizedPath, content, false);
     }
 
     @Override
@@ -350,12 +355,16 @@ public class SandboxToolServiceImpl implements SandboxToolService {
     }
 
     private String downloadText(String downloadUrl) {
+        return new String(downloadBytes(downloadUrl), StandardCharsets.UTF_8);
+    }
+
+    private byte[] downloadBytes(String downloadUrl) {
         try {
             if (downloadUrl != null && downloadUrl.startsWith("data:")) {
-                return readDataUrl(downloadUrl);
+                return readDataUrlBytes(downloadUrl);
             }
             HttpRequest request = HttpRequest.newBuilder(URI.create(downloadUrl)).GET().build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new BusinessException(ErrorCode.INTERNAL_ERROR, "附件下载失败，HTTP 状态码: " + response.statusCode());
             }
@@ -368,16 +377,33 @@ public class SandboxToolServiceImpl implements SandboxToolService {
     }
 
     private String readDataUrl(String dataUrl) {
+        return new String(readDataUrlBytes(dataUrl), StandardCharsets.UTF_8);
+    }
+
+    private byte[] readDataUrlBytes(String dataUrl) {
         int commaIndex = dataUrl.indexOf(',');
         if (commaIndex < 0) {
-            return "";
+            return new byte[0];
         }
         String meta = dataUrl.substring(0, commaIndex);
         String payload = dataUrl.substring(commaIndex + 1);
         if (meta.contains(";base64")) {
-            return new String(Base64.getDecoder().decode(payload), StandardCharsets.UTF_8);
+            return Base64.getDecoder().decode(payload);
         }
-        return URLDecoder.decode(payload, StandardCharsets.UTF_8);
+        return URLDecoder.decode(payload, StandardCharsets.UTF_8).getBytes(StandardCharsets.UTF_8);
+    }
+
+    private boolean isTextContent(String contentType) {
+        if (contentType == null || contentType.isBlank()) {
+            return false;
+        }
+        String normalized = contentType.toLowerCase();
+        return normalized.startsWith("text/")
+                || normalized.contains("json")
+                || normalized.contains("xml")
+                || normalized.contains("csv")
+                || normalized.contains("yaml")
+                || normalized.contains("javascript");
     }
 
     private class ExecutionAccumulator {

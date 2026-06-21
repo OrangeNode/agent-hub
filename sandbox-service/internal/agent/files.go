@@ -267,9 +267,6 @@ func (s *FileService) ValidateExecRequest(req ExecRequest) error {
 			return errors.New("命令不允许跟随符号链接")
 		}
 	}
-	if err := s.ensureWorkspaceHasNoSymlinkLocked(maxWorkspaceSymlinkScanEntries); err != nil {
-		return err
-	}
 	for _, arg := range argv[1:] {
 		for _, candidate := range execPathCandidates(arg) {
 			target, targetRoot, err := s.resolveExecCandidate(candidate, req.WorkingDir)

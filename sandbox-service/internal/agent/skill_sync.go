@@ -197,7 +197,7 @@ func validateSkillZipEntries(reader *zip.Reader) ([]skillZipEntry, error) {
 		if zipFile.FileInfo().Mode()&os.ModeSymlink != 0 {
 			return nil, errors.New("zip 包不能包含符号链接")
 		}
-		isDir := zipFile.FileInfo().IsDir()
+		isDir := zipFile.FileInfo().IsDir() || strings.HasSuffix(zipFile.Name, "/") || strings.HasSuffix(zipFile.Name, "\\")
 		if !isDir {
 			totalBytes += zipFile.UncompressedSize64
 			if totalBytes > uint64(maxSkillZipExtractedBytes) {

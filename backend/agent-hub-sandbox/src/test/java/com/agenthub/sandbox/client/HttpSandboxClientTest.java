@@ -18,6 +18,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -188,6 +189,35 @@ class HttpSandboxClientTest {
     }
 
     @Test
+    void shouldWriteBinaryFileAsBase64Content() throws Exception {
+        AtomicReference<String> capturedBody = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", exchange -> {
+            capturedBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"ok\":true,\"artifacts\":[]}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            SandboxProperties properties = new SandboxProperties();
+            properties.setBaseUrl("http://127.0.0.1:" + server.getAddress().getPort());
+            HttpSandboxClient client = new HttpSandboxClient(properties);
+            byte[] content = new byte[]{0x50, 0x4b, 0x03, 0x04, (byte) 0xff, 0x00, (byte) 0x80};
+
+            client.writeFileBytes("sbx_1", "/workspace/input/slide.png", content, false);
+
+            assertThat(capturedBody.get()).contains("\"path\":\"/workspace/input/slide.png\"");
+            assertThat(capturedBody.get()).contains("\"contentBase64\":\"" + Base64.getEncoder().encodeToString(content) + "\"");
+            assertThat(capturedBody.get()).contains("\"appendMode\":false");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void shouldRejectSkillZipSyncWhenResponseOkIsFalse() throws Exception {
         SandboxProperties properties = new SandboxProperties();
         properties.setBaseUrl("http://127.0.0.1:18080");
@@ -203,5 +233,23 @@ class HttpSandboxClientTest {
         assertThatThrownBy(() -> client.syncSkillZips("sbx_1", new SkillZipSyncRequest(List.of())))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("同步 Skill 包到沙箱失败");
+    }
+
+    @Test
+    void shouldIncludeSandboxErrorBodyWhenSkillZipSyncHttpFails() throws Exception {
+        SandboxProperties properties = new SandboxProperties();
+        properties.setBaseUrl("http://127.0.0.1:18080");
+        HttpClient httpClient = mock(HttpClient.class);
+        @SuppressWarnings("unchecked")
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(400);
+        when(response.body()).thenReturn("{\"error\":\"docx: mkdir /workspace/skills/.tmp/docx/scripts/office/schemas: not a directory\"}");
+        when(httpClient.send(any(HttpRequest.class), org.mockito.Mockito.<HttpResponse.BodyHandler<String>>any()))
+                .thenReturn(response);
+        HttpSandboxClient client = new HttpSandboxClient(properties, httpClient);
+
+        assertThatThrownBy(() -> client.syncSkillZips("sbx_1", new SkillZipSyncRequest(List.of())))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("not a directory");
     }
 }

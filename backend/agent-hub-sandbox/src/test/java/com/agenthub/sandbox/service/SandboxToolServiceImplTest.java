@@ -3,6 +3,7 @@ package com.agenthub.sandbox.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -444,6 +445,37 @@ class SandboxToolServiceImplTest {
         service.uploadFile(7L, 100L, "sbx_1", 10L, "/workspace/input/input.txt");
 
         verify(client).writeFile("sbx_1", "/workspace/input/input.txt", "hello", false);
+    }
+
+    @Test
+    void shouldUploadBinaryAttachmentBytesIntoWorkspace() {
+        SandboxClient client = mock(SandboxClient.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        SandboxSessionMapper sessionMapper = mock(SandboxSessionMapper.class);
+        when(sessionMapper.selectBySandboxSessionId("sbx_1")).thenReturn(session(55L));
+        when(attachmentService.requireImportSource(7L, 10L)).thenReturn(new AttachmentImportSource(
+                10L,
+                "slide.png",
+                "image/png",
+                7L,
+                "data:image/png;base64,UEsDBP8AgA==",
+                "users/7/chat-images/slide.png"
+        ));
+        SandboxToolServiceImpl service = new SandboxToolServiceImpl(
+                client,
+                new CommandPolicy(200, 60),
+                sessionMapper,
+                mock(SandboxExecutionMapper.class),
+                mock(SandboxArtifactMapper.class),
+                attachmentService
+        );
+
+        service.uploadFile(7L, 100L, "sbx_1", 10L, "/workspace/input/slide.png");
+
+        ArgumentCaptor<byte[]> bytesCaptor = ArgumentCaptor.forClass(byte[].class);
+        verify(client).writeFileBytes(eq("sbx_1"), eq("/workspace/input/slide.png"), bytesCaptor.capture(), eq(false));
+        assertThat(bytesCaptor.getValue()).containsExactly(0x50, 0x4b, 0x03, 0x04, 0xff, 0x00, 0x80);
+        verify(client, never()).writeFile(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
     }
 
     private SandboxToolServiceImpl service(SandboxClient client, SandboxExecutionMapper executionMapper) {

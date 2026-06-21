@@ -42,6 +42,8 @@ RUNTIME_PACKAGES=(
   gzip
   iproute2
   jq
+  libreoffice-calc
+  libreoffice-impress
   libreoffice-writer
   login
   npm
@@ -51,13 +53,19 @@ RUNTIME_PACKAGES=(
   procps
   python3
   python3-docx
+  python-is-python3
   python3-lxml
   python3-matplotlib
   python3-numpy
   python3-openpyxl
   python3-pandas
+  python3-pil
   python3-pip
+  python3-pptx
+  python3-pypdf
+  python3-reportlab
   python3-venv
+  poppler-utils
   sed
   tar
   unzip

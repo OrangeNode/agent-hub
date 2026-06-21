@@ -391,7 +391,8 @@ public class ConversationContextBuilder {
             return new LlmMessage(role, withMessageTime(message.getCreatedAt(), message.getContent()));
         }
         List<LlmContentPart> parts = new ArrayList<>();
-        String text = withMessageTime(message.getCreatedAt(), message.getContent());
+        String text = withAttachmentImportHints(withMessageTime(message.getCreatedAt(), message.getContent()),
+                attachmentHintsFromItems(attachments));
         if (hasText(text)) {
             parts.add(LlmContentPart.text(text));
         }
@@ -427,8 +428,9 @@ public class ConversationContextBuilder {
             return new LlmMessage("user", content);
         }
         List<LlmContentPart> parts = new ArrayList<>();
-        if (hasText(content)) {
-            parts.add(LlmContentPart.text(content));
+        String text = withAttachmentImportHints(content, attachmentHintsFromReferences(images));
+        if (hasText(text)) {
+            parts.add(LlmContentPart.text(text));
         }
         images.stream()
                 .map(AttachmentReference::readUrl)
@@ -443,8 +445,14 @@ public class ConversationContextBuilder {
             int imageTokenEstimate
     ) {
         return history.stream()
-                .mapToInt(message -> estimateText(withMessageTime(message.getCreatedAt(), message.getContent()))
-                        + attachmentsFor(message, attachmentsByMessageId).size() * imageTokenEstimate)
+                .mapToInt(message -> {
+                    List<AttachmentItem> attachments = attachmentsFor(message, attachmentsByMessageId);
+                    String text = withAttachmentImportHints(
+                            withMessageTime(message.getCreatedAt(), message.getContent()),
+                            attachmentHintsFromItems(attachments)
+                    );
+                    return estimateText(text) + attachments.size() * imageTokenEstimate;
+                })
                 .sum();
     }
 
@@ -463,7 +471,10 @@ public class ConversationContextBuilder {
     }
 
     private int estimateCurrentInput(String prompt, List<AttachmentReference> images, OffsetDateTime currentMessageTime) {
-        int estimate = estimateText(withMessageTime(currentMessageTime, prompt));
+        int estimate = estimateText(withAttachmentImportHints(
+                withMessageTime(currentMessageTime, prompt),
+                attachmentHintsFromReferences(images)
+        ));
         if (images == null || images.isEmpty()) {
             return estimate;
         }
@@ -479,6 +490,52 @@ public class ConversationContextBuilder {
         }
         String prefix = "[消息时间：" + messageTime + "]";
         return safeContent.isBlank() ? prefix : prefix + "\n" + safeContent;
+    }
+
+    private String withAttachmentImportHints(String content, List<AttachmentImportHint> attachments) {
+        if (attachments == null || attachments.isEmpty()) {
+            return content;
+        }
+        StringBuilder builder = new StringBuilder(defaultString(content));
+        if (!builder.isEmpty()) {
+            builder.append("\n\n");
+        }
+        builder.append("可导入附件清单：\n");
+        for (AttachmentImportHint attachment : attachments) {
+            builder.append("- attachment_id=")
+                    .append(attachment.attachmentId())
+                    .append(", filename=")
+                    .append(defaultString(attachment.filename()))
+                    .append(", content_type=")
+                    .append(defaultString(attachment.contentType()))
+                    .append('\n');
+        }
+        builder.append("需要把用户上传文件放入 /workspace/input 时，请调用 sandbox.upload_file 并使用对应 attachment_id。");
+        return builder.toString();
+    }
+
+    private List<AttachmentImportHint> attachmentHintsFromReferences(List<AttachmentReference> images) {
+        if (images == null || images.isEmpty()) {
+            return List.of();
+        }
+        return images.stream()
+                .filter(image -> image != null && image.attachmentId() != null)
+                .map(image -> new AttachmentImportHint(image.attachmentId(), image.filename(), image.contentType()))
+                .toList();
+    }
+
+    private List<AttachmentImportHint> attachmentHintsFromItems(List<AttachmentItem> attachments) {
+        if (attachments == null || attachments.isEmpty()) {
+            return List.of();
+        }
+        return attachments.stream()
+                .filter(attachment -> attachment != null && attachment.attachmentId() != null)
+                .map(attachment -> new AttachmentImportHint(
+                        attachment.attachmentId(),
+                        attachment.filename(),
+                        attachment.contentType()
+                ))
+                .toList();
     }
 
     private int estimateMessage(LlmMessage message, int imageTokenEstimate) {
@@ -533,5 +590,8 @@ public class ConversationContextBuilder {
     }
 
     private record SummaryPrompt(String prompt, List<ChatMessage> includedMessages) {
+    }
+
+    private record AttachmentImportHint(Long attachmentId, String filename, String contentType) {
     }
 }

@@ -23,6 +23,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
@@ -191,7 +192,7 @@ public class HttpSandboxClient implements SandboxClient {
                     .header("Content-Type", "application/json; charset=utf-8")
                     .build();
             HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
-            requireSuccess(response.statusCode(), "同步 Skill 包到沙箱失败");
+            requireSuccess(response.statusCode(), "同步 Skill 包到沙箱失败", response.body());
             SkillZipSyncResult result = OBJECT_MAPPER.readValue(response.body(), SkillZipSyncResult.class);
             if (!result.ok()) {
                 throw new BusinessException(ErrorCode.INTERNAL_ERROR, "同步 Skill 包到沙箱失败");
@@ -344,8 +345,61 @@ public class HttpSandboxClient implements SandboxClient {
     }
 
     private void requireSuccess(int statusCode, String message) {
+        requireSuccess(statusCode, message, null);
+    }
+
+    private void requireSuccess(int statusCode, String message, String responseBody) {
         if (statusCode < 200 || statusCode >= 300) {
-            throw new BusinessException(ErrorCode.INTERNAL_ERROR, message);
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, appendResponseError(message, responseBody));
+        }
+    }
+
+    @Override
+    public List<SandboxArtifactItem> writeFileBytes(String sandboxSessionId, String path, byte[] content, boolean append) {
+        try {
+            String body = OBJECT_MAPPER.writeValueAsString(new WriteFileBytesRequest(
+                    path,
+                    Base64.getEncoder().encodeToString(content == null ? new byte[0] : content),
+                    append
+            ));
+            HttpRequest request = requestBuilder("/internal/sandbox/sessions/" + encodePath(sandboxSessionId) + "/files/content")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .header("Content-Type", "application/json; charset=utf-8")
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            requireSuccess(response.statusCode(), "写入沙箱文件失败", response.body());
+            JsonNode root = OBJECT_MAPPER.readTree(response.body());
+            List<SandboxArtifactItem> artifacts = new ArrayList<>();
+            for (JsonNode item : root.path("artifacts")) {
+                artifacts.add(toSandboxArtifactItem(item));
+            }
+            return artifacts;
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "写入沙箱文件被中断");
+        } catch (IOException exception) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "写入沙箱文件失败");
+        }
+    }
+
+    private static String appendResponseError(String message, String responseBody) {
+        String detail = extractResponseError(responseBody);
+        if (detail == null || detail.isBlank()) {
+            return message;
+        }
+        return message + ": " + detail;
+    }
+
+    private static String extractResponseError(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return "";
+        }
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(responseBody);
+            String error = firstText(root, "error", "message");
+            return error == null ? responseBody : error;
+        } catch (IOException ignored) {
+            return responseBody;
         }
     }
 
@@ -422,5 +476,8 @@ public class HttpSandboxClient implements SandboxClient {
     }
 
     private record WriteFileRequest(String path, String content, @JsonProperty("appendMode") boolean append) {
+    }
+
+    private record WriteFileBytesRequest(String path, String contentBase64, @JsonProperty("appendMode") boolean append) {
     }
 }

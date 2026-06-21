@@ -138,15 +138,25 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Path       string `json:"path"`
-		Content    string `json:"content"`
-		AppendMode bool   `json:"appendMode"`
+		Path          string `json:"path"`
+		Content       string `json:"content"`
+		ContentBase64 string `json:"contentBase64"`
+		AppendMode    bool   `json:"appendMode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "请求体不是有效的 JSON")
 		return
 	}
-	if err := s.files.WriteFile(req.Path, []byte(req.Content), req.AppendMode); err != nil {
+	content := []byte(req.Content)
+	if req.ContentBase64 != "" {
+		decoded, err := base64.StdEncoding.DecodeString(req.ContentBase64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "contentBase64 不是有效的 base64")
+			return
+		}
+		content = decoded
+	}
+	if err := s.files.WriteFile(req.Path, content, req.AppendMode); err != nil {
 		writeError(w, http.StatusBadRequest, "写入文件失败: "+err.Error())
 		return
 	}

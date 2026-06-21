@@ -43,6 +43,25 @@ func TestMinimalRootfsIncludesDocxSkillRuntimeDependencies(t *testing.T) {
 	}
 }
 
+func TestMinimalRootfsIncludesPdfAndEditablePptRuntimeDependencies(t *testing.T) {
+	content := readScript(t, "build-minimal-rootfs.sh")
+
+	for _, expected := range []string{
+		"python3-reportlab",
+		"python3-pil",
+		"python3-pptx",
+		"python3-pypdf",
+		"python-is-python3",
+		"poppler-utils",
+		"libreoffice-impress",
+		"libreoffice-calc",
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("build-minimal-rootfs.sh missing pdf/editable-ppt runtime dependency %q", expected)
+		}
+	}
+}
+
 func TestMinimalRootfsWarmsDotnetOpenXmlPackageCache(t *testing.T) {
 	content := readScript(t, "build-minimal-rootfs.sh")
 

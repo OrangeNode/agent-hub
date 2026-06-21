@@ -736,7 +736,11 @@ class ChatServiceImplTest {
         assertThat(llmClient.lastRequest.messages()).hasSize(1);
         assertThat(llmClient.lastRequest.messages().getFirst().content()).isNull();
         assertThat(llmClient.lastRequest.messages().getFirst().parts()).hasSize(2);
-        assertOnlyTimedMessageContent(llmClient.lastRequest.messages().getFirst().parts().get(0).text());
+        assertThat(llmClient.lastRequest.messages().getFirst().parts().get(0).text())
+                .startsWith("[消息时间：")
+                .contains("attachment_id=1")
+                .contains("cat.png")
+                .contains("sandbox.upload_file");
         assertThat(llmClient.lastRequest.messages().getFirst().parts().get(1))
                 .isEqualTo(LlmContentPart.imageUrl("https://example.com/cat.png"));
         verify(attachmentService).bindToMessage(7L, 100L, 1L, List.of(1L));
@@ -894,6 +898,63 @@ class ChatServiceImplTest {
         assertThat(failedAssistantMessage.getStatus()).isEqualTo("FAILED");
         assertThat(failedAssistantMessage.getContent()).isEqualTo("已经生成");
         assertThat(failedAssistantMessage.getErrorMessage()).isEqualTo("网络异常");
+    }
+
+    @Test
+    void shouldStopAssistantMessageAndSkipToolExecutionWhenClientDisconnectsBeforeToolCallEvent() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender(SseEventType.TOOL_CALL);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.toolCall(new LlmToolCall(
+                        "call_1",
+                        "sandbox.exec",
+                        Map.of("command", "python3 main.py")
+                )),
+                LlmStreamChunk.done()
+        ));
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                sender,
+                mock(AttachmentService.class),
+                null,
+                contextBuilder(messageMapper, mock(AttachmentService.class), llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                mock(SandboxToolService.class),
+                toolRegistry
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(toolRegistry.listTools(any(ToolExecutionContext.class))).thenReturn(List.of(new LlmToolDefinition(
+                "sandbox.exec",
+                "执行 sandbox 命令",
+                Map.of("type", "object")
+        )));
+
+        service.stream(7L, 100L, 10L, null, "生成文件", false, List.of(), List.of());
+
+        verify(toolRegistry, never()).execute(any(), any());
+        ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        ChatMessage stoppedAssistantMessage = updatedMessageCaptor.getValue();
+        assertThat(stoppedAssistantMessage.getStatus()).isEqualTo("STOPPED");
+        assertThat(stoppedAssistantMessage.getErrorMessage()).isEqualTo("SSE 连接已断开");
+        assertThat(stoppedAssistantMessage.getCompletedAt()).isNotNull();
+        assertThat(sender.eventTypes()).containsExactly(
+                SseEventType.CONVERSATION,
+                SseEventType.MESSAGE,
+                SseEventType.TOOL_CALL,
+                SseEventType.DONE
+        );
+        assertThat(sender.completed).isTrue();
     }
 
     @Test
@@ -1445,7 +1506,12 @@ class ChatServiceImplTest {
         assertThat(llmClient.lastRequest.messages()).hasSize(1);
         assertThat(llmClient.lastRequest.messages().getFirst().content()).isNull();
         assertThat(llmClient.lastRequest.messages().getFirst().parts()).hasSize(2);
-        assertTimedMessageContent(llmClient.lastRequest.messages().getFirst().parts().get(0).text(), "分析图片");
+        assertThat(llmClient.lastRequest.messages().getFirst().parts().get(0).text())
+                .startsWith("[消息时间：")
+                .contains("分析图片")
+                .contains("attachment_id=1")
+                .contains("cat.png")
+                .contains("sandbox.upload_file");
         assertThat(llmClient.lastRequest.messages().getFirst().parts().get(1))
                 .isEqualTo(LlmContentPart.imageUrl("https://example.com/cat.png"));
     }
@@ -1872,14 +1938,24 @@ class ChatServiceImplTest {
         private final List<SseEventType> eventTypes = new ArrayList<>();
         private final List<SseEventData> eventData = new ArrayList<>();
         private final List<String> orderedEvents;
+        private final SseEventType failingEventType;
         private boolean completed;
 
         private RecordingSseEventSender() {
-            this(null);
+            this(null, null);
+        }
+
+        private RecordingSseEventSender(SseEventType failingEventType) {
+            this(null, failingEventType);
         }
 
         private RecordingSseEventSender(List<String> orderedEvents) {
+            this(orderedEvents, null);
+        }
+
+        private RecordingSseEventSender(List<String> orderedEvents, SseEventType failingEventType) {
             this.orderedEvents = orderedEvents;
+            this.failingEventType = failingEventType;
         }
 
         @Override
@@ -1888,6 +1964,9 @@ class ChatServiceImplTest {
             eventData.add(data);
             if (orderedEvents != null) {
                 orderedEvents.add("sse:" + eventType.name());
+            }
+            if (eventType == failingEventType) {
+                throw new IOException("client disconnected");
             }
         }
 

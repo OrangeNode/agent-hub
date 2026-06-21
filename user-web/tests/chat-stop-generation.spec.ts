@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { findStoppableAssistantMessage, resolveSendButtonDisabled } from '../src/views/ChatView.vue'
+import { assistantDisplayContent, findStoppableAssistantMessage, resolveSendButtonDisabled } from '../src/views/ChatView.vue'
 import chatViewSource from '../src/views/ChatView.vue?raw'
 
 const normalizedChatViewSource = chatViewSource.replace(/\r\n/g, '\n')
@@ -87,5 +87,23 @@ describe('聊天生成中止', () => {
     ]
 
     expect(findStoppableAssistantMessage(messages)).toBe(messages[1])
+  })
+  it('空内容的失败助手消息不应继续显示正在生成', () => {
+    expect(assistantDisplayContent({
+      role: 'assistant',
+      status: 'FAILED',
+      content: ''
+    })).toBe('生成失败')
+  })
+
+  it('流式错误应立即把当前助手占位消息标记为失败', () => {
+    const onErrorIndex = normalizedChatViewSource.indexOf('onError: (data) => {')
+    const onTransportErrorIndex = normalizedChatViewSource.indexOf('onTransportError: () => {')
+    const onDoneIndex = normalizedChatViewSource.indexOf('onDone: () => {')
+
+    expect(normalizedChatViewSource.slice(onErrorIndex, onDoneIndex))
+      .toContain('markAssistantFailed(findAssistantMessage(currentAssistantMessageId))')
+    expect(normalizedChatViewSource.slice(onTransportErrorIndex))
+      .toContain('markAssistantFailed(findAssistantMessage(currentAssistantMessageId))')
   })
 })

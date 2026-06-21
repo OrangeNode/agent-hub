@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { validateImageCount, validateImageFile } from '../src/views/chat-attachments.helpers'
+import chatViewSource from '../src/views/ChatView.vue?raw'
 
 function file(name: string, type: string, size: number) {
   return new File([new Uint8Array(size)], name, { type, lastModified: 0 })
@@ -25,5 +26,11 @@ describe('聊天图片附件校验', () => {
   it('应该限制单条消息最多 8 张图片', () => {
     expect(validateImageCount(8, 1)).toBe('单条消息最多上传 8 张图片')
     expect(validateImageCount(7, 1)).toBeNull()
+  })
+  it('聊天主区域应支持粘贴和拖拽图片上传', () => {
+    expect(chatViewSource).toContain('@paste="handleImagePaste"')
+    expect(chatViewSource).toContain('@drop.prevent="handleImageDrop"')
+    expect(chatViewSource).toContain('event.clipboardData?.files')
+    expect(chatViewSource).toContain('event.dataTransfer?.files')
   })
 })

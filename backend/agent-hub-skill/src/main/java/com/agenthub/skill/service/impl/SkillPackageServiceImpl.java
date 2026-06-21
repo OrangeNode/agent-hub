@@ -29,7 +29,10 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
@@ -40,12 +43,16 @@ import java.util.Comparator;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.HexFormat;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -168,8 +175,16 @@ public class SkillPackageServiceImpl implements SkillPackageService {
         }
         byte[] zipBytes = objectStorageClient.readBytes(skillImport.getObjectKey());
         ParsedSkillArchive archive = archiveParser.parse(zipBytes, skillImport.getOriginalFilename());
+        NormalizedSkillZip normalizedZip = normalizeSkillZip(archive);
+        objectStorageClient.putBytes(
+                skillImport.getBucketName(),
+                skillImport.getObjectKey(),
+                defaultContentType(skillImport.getContentType()),
+                normalizedZip.bytes()
+        );
+        skillImport.setFileSize((long) normalizedZip.bytes().length);
         List<StoredSkillFile> storedFiles = storeExtractedFiles(skillImport, archive);
-        fillParsedImport(skillImport, archive, storedFiles);
+        fillParsedImport(skillImport, archive, storedFiles, normalizedZip.zipSha256());
         importMapper.updateById(skillImport);
 
         SkillPackage duplicateSkill = packageMapper.selectByName(archive.name());
@@ -405,18 +420,82 @@ public class SkillPackageServiceImpl implements SkillPackageService {
         }
     }
 
-    private void fillParsedImport(SkillImport skillImport, ParsedSkillArchive archive, List<StoredSkillFile> storedFiles) {
+    private void fillParsedImport(
+            SkillImport skillImport,
+            ParsedSkillArchive archive,
+            List<StoredSkillFile> storedFiles,
+            String zipSha256
+    ) {
         skillImport.setStatus(STATUS_PARSED);
         skillImport.setParsedName(archive.name());
         skillImport.setParsedDescription(archive.description());
-        skillImport.setRootDir(archive.rootDir());
+        skillImport.setRootDir("");
         skillImport.setSkillMdPath(archive.skillMdPath());
         skillImport.setSkillMdContent(archive.skillMdContent());
-        skillImport.setZipSha256(archive.zipSha256());
+        skillImport.setZipSha256(zipSha256);
         skillImport.setFileCount(archive.files().size());
         skillImport.setManifestJson(writeManifest(storedFiles));
         skillImport.setErrorMessage(null);
         skillImport.setUpdatedAt(OffsetDateTime.now());
+    }
+
+    private NormalizedSkillZip normalizeSkillZip(ParsedSkillArchive archive) {
+        try {
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            try (ZipOutputStream zipOutputStream = new ZipOutputStream(outputStream, StandardCharsets.UTF_8)) {
+                Set<String> writtenDirectories = new LinkedHashSet<>();
+                for (ParsedSkillFile file : archive.files()) {
+                    String relativePath = defaultString(file.relativePath()).replace('\\', '/');
+                    if (relativePath.isBlank()) {
+                        continue;
+                    }
+                    if (file.directory()) {
+                        writeDirectoryEntry(zipOutputStream, ensureTrailingSlash(relativePath), writtenDirectories);
+                        continue;
+                    }
+                    writeParentDirectories(zipOutputStream, relativePath, writtenDirectories);
+                    ZipEntry entry = new ZipEntry(relativePath);
+                    zipOutputStream.putNextEntry(entry);
+                    zipOutputStream.write(file.bytes());
+                    zipOutputStream.closeEntry();
+                }
+            }
+            byte[] bytes = outputStream.toByteArray();
+            return new NormalizedSkillZip(bytes, sha256Hex(bytes));
+        } catch (IOException exception) {
+            throw new BusinessException(ErrorCode.INTERNAL_ERROR, "Skill zip 规范化失败");
+        }
+    }
+
+    private void writeParentDirectories(
+            ZipOutputStream zipOutputStream,
+            String relativePath,
+            Set<String> writtenDirectories
+    ) throws IOException {
+        int slashIndex = relativePath.indexOf('/');
+        while (slashIndex >= 0) {
+            writeDirectoryEntry(zipOutputStream, relativePath.substring(0, slashIndex + 1), writtenDirectories);
+            slashIndex = relativePath.indexOf('/', slashIndex + 1);
+        }
+    }
+
+    private void writeDirectoryEntry(
+            ZipOutputStream zipOutputStream,
+            String relativePath,
+            Set<String> writtenDirectories
+    ) throws IOException {
+        String directoryPath = ensureTrailingSlash(relativePath);
+        writeParentDirectories(zipOutputStream, directoryPath.substring(0, directoryPath.length() - 1),
+                writtenDirectories);
+        if (!writtenDirectories.add(directoryPath)) {
+            return;
+        }
+        zipOutputStream.putNextEntry(new ZipEntry(directoryPath));
+        zipOutputStream.closeEntry();
+    }
+
+    private String ensureTrailingSlash(String relativePath) {
+        return relativePath.endsWith("/") ? relativePath : relativePath + "/";
     }
 
     private void markApplied(SkillImport skillImport) {
@@ -630,6 +709,15 @@ public class SkillPackageServiceImpl implements SkillPackageService {
         return "skill-packages/extracted/" + importId + "/" + relativePath;
     }
 
+    private String sha256Hex(byte[] bytes) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(bytes));
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
     private SkillPackageItem toItem(SkillPackage skill) {
         return new SkillPackageItem(
                 skill.getId(),
@@ -652,5 +740,19 @@ public class SkillPackageServiceImpl implements SkillPackageService {
             boolean directory,
             byte[] bytes
     ) {
+    }
+
+    private record NormalizedSkillZip(
+            byte[] bytes,
+            String zipSha256
+    ) {
+        private NormalizedSkillZip {
+            bytes = bytes == null ? new byte[0] : bytes.clone();
+        }
+
+        @Override
+        public byte[] bytes() {
+            return bytes.clone();
+        }
     }
 }

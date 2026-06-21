@@ -601,6 +601,44 @@ func TestWriteFileProxiesAppendModeToGuest(t *testing.T) {
 	}
 }
 
+func TestWriteFileProxiesBase64ContentToGuest(t *testing.T) {
+	content := []byte{0x50, 0x4b, 0x03, 0x04, 0xff, 0x00, 0x80}
+	var written struct {
+		Path          string `json:"path"`
+		ContentBase64 string `json:"contentBase64"`
+		AppendMode    bool   `json:"appendMode"`
+	}
+	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/files/content" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&written); err != nil {
+			t.Fatalf("Decode() error = %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	}))
+	defer guest.Close()
+	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
+	session, err := manager.GetOrCreate("conversation-1")
+	if err != nil {
+		t.Fatalf("GetOrCreate() error = %v", err)
+	}
+	router := NewRouterWithManager(manager)
+
+	body := bytes.NewBufferString(`{"path":"/workspace/input/slide.png","contentBase64":"` +
+		base64.StdEncoding.EncodeToString(content) + `","appendMode":false}`)
+	req := httptest.NewRequest(http.MethodPost, "/internal/sandbox/sessions/"+session.ID+"/files/content", body)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if written.Path != "/workspace/input/slide.png" || written.ContentBase64 != base64.StdEncoding.EncodeToString(content) || written.AppendMode {
+		t.Fatalf("written = %#v", written)
+	}
+}
+
 func TestSyncSkillZipProxiesBodyToGuest(t *testing.T) {
 	requestBody := `{"skills":[{"skillId":6,"skillKey":"docx","targetDir":"/workspace/skills/docx"}]}`
 	var guestBody string
@@ -832,11 +870,11 @@ func TestCreateSessionRejectsEscapingRestoreArtifact(t *testing.T) {
 }
 
 func TestCreateSessionRestoresArtifactWithStorageFields(t *testing.T) {
-	content := "restored content"
-	sum := sha256.Sum256([]byte(content))
+	content := []byte{0x50, 0x4b, 0x03, 0x04, 0xff, 0x00, 0x80}
+	sum := sha256.Sum256(content)
 	var written struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
+		Path          string `json:"path"`
+		ContentBase64 string `json:"contentBase64"`
 	}
 	guest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/files/content" {
@@ -849,7 +887,7 @@ func TestCreateSessionRestoresArtifactWithStorageFields(t *testing.T) {
 	}))
 	defer guest.Close()
 
-	downloader := &recordingDownloader{content: content}
+	downloader := &recordingDownloader{content: string(content)}
 	manager := NewSessionManager(&fakeVMFactory{vms: []*fakeVM{{id: "vm-1", url: guest.URL}}}, 1, 5*time.Minute)
 	body := bytes.NewBufferString(fmt.Sprintf(
 		`{"conversationId":"conversation-1","artifacts":[{"relativePath":"reports/out.txt","storageBucket":"bucket-a","storageKey":"objects/out.txt","sha256":"%x"}]}`,
@@ -872,8 +910,8 @@ func TestCreateSessionRestoresArtifactWithStorageFields(t *testing.T) {
 	if written.Path != "/workspace/artifacts/reports/out.txt" {
 		t.Fatalf("written path = %q", written.Path)
 	}
-	if written.Content != content {
-		t.Fatalf("written content = %q", written.Content)
+	if written.ContentBase64 != base64.StdEncoding.EncodeToString(content) {
+		t.Fatalf("written contentBase64 = %q", written.ContentBase64)
 	}
 }
 

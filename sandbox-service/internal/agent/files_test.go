@@ -100,11 +100,41 @@ func TestFileServiceReadAndListTempWorkFile(t *testing.T) {
 
 func TestFileServiceRejectsPathOutsideWorkspaceAndTempWrite(t *testing.T) {
 	service := NewFileService(t.TempDir())
-	outside := filepath.Join(t.TempDir(), "Program.cs")
+	outside := writablePathOutsideWorkspaceAndTemp(t, service)
 
 	if err := service.WriteFile(outside, []byte("bad"), false); err == nil {
 		t.Fatal("expected WriteFile to reject path outside workspace and temp")
 	}
+}
+
+func writablePathOutsideWorkspaceAndTemp(t *testing.T, service *FileService) string {
+	t.Helper()
+
+	uniqueName := "agent-hub-outside-" + filepath.Base(t.TempDir())
+	candidates := []string{
+		filepath.Join(filepath.Dir(service.canonicalTempRoot), uniqueName),
+		filepath.Join(filepath.Dir(service.canonicalRoot), uniqueName),
+	}
+	if filepath.Separator == '/' {
+		candidates = append([]string{filepath.Join("/var/tmp", uniqueName)}, candidates...)
+	}
+
+	for _, candidate := range candidates {
+		candidate = filepath.Clean(candidate)
+		if isInsideBase(service.canonicalRoot, candidate) || isInsideBase(service.canonicalTempRoot, candidate) {
+			continue
+		}
+		if err := os.MkdirAll(candidate, 0o755); err != nil {
+			continue
+		}
+		t.Cleanup(func() {
+			_ = os.RemoveAll(candidate)
+		})
+		return filepath.Join(candidate, "Program.cs")
+	}
+
+	t.Fatal("no writable directory outside workspace and temp root")
+	return ""
 }
 
 func TestFileServiceScanArtifacts(t *testing.T) {

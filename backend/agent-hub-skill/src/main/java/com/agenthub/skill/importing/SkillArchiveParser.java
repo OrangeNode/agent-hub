@@ -57,12 +57,13 @@ public class SkillArchiveParser {
             ZipEntry zipEntry;
             while ((zipEntry = inputStream.getNextEntry()) != null) {
                 String normalizedPath = normalizePath(zipEntry.getName());
-                byte[] bytes = zipEntry.isDirectory() ? new byte[0] : readAll(inputStream);
+                boolean directory = zipEntry.isDirectory() || zipEntry.getName().endsWith("\\");
+                byte[] bytes = directory ? new byte[0] : readAll(inputStream);
                 entries.add(new ArchiveEntry(
                         normalizedPath,
-                        zipEntry.isDirectory(),
-                        zipEntry.isDirectory() ? 0 : bytes.length,
-                        zipEntry.isDirectory() ? null : sha256(bytes),
+                        directory,
+                        directory ? 0 : bytes.length,
+                        directory ? null : sha256(bytes),
                         bytes
                 ));
             }

@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class OpenAiCompatibleClient implements LlmClient {
@@ -31,6 +32,7 @@ public class OpenAiCompatibleClient implements LlmClient {
     private static final String THINK_CLOSE_TAG = "</think>";
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration STREAM_REQUEST_TIMEOUT = Duration.ofSeconds(60);
+    private static final int ERROR_BODY_MAX_CHARS = 1000;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final HttpClient httpClient;
@@ -54,7 +56,9 @@ public class OpenAiCompatibleClient implements LlmClient {
             LlmToolNameMapper toolNameMapper = LlmToolNameMapper.from(request.tools());
             HttpResponse<Stream<String>> response = send(buildRequest(request, toolNameMapper));
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                chunkConsumer.accept(LlmStreamChunk.error("OpenAI Compatible 流式请求失败，HTTP 状态码: " + response.statusCode()));
+                chunkConsumer.accept(LlmStreamChunk.error(
+                        "OpenAI Compatible 流式请求失败，HTTP 状态码: " + response.statusCode()
+                                + upstreamErrorSuffix(readErrorBody(response.body()))));
                 return;
             }
             ThinkTagSplitter thinkTagSplitter = new ThinkTagSplitter();
@@ -138,6 +142,38 @@ public class OpenAiCompatibleClient implements LlmClient {
 
     protected HttpResponse<Stream<String>> send(HttpRequest request) throws IOException, InterruptedException {
         return httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
+    }
+
+    private String readErrorBody(Stream<String> lines) {
+        if (lines == null) {
+            return "";
+        }
+        try (lines) {
+            return lines.limit(20)
+                    .collect(Collectors.joining("\n"));
+        } catch (Exception exception) {
+            return "";
+        }
+    }
+
+    private String upstreamErrorSuffix(String body) {
+        if (body == null || body.isBlank()) {
+            return "";
+        }
+        return "，上游响应: " + abbreviate(
+                sanitizeErrorBody(body).replaceAll("\\s+", " ").trim(),
+                ERROR_BODY_MAX_CHARS);
+    }
+
+    private String sanitizeErrorBody(String body) {
+        return body.replaceAll("(https?://[^\\s\"']+)\\?[^\\s\"']*", "$1?<redacted>");
+    }
+
+    private String abbreviate(String value, int maxChars) {
+        if (value == null || value.length() <= maxChars) {
+            return value;
+        }
+        return value.substring(0, maxChars) + "...";
     }
 
     private HttpRequest buildRequest(LlmStreamRequest request, LlmToolNameMapper toolNameMapper) throws IOException {

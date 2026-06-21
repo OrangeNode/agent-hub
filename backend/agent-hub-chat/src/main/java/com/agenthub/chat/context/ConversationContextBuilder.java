@@ -12,7 +12,6 @@ import com.agenthub.chat.summary.entity.ChatConversationSummary;
 import com.agenthub.chat.summary.mapper.ChatConversationSummaryMapper;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
-import com.agenthub.storage.attachment.dto.AttachmentItem;
 import com.agenthub.storage.attachment.dto.AttachmentReference;
 import com.agenthub.storage.attachment.service.AttachmentService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -22,7 +21,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -116,7 +114,8 @@ public class ConversationContextBuilder {
         }
 
         List<ChatMessage> history = listHistory(userId, conversationId);
-        Map<Long, List<AttachmentItem>> attachmentsByMessageId = listHistoryAttachments(userId, history);
+        Map<Long, List<AttachmentReference>> attachmentsByMessageId =
+                listHistoryAttachments(userId, history, historyImageTokenEstimate);
         ChatConversationSummary summary = loadSummary(userId, conversationId);
         SummaryUpdate summaryUpdate = maybeUpdateSummary(
                 userId,
@@ -186,7 +185,11 @@ public class ConversationContextBuilder {
         return List.copyOf(messages);
     }
 
-    private Map<Long, List<AttachmentItem>> listHistoryAttachments(Long userId, List<ChatMessage> history) {
+    private Map<Long, List<AttachmentReference>> listHistoryAttachments(
+            Long userId,
+            List<ChatMessage> history,
+            int imageTokenEstimate
+    ) {
         List<Long> messageIds = history.stream()
                 .map(ChatMessage::getId)
                 .filter(id -> id != null)
@@ -194,18 +197,12 @@ public class ConversationContextBuilder {
         if (messageIds.isEmpty()) {
             return Map.of();
         }
-        List<AttachmentItem> attachments = attachmentService.listMessageAttachments(userId, messageIds);
+        Map<Long, List<AttachmentReference>> attachments =
+                attachmentService.listMessageAttachmentReferences(userId, messageIds, imageTokenEstimate);
         if (attachments == null || attachments.isEmpty()) {
             return Map.of();
         }
-        return attachments.stream()
-                .filter(attachment -> attachment.messageId() != null)
-                .filter(this::isAvailableHistoryImage)
-                .collect(Collectors.groupingBy(AttachmentItem::messageId));
-    }
-
-    private boolean isAvailableHistoryImage(AttachmentItem attachment) {
-        return !attachment.expired() && hasText(attachment.previewUrl());
+        return attachments;
     }
 
     private ChatConversationSummary loadSummary(Long userId, Long conversationId) {
@@ -227,7 +224,7 @@ public class ConversationContextBuilder {
             int availableInputTokens,
             int historyImageTokenEstimate,
             List<ChatMessage> history,
-            Map<Long, List<AttachmentItem>> attachmentsByMessageId,
+            Map<Long, List<AttachmentReference>> attachmentsByMessageId,
             ChatConversationSummary currentSummary
     ) {
         int fullHistoryEstimate = estimateHistory(history, attachmentsByMessageId, historyImageTokenEstimate)
@@ -359,7 +356,7 @@ public class ConversationContextBuilder {
 
     private List<LlmMessage> selectRecentMessages(
             List<ChatMessage> candidates,
-            Map<Long, List<AttachmentItem>> attachmentsByMessageId,
+            Map<Long, List<AttachmentReference>> attachmentsByMessageId,
             int budget,
             int imageTokenEstimate
     ) {
@@ -384,20 +381,23 @@ public class ConversationContextBuilder {
         return selected;
     }
 
-    private LlmMessage toLlmMessage(ChatMessage message, Map<Long, List<AttachmentItem>> attachmentsByMessageId) {
+    private LlmMessage toLlmMessage(
+            ChatMessage message,
+            Map<Long, List<AttachmentReference>> attachmentsByMessageId
+    ) {
         String role = toLlmRole(message.getRole());
-        List<AttachmentItem> attachments = attachmentsFor(message, attachmentsByMessageId);
+        List<AttachmentReference> attachments = attachmentsFor(message, attachmentsByMessageId);
         if (!"user".equals(role) || attachments.isEmpty()) {
             return new LlmMessage(role, withMessageTime(message.getCreatedAt(), message.getContent()));
         }
         List<LlmContentPart> parts = new ArrayList<>();
         String text = withAttachmentImportHints(withMessageTime(message.getCreatedAt(), message.getContent()),
-                attachmentHintsFromItems(attachments));
+                attachmentHintsFromReferences(attachments));
         if (hasText(text)) {
             parts.add(LlmContentPart.text(text));
         }
         attachments.stream()
-                .map(AttachmentItem::previewUrl)
+                .map(AttachmentReference::readUrl)
                 .map(LlmContentPart::imageUrl)
                 .forEach(parts::add);
         return LlmMessage.user(parts);
@@ -441,24 +441,24 @@ public class ConversationContextBuilder {
 
     private int estimateHistory(
             List<ChatMessage> history,
-            Map<Long, List<AttachmentItem>> attachmentsByMessageId,
+            Map<Long, List<AttachmentReference>> attachmentsByMessageId,
             int imageTokenEstimate
     ) {
         return history.stream()
                 .mapToInt(message -> {
-                    List<AttachmentItem> attachments = attachmentsFor(message, attachmentsByMessageId);
+                    List<AttachmentReference> attachments = attachmentsFor(message, attachmentsByMessageId);
                     String text = withAttachmentImportHints(
                             withMessageTime(message.getCreatedAt(), message.getContent()),
-                            attachmentHintsFromItems(attachments)
+                            attachmentHintsFromReferences(attachments)
                     );
                     return estimateText(text) + attachments.size() * imageTokenEstimate;
                 })
                 .sum();
     }
 
-    private List<AttachmentItem> attachmentsFor(
+    private List<AttachmentReference> attachmentsFor(
             ChatMessage message,
-            Map<Long, List<AttachmentItem>> attachmentsByMessageId
+            Map<Long, List<AttachmentReference>> attachmentsByMessageId
     ) {
         if (message.getId() == null) {
             return List.of();
@@ -521,20 +521,6 @@ public class ConversationContextBuilder {
         return images.stream()
                 .filter(image -> image != null && image.attachmentId() != null)
                 .map(image -> new AttachmentImportHint(image.attachmentId(), image.filename(), image.contentType()))
-                .toList();
-    }
-
-    private List<AttachmentImportHint> attachmentHintsFromItems(List<AttachmentItem> attachments) {
-        if (attachments == null || attachments.isEmpty()) {
-            return List.of();
-        }
-        return attachments.stream()
-                .filter(attachment -> attachment != null && attachment.attachmentId() != null)
-                .map(attachment -> new AttachmentImportHint(
-                        attachment.attachmentId(),
-                        attachment.filename(),
-                        attachment.contentType()
-                ))
                 .toList();
     }
 

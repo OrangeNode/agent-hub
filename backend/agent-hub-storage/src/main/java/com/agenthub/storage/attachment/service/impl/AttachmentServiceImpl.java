@@ -28,6 +28,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -209,6 +210,36 @@ public class AttachmentServiceImpl implements AttachmentService {
     }
 
     @Override
+    public Map<Long, List<AttachmentReference>> listMessageAttachmentReferences(
+            Long userId,
+            List<Long> messageIds,
+            int imageTokenEstimate
+    ) {
+        List<Long> normalizedMessageIds = normalizeIds(messageIds);
+        if (normalizedMessageIds.isEmpty()) {
+            return Map.of();
+        }
+        LambdaQueryWrapper<ChatAttachment> wrapper = new LambdaQueryWrapper<ChatAttachment>()
+                .eq(ChatAttachment::getUserId, userId)
+                .in(ChatAttachment::getMessageId, normalizedMessageIds)
+                .eq(ChatAttachment::getAttachmentType, IMAGE_TYPE)
+                .eq(ChatAttachment::getStatus, STATUS_READY)
+                .gt(ChatAttachment::getExpiresAt, OffsetDateTime.now())
+                .orderByAsc(ChatAttachment::getMessageId)
+                .orderByAsc(ChatAttachment::getId);
+        return chatAttachmentMapper.selectList(wrapper).stream()
+                .filter(this::isReadyAvailableImage)
+                .collect(Collectors.groupingBy(
+                        ChatAttachment::getMessageId,
+                        LinkedHashMap::new,
+                        Collectors.mapping(
+                                attachment -> toAttachmentReference(attachment, imageTokenEstimate),
+                                Collectors.toList()
+                        )
+                ));
+    }
+
+    @Override
     public void bindToMessage(Long userId, Long conversationId, Long messageId, List<Long> attachmentIds) {
         List<Long> normalizedIds = normalizeIds(attachmentIds);
         if (normalizedIds.isEmpty()) {
@@ -345,6 +376,14 @@ public class AttachmentServiceImpl implements AttachmentService {
         if (isExpired(attachment)) {
             throw expiredImageException();
         }
+    }
+
+    private boolean isReadyAvailableImage(ChatAttachment attachment) {
+        return attachment != null
+                && attachment.getMessageId() != null
+                && STATUS_READY.equals(attachment.getStatus())
+                && IMAGE_TYPE.equals(attachment.getAttachmentType())
+                && !isExpired(attachment);
     }
 
     private void validateBindableImage(Long userId, ChatAttachment attachment) {

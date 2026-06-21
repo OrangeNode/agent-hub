@@ -24,6 +24,7 @@ import com.agenthub.storage.object.ObjectStorageClient;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -433,6 +434,27 @@ class AttachmentServiceImplTest {
         assertThat(items.get(1).expired()).isTrue();
         assertThat(items.get(1).previewUrl()).isNull();
         assertThat(items.get(1).message()).isEqualTo("图片已过期");
+    }
+
+    @Test
+    void shouldListMessageAttachmentReferencesAsDataUrlsForLlmHistory() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        ChatAttachment activeAttachment = readyAttachment(1L, 7L, 200L, 300L, OffsetDateTime.now().plusDays(1));
+        ChatAttachment expiredAttachment = readyAttachment(2L, 7L, 200L, 301L, OffsetDateTime.now().minusSeconds(1));
+        when(mapper.selectList(any())).thenReturn(List.of(activeAttachment, expiredAttachment));
+        when(objectStorageClient.readBytes("users/7/chat-images/20260604/cat.png"))
+                .thenReturn(PNG_MAGIC);
+
+        Map<Long, List<AttachmentReference>> references =
+                service.listMessageAttachmentReferences(7L, List.of(300L, 301L), 1500);
+
+        assertThat(references).containsOnlyKeys(300L);
+        assertThat(references.get(300L)).hasSize(1);
+        assertThat(references.get(300L).getFirst().attachmentId()).isEqualTo(1L);
+        assertThat(references.get(300L).getFirst().readUrl()).startsWith("data:image/png;base64,");
+        verify(objectStorageClient, times(1)).readBytes("users/7/chat-images/20260604/cat.png");
     }
 
     @Test

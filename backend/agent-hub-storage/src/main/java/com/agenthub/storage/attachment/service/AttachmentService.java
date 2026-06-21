@@ -5,6 +5,7 @@ import com.agenthub.storage.attachment.dto.AttachmentImportSource;
 import com.agenthub.storage.attachment.dto.AttachmentReference;
 import com.agenthub.storage.attachment.dto.AttachmentUploadUrl;
 import java.util.List;
+import java.util.Map;
 
 public interface AttachmentService {
 
@@ -21,6 +22,12 @@ public interface AttachmentService {
             Long conversationId,
             List<Long> attachmentIds,
             List<Long> reuseAttachmentIds,
+            int imageTokenEstimate
+    );
+
+    Map<Long, List<AttachmentReference>> listMessageAttachmentReferences(
+            Long userId,
+            List<Long> messageIds,
             int imageTokenEstimate
     );
 

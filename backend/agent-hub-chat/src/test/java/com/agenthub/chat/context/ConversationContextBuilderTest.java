@@ -20,12 +20,12 @@ import com.agenthub.chat.summary.entity.ChatConversationSummary;
 import com.agenthub.chat.summary.mapper.ChatConversationSummaryMapper;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
-import com.agenthub.storage.attachment.dto.AttachmentItem;
 import com.agenthub.storage.attachment.dto.AttachmentReference;
 import com.agenthub.storage.attachment.service.AttachmentService;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -131,10 +131,15 @@ class ConversationContextBuilderTest {
     void shouldIncludeAvailableHistoryImagesAsMessageParts() {
         ChatMessage historyMessage = message(1L, "USER", "analyze historical image");
         AttachmentService attachmentService = mock(AttachmentService.class);
-        when(attachmentService.listMessageAttachments(7L, List.of(1L))).thenReturn(List.of(
-                attachment(10L, 1L, false, "https://example.com/history.png"),
-                attachment(11L, 1L, true, "https://example.com/expired.png"),
-                attachment(12L, 1L, false, " ")
+        when(attachmentService.listMessageAttachmentReferences(7L, List.of(1L), 1500)).thenReturn(Map.of(
+                1L,
+                List.of(new AttachmentReference(
+                        10L,
+                        "image.png",
+                        "image/png",
+                        "data:image/png;base64,AAAA",
+                        1500
+                ))
         ));
         ConversationContextBuilder builder = builder(
                 List.of(historyMessage),
@@ -154,7 +159,8 @@ class ConversationContextBuilderTest {
                 .contains("attachment_id=10")
                 .contains("image.png")
                 .contains("sandbox.upload_file");
-        assertThat(historyLlmMessage.parts().get(1)).isEqualTo(LlmContentPart.imageUrl("https://example.com/history.png"));
+        assertThat(historyLlmMessage.parts().get(1))
+                .isEqualTo(LlmContentPart.imageUrl("data:image/png;base64,AAAA"));
         assertThat(result.inputTokenEstimate()).isGreaterThan(1_500);
     }
 
@@ -306,19 +312,6 @@ class ConversationContextBuilderTest {
         message.setContent(content);
         message.setStatus("COMPLETED");
         return message;
-    }
-
-    private AttachmentItem attachment(Long attachmentId, Long messageId, boolean expired, String previewUrl) {
-        return new AttachmentItem(
-                attachmentId,
-                "image.png",
-                "image/png",
-                "READY",
-                expired,
-                previewUrl,
-                null,
-                messageId
-        );
     }
 
     private RecordingLlmClient summaryClient(String summary) {

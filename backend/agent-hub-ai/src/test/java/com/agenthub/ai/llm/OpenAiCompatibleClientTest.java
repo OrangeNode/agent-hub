@@ -105,6 +105,36 @@ class OpenAiCompatibleClientTest {
     }
 
     @Test
+    void shouldIncludeUpstreamErrorBodyWhenStreamRequestFails() {
+        CapturingOpenAiClient capturingClient = new CapturingOpenAiClient(
+                500,
+                Stream.of("{\"error\":{\"message\":\"context length exceeded\"}}"));
+        List<LlmStreamChunk> chunks = new ArrayList<>();
+
+        capturingClient.stream(request("https://api.openai.com/v1"), chunks::add);
+
+        assertThat(chunks).hasSize(1);
+        assertThat(chunks.getFirst().type()).isEqualTo(LlmStreamChunkType.ERROR);
+        assertThat(chunks.getFirst().errorMessage())
+                .contains("HTTP 状态码: 500")
+                .contains("context length exceeded");
+    }
+
+    @Test
+    void shouldRedactPresignedUrlQueryInUpstreamErrorBody() {
+        CapturingOpenAiClient capturingClient = new CapturingOpenAiClient(
+                500,
+                Stream.of("{\"error\":{\"message\":\"failed to download http://minio:9000/bucket/a.png?X-Amz-Signature=secret\"}}"));
+        List<LlmStreamChunk> chunks = new ArrayList<>();
+
+        capturingClient.stream(request("https://api.openai.com/v1"), chunks::add);
+
+        assertThat(chunks.getFirst().errorMessage())
+                .contains("http://minio:9000/bucket/a.png?<redacted>")
+                .doesNotContain("secret");
+    }
+
+    @Test
     void shouldEnableThinkingWhenReasoningRequested() throws Exception {
         CapturingOpenAiClient capturingClient = new CapturingOpenAiClient();
 
@@ -503,6 +533,7 @@ class OpenAiCompatibleClientTest {
 
     private static class CapturingOpenAiClient extends OpenAiCompatibleClient {
 
+        private final int statusCode;
         private final Function<HttpRequest, Stream<String>> responseLines;
         private HttpRequest capturedRequest;
 
@@ -511,17 +542,26 @@ class OpenAiCompatibleClientTest {
         }
 
         private CapturingOpenAiClient(Stream<String> responseLines) {
-            this(ignored -> responseLines);
+            this(200, responseLines);
+        }
+
+        private CapturingOpenAiClient(int statusCode, Stream<String> responseLines) {
+            this(statusCode, ignored -> responseLines);
         }
 
         private CapturingOpenAiClient(Function<HttpRequest, Stream<String>> responseLines) {
+            this(200, responseLines);
+        }
+
+        private CapturingOpenAiClient(int statusCode, Function<HttpRequest, Stream<String>> responseLines) {
+            this.statusCode = statusCode;
             this.responseLines = responseLines;
         }
 
         @Override
         protected HttpResponse<Stream<String>> send(HttpRequest request) throws IOException, InterruptedException {
             this.capturedRequest = request;
-            return new TestStreamResponse(responseLines.apply(request));
+            return new TestStreamResponse(statusCode, responseLines.apply(request));
         }
     }
 
@@ -557,11 +597,11 @@ class OpenAiCompatibleClientTest {
         }
     }
 
-    private record TestStreamResponse(Stream<String> body) implements HttpResponse<Stream<String>> {
+    private record TestStreamResponse(int statusCode, Stream<String> body) implements HttpResponse<Stream<String>> {
 
         @Override
         public int statusCode() {
-            return 200;
+            return statusCode;
         }
 
         @Override

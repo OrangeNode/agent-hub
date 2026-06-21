@@ -64,6 +64,20 @@ func TestMinimalRootfsIncludesPdfAndEditablePptRuntimeDependencies(t *testing.T)
 	}
 }
 
+func TestMinimalRootfsAvoidsHeavyNumericStackByDefault(t *testing.T) {
+	content := readScript(t, "build-minimal-rootfs.sh")
+
+	for _, unexpected := range []string{
+		"python3-numpy",
+		"python3-pandas",
+		"python3-matplotlib",
+	} {
+		if strings.Contains(content, unexpected) {
+			t.Fatalf("build-minimal-rootfs.sh should not install %q by default", unexpected)
+		}
+	}
+}
+
 func TestMinimalRootfsCleansStaleChrootMounts(t *testing.T) {
 	content := readScript(t, "build-minimal-rootfs.sh")
 

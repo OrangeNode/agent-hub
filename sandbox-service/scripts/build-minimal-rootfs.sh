@@ -55,10 +55,7 @@ RUNTIME_PACKAGES=(
   python3-docx
   python-is-python3
   python3-lxml
-  python3-matplotlib
-  python3-numpy
   python3-openpyxl
-  python3-pandas
   python3-pil
   python3-pip
   python3-pypdf

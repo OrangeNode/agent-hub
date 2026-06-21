@@ -41,7 +41,7 @@ GO_BIN=/usr/local/go/bin/go ./sandbox-service/scripts/build-rootfs.sh
 
 默认 rootfs 临时树在 `/tmp/agent-hub-sandbox-rootfs-tree`，避免 Go module 下出现 root 权限目录影响 `go test ./...`。
 
-rootfs 基于 Ubuntu noble minbase，预装 `bash`、`python3`/`python`、`pip`、`venv`、`numpy`、`pandas`、`matplotlib`、`openpyxl`、`python-docx`、`python-pptx`、`pypdf`、`reportlab`、`Pillow`、`lxml`、`nodejs`、`npm`、`dotnet-sdk-8.0`、`pandoc`、`poppler-utils`、`libreoffice-writer`、`libreoffice-impress`、`libreoffice-calc`、CJK/常用字体、`git`、`curl`、`jq`、`zip`、`unzip`、`tar`、`build-essential`、`iproute2`、`procps` 等运行和常用构建依赖。
+rootfs 基于 Ubuntu noble minbase，预装 `bash`、`python3`/`python`、`pip`、`venv`、`openpyxl`、`python-docx`、`python-pptx`、`pypdf`、`reportlab`、`Pillow`、`lxml`、`nodejs`、`npm`、`dotnet-sdk-8.0`、`pandoc`、`poppler-utils`、`libreoffice-writer`、`libreoffice-impress`、`libreoffice-calc`、CJK/常用字体、`git`、`curl`、`jq`、`zip`、`unzip`、`tar`、`build-essential`、`iproute2`、`procps` 等运行和常用构建依赖。
 
 ## 准备 kernel
 

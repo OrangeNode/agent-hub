@@ -64,6 +64,21 @@ func TestMinimalRootfsIncludesPdfAndEditablePptRuntimeDependencies(t *testing.T)
 	}
 }
 
+func TestMinimalRootfsCleansStaleChrootMounts(t *testing.T) {
+	content := readScript(t, "build-minimal-rootfs.sh")
+
+	for _, expected := range []string{
+		"cleanup_rootfs_mounts",
+		"mountpoint -q",
+		"umount -l",
+		"trap cleanup_rootfs_mounts RETURN ERR",
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("build-minimal-rootfs.sh missing stale mount cleanup %q", expected)
+		}
+	}
+}
+
 func TestMinimalRootfsWarmsDotnetOpenXmlPackageCache(t *testing.T) {
 	content := readScript(t, "build-minimal-rootfs.sh")
 

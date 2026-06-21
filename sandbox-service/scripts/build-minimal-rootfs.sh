@@ -139,10 +139,20 @@ build_agent() {
   )
 }
 
+cleanup_rootfs_mounts() {
+  for target in dev sys proc; do
+    local mount_path="${ROOTFS_DIR}/${target}"
+    if mountpoint -q "${mount_path}"; then
+      sudo umount "${mount_path}" 2>/dev/null || sudo umount -l "${mount_path}" 2>/dev/null || true
+    fi
+  done
+}
+
 bootstrap_rootfs() {
 	local package_csv
 	package_csv="$(IFS=,; echo "${BOOTSTRAP_PACKAGES[*]}")"
 	echo "生成 rootfs 目录: ${ROOTFS_DIR}"
+	cleanup_rootfs_mounts
 	sudo rm -rf "${ROOTFS_DIR}"
 	sudo mkdir -p "${ROOTFS_DIR}"
 	sudo debootstrap --variant=minbase --components=main,universe --include="${package_csv}" "${UBUNTU_CODENAME}" "${ROOTFS_DIR}" "${UBUNTU_MIRROR}"
@@ -160,17 +170,14 @@ EOF
   sudo mount -t proc proc "${ROOTFS_DIR}/proc"
   sudo mount -t sysfs sysfs "${ROOTFS_DIR}/sys"
   sudo mount --bind /dev "${ROOTFS_DIR}/dev"
-  cleanup_chroot_mounts() {
-    sudo umount "${ROOTFS_DIR}/dev" 2>/dev/null || true
-    sudo umount "${ROOTFS_DIR}/sys" 2>/dev/null || true
-    sudo umount "${ROOTFS_DIR}/proc" 2>/dev/null || true
-  }
-  trap cleanup_chroot_mounts RETURN
+  trap cleanup_rootfs_mounts RETURN ERR
   sudo chroot "${ROOTFS_DIR}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get update
   sudo chroot "${ROOTFS_DIR}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${all_packages[@]}"
   install_python_packages
   warm_dotnet_package_cache
   sudo chroot "${ROOTFS_DIR}" apt-get clean
+  cleanup_rootfs_mounts
+  trap - RETURN ERR
 }
 
 install_python_packages() {

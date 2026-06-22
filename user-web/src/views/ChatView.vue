@@ -815,6 +815,7 @@ export function resolveSendButtonDisabled(state: SendButtonDisabledState) {
 
 export interface AssistantDisplayMessageLike {
   content?: string | null
+  errorMessage?: string | null
   status?: string | null
 }
 
@@ -824,7 +825,7 @@ export function assistantDisplayContent(messageItem: AssistantDisplayMessageLike
   }
 
   if (messageItem.status === 'FAILED') {
-    return '生成失败'
+    return messageItem.errorMessage || '生成失败'
   }
 
   return messageItem.status === 'STOPPED' ? '已中止生成' : '正在生成回复...'
@@ -910,7 +911,8 @@ import {
   fetchConversationMessages,
   fetchConversations,
   openChatStream,
-  renameConversation
+  renameConversation,
+  stopGeneration
 } from '../api/chat'
 import type {
   AvailableAgentRecord,
@@ -957,6 +959,7 @@ interface ChatMessageItem {
   id: number
   role: ChatRole
   content: string
+  errorMessage?: string | null
   reasoningContent?: string
   processExpanded?: boolean
   reasoningStartedAt?: number
@@ -1230,6 +1233,7 @@ function mapMessage(item: ChatMessageRecord): ChatMessageItem {
     id: item.messageId,
     role: item.role.toLowerCase() === 'user' ? 'user' : 'assistant',
     content: item.content,
+    errorMessage: item.errorMessage ?? null,
     reasoningContent: item.reasoningContent ?? '',
     processExpanded: false,
     status: item.status,
@@ -2051,9 +2055,18 @@ function closeStream() {
 
 function stopCurrentStream() {
   markCurrentAssistantStopped()
+  const stopGenerationRequest = currentAssistantMessageId > 0
+    ? stopGeneration(currentAssistantMessageId)
+    : Promise.resolve()
+
   closeStream()
-  void refreshActiveArtifacts()
-  void loadConversations()
+  void stopGenerationRequest.catch((error) => {
+    message.error(error instanceof Error ? error.message : '中止生成失败')
+  }).finally(() => {
+    void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
+    void refreshActiveArtifacts()
+    void loadConversations()
+  })
 }
 
 function markCurrentAssistantStopped() {
@@ -2068,13 +2081,14 @@ function markCurrentAssistantStopped() {
   }
 }
 
-function markAssistantFailed(assistantMessage?: ChatMessageItem) {
+function markAssistantFailed(assistantMessage?: ChatMessageItem, errorMessage?: string) {
   if (!assistantMessage) {
     return
   }
 
   finishReasoningTiming(assistantMessage)
   assistantMessage.status = 'FAILED'
+  assistantMessage.errorMessage = errorMessage ?? null
 }
 
 function handleSend() {
@@ -2250,7 +2264,7 @@ function handleSend() {
         }
       },
       onError: (data) => {
-        markAssistantFailed(findAssistantMessage(currentAssistantMessageId))
+        markAssistantFailed(findAssistantMessage(data.messageId ?? currentAssistantMessageId), data.message ?? '流式响应失败')
         message.error(data.message ?? '\u6d41\u5f0f\u54cd\u5e94\u5931\u8d25')
         closeStream()
         void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
@@ -2264,7 +2278,6 @@ function handleSend() {
         void loadConversations()
       },
       onTransportError: () => {
-        markAssistantFailed(findAssistantMessage(currentAssistantMessageId))
         closeStream()
         void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
         void refreshActiveArtifacts()

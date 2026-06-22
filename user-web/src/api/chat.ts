@@ -396,6 +396,10 @@ export async function renameConversation(conversationId: number, title: string) 
   await http.patch(`/chat/conversations/${conversationId}`, { title })
 }
 
+export async function stopGeneration(messageId: number) {
+  await http.post(`/chat/messages/${messageId}/stop`)
+}
+
 export async function fetchAvailableModels() {
   const response = await http.get<ApiResponse<AvailableModelRecord[]>>('/ai/models/available')
   return response.data.data

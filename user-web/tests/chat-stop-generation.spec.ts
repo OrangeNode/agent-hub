@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { assistantDisplayContent, findStoppableAssistantMessage, resolveSendButtonDisabled } from '../src/views/ChatView.vue'
+import chatApiSource from '../src/api/chat.ts?raw'
 import chatViewSource from '../src/views/ChatView.vue?raw'
 
+const normalizedChatApiSource = chatApiSource.replace(/\r\n/g, '\n')
 const normalizedChatViewSource = chatViewSource.replace(/\r\n/g, '\n')
 
 function functionBlock(name: string) {
@@ -52,6 +54,18 @@ describe('聊天生成中止', () => {
   }`)
   })
 
+  it('停止生成接口应同步服务端消息状态', () => {
+    expect(normalizedChatApiSource).toContain('export async function stopGeneration(messageId: number)')
+    expect(normalizedChatApiSource).toContain('await http.post(`/chat/messages/${messageId}/stop`)')
+  })
+
+  it('停止当前正数消息时应调用停止生成接口', () => {
+    const stopCurrentStream = functionBlock('stopCurrentStream')
+
+    expect(normalizedChatViewSource).toContain('stopGeneration')
+    expect(stopCurrentStream).toContain('stopGeneration(currentAssistantMessageId)')
+  })
+
   it('按钮禁用状态不应包含流式生成状态', () => {
     const sendButtonDisabled = computedBlock('sendButtonDisabled')
 
@@ -88,6 +102,7 @@ describe('聊天生成中止', () => {
 
     expect(findStoppableAssistantMessage(messages)).toBe(messages[1])
   })
+
   it('空内容的失败助手消息不应继续显示正在生成', () => {
     expect(assistantDisplayContent({
       role: 'assistant',
@@ -96,14 +111,20 @@ describe('聊天生成中止', () => {
     })).toBe('生成失败')
   })
 
-  it('流式错误应立即把当前助手占位消息标记为失败', () => {
+  it('失败助手消息无正文时应优先显示流内错误消息', () => {
+    expect(assistantDisplayContent({ status: 'FAILED', content: '', errorMessage: '模型调用失败' })).toBe('模型调用失败')
+  })
+
+  it('流式错误应记录失败消息，传输错误只刷新不永久失败', () => {
     const onErrorIndex = normalizedChatViewSource.indexOf('onError: (data) => {')
     const onTransportErrorIndex = normalizedChatViewSource.indexOf('onTransportError: () => {')
     const onDoneIndex = normalizedChatViewSource.indexOf('onDone: () => {')
 
     expect(normalizedChatViewSource.slice(onErrorIndex, onDoneIndex))
-      .toContain('markAssistantFailed(findAssistantMessage(currentAssistantMessageId))')
+      .toContain('markAssistantFailed(findAssistantMessage(data.messageId ?? currentAssistantMessageId), data.message ?? \'流式响应失败\')')
     expect(normalizedChatViewSource.slice(onTransportErrorIndex))
-      .toContain('markAssistantFailed(findAssistantMessage(currentAssistantMessageId))')
+      .not.toContain('markAssistantFailed(findAssistantMessage(currentAssistantMessageId))')
+    expect(normalizedChatViewSource.slice(onTransportErrorIndex))
+      .toContain('void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)')
   })
 })

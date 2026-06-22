@@ -1,6 +1,8 @@
 package com.agenthub.tool.mcp;
 
 import com.agenthub.ai.llm.tool.LlmToolDefinition;
+import com.agenthub.tool.binding.entity.AgentToolBinding;
+import com.agenthub.tool.binding.mapper.AgentToolBindingMapper;
 import com.agenthub.tool.mcp.client.McpClient;
 import com.agenthub.tool.mcp.client.McpToolCallResult;
 import com.agenthub.tool.mcp.entity.McpServer;
@@ -33,50 +35,60 @@ public class McpToolProvider implements ToolProvider {
     private static final int EXCERPT_MAX_LENGTH = 8192;
     private static final String STATUS_COMPLETED = "COMPLETED";
     private static final String STATUS_FAILED = "FAILED";
+    private static final String PROVIDER_TYPE_MCP = "MCP";
     private static final Map<String, Object> DEFAULT_PARAMETERS = Map.of("type", "object");
 
     private final McpServerMapper serverMapper;
     private final McpToolMapper toolMapper;
     private final McpToolCallLogMapper callLogMapper;
     private final McpClient mcpClient;
+    private final AgentToolBindingMapper bindingMapper;
 
     public McpToolProvider(
             McpServerMapper serverMapper,
             McpToolMapper toolMapper,
             McpToolCallLogMapper callLogMapper,
-            McpClient mcpClient
+            McpClient mcpClient,
+            AgentToolBindingMapper bindingMapper
     ) {
         this.serverMapper = serverMapper;
         this.toolMapper = toolMapper;
         this.callLogMapper = callLogMapper;
         this.mcpClient = mcpClient;
+        this.bindingMapper = bindingMapper;
     }
 
     @Override
     public List<LlmToolDefinition> listTools(ToolExecutionContext context) {
+        if (context == null || context.agentId() == null) {
+            return List.of();
+        }
         List<LlmToolDefinition> definitions = new ArrayList<>();
-        List<McpServer> servers = serverMapper.selectList(new LambdaQueryWrapper<McpServer>()
-                .eq(McpServer::getEnabled, true)
-                .orderByAsc(McpServer::getSort)
-                .orderByAsc(McpServer::getId));
-        for (McpServer server : servers) {
+        List<AgentToolBinding> bindings = bindingMapper.selectByAgentIdAndProviderType(
+                context.agentId(),
+                PROVIDER_TYPE_MCP
+        );
+        if (bindings == null || bindings.isEmpty()) {
+            return List.of();
+        }
+        for (AgentToolBinding binding : bindings) {
+            if (binding == null || !Boolean.TRUE.equals(binding.getEnabled())
+                    || !PROVIDER_TYPE_MCP.equals(binding.getProviderType())) {
+                continue;
+            }
+            McpTool tool = binding.getProviderRefId() == null ? null : toolMapper.selectById(binding.getProviderRefId());
+            if (tool == null || !Boolean.TRUE.equals(tool.getEnabled())) {
+                continue;
+            }
+            McpServer server = tool.getServerId() == null ? null : serverMapper.selectById(tool.getServerId());
             if (server == null || !Boolean.TRUE.equals(server.getEnabled())) {
                 continue;
             }
-            List<McpTool> tools = toolMapper.selectList(new LambdaQueryWrapper<McpTool>()
-                    .eq(McpTool::getServerId, server.getId())
-                    .eq(McpTool::getEnabled, true)
-                    .orderByAsc(McpTool::getToolName));
-            for (McpTool tool : tools) {
-                if (tool == null || !Boolean.TRUE.equals(tool.getEnabled())) {
-                    continue;
-                }
-                definitions.add(new LlmToolDefinition(
-                        exposedToolName(server.getServerKey(), tool.getToolName()),
-                        defaultText(tool.getDescription(), tool.getDisplayName()),
-                        parseParameters(tool.getInputSchema())
-                ));
-            }
+            definitions.add(new LlmToolDefinition(
+                    exposedToolName(server.getServerKey(), tool.getToolName()),
+                    defaultText(tool.getDescription(), tool.getDisplayName()),
+                    parseParameters(tool.getInputSchema())
+            ));
         }
         return definitions;
     }
@@ -95,6 +107,10 @@ public class McpToolProvider implements ToolProvider {
         ParsedToolName parsed = parseToolName(request.toolName());
         if (parsed == null) {
             return ToolExecutionResult.failed("不支持的工具: " + request.toolName());
+        }
+
+        if (!isAuthorized(context, request.toolName())) {
+            return ToolExecutionResult.failed("当前 Agent 未授权使用工具: " + request.toolName());
         }
 
         OffsetDateTime startedAt = OffsetDateTime.now();
@@ -161,6 +177,16 @@ public class McpToolProvider implements ToolProvider {
         return toolMapper.selectOne(new LambdaQueryWrapper<McpTool>()
                 .eq(McpTool::getServerId, serverId)
                 .eq(McpTool::getToolName, remoteToolName));
+    }
+
+    private boolean isAuthorized(ToolExecutionContext context, String toolName) {
+        if (context == null || context.agentId() == null) {
+            return false;
+        }
+        AgentToolBinding binding = bindingMapper.selectByAgentIdAndToolName(context.agentId(), toolName);
+        return binding != null
+                && Boolean.TRUE.equals(binding.getEnabled())
+                && PROVIDER_TYPE_MCP.equals(binding.getProviderType());
     }
 
     private void writeLog(

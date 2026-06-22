@@ -2053,18 +2053,27 @@ function closeStream() {
   syncReasoningTimer()
 }
 
-function stopCurrentStream() {
-  const assistantMessage = findStoppableAssistantMessage(currentMessages.value)
-  markCurrentAssistantStopped()
-  if (assistantMessage && assistantMessage.id > 0) {
-    void stopGeneration(assistantMessage.id).catch((error) => {
-      message.error(error instanceof Error ? error.message : '中止生成失败')
-    })
-  }
-  closeStream()
+function requestStopGeneration(messageId: number) {
+  return stopGeneration(messageId).catch((error) => {
+    message.error(error instanceof Error ? error.message : '中止生成失败')
+  })
+}
+
+function refreshAfterStopping() {
   void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
   void refreshActiveArtifacts()
   void loadConversations()
+}
+
+function stopCurrentStream() {
+  const assistantMessage = findStoppableAssistantMessage(currentMessages.value)
+  markCurrentAssistantStopped()
+  closeStream()
+  if (assistantMessage && assistantMessage.id > 0) {
+    void requestStopGeneration(assistantMessage.id).finally(refreshAfterStopping)
+    return
+  }
+  refreshAfterStopping()
 }
 
 function markCurrentAssistantStopped() {

@@ -65,8 +65,19 @@ describe('聊天生成中止', () => {
     expect(normalizedChatViewSource).toContain('stopGeneration')
     expect(stopCurrentStream).toContain('const assistantMessage = findStoppableAssistantMessage(currentMessages.value)')
     expect(stopCurrentStream).toContain('assistantMessage && assistantMessage.id > 0')
-    expect(stopCurrentStream).toContain('stopGeneration(assistantMessage.id)')
+    expect(stopCurrentStream).toContain('requestStopGeneration(assistantMessage.id)')
     expect(stopCurrentStream).not.toContain('currentAssistantMessageId')
+  })
+
+  it('停止真实消息时应等待停止请求完成后再刷新历史消息', () => {
+    const stopCurrentStream = functionBlock('stopCurrentStream')
+    const refreshAfterStopping = functionBlock('refreshAfterStopping')
+
+    expect(refreshAfterStopping).toContain('void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)')
+    expect(refreshAfterStopping).toContain('void refreshActiveArtifacts()')
+    expect(refreshAfterStopping).toContain('void loadConversations()')
+    expect(stopCurrentStream).toContain('void requestStopGeneration(assistantMessage.id).finally(refreshAfterStopping)')
+    expect(stopCurrentStream).toContain('refreshAfterStopping()')
   })
 
   it('按钮禁用状态不应包含流式生成状态', () => {

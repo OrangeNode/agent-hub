@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyMessageCompletedIfStreaming,
   applyStreamConversationId,
   applyStreamAssistantMessageId,
   assistantDisplayContent,
@@ -173,13 +174,28 @@ describe('聊天生成中止', () => {
     })).toBe(true)
   })
 
-  it('中止时应兜底标记当前最后一条助手消息', () => {
+  it('中止时应只标记正在流式生成的助手消息', () => {
     const messages = [
       { role: 'user', status: 'COMPLETED', content: '问题' },
-      { role: 'assistant', status: undefined, content: '' }
+      { role: 'assistant', status: 'COMPLETED', content: '完整回复' },
+      { role: 'assistant', status: 'STREAMING', content: '' }
     ]
 
-    expect(findStoppableAssistantMessage(messages)).toBe(messages[1])
+    expect(findStoppableAssistantMessage(messages)).toBe(messages[2])
+    expect(findStoppableAssistantMessage([
+      { role: 'assistant', status: 'COMPLETED', content: '完整回复' },
+      { role: 'assistant', status: 'STOPPED', content: '部分回复' }
+    ])).toBeUndefined()
+  })
+
+  it('本地停止后后续完成事件不应把消息改回已完成', () => {
+    const stoppedMessage = { status: 'STOPPED' }
+    const streamingMessage = { status: 'STREAMING' }
+
+    expect(applyMessageCompletedIfStreaming(stoppedMessage, 'COMPLETED')).toBe(false)
+    expect(stoppedMessage.status).toBe('STOPPED')
+    expect(applyMessageCompletedIfStreaming(streamingMessage, 'COMPLETED')).toBe(true)
+    expect(streamingMessage.status).toBe('COMPLETED')
   })
 
   it('空内容的失败助手消息不应继续显示正在生成', () => {
@@ -207,7 +223,9 @@ describe('聊天生成中止', () => {
     const onDoneIndex = normalizedChatViewSource.indexOf('onDone: () => {')
 
     expect(normalizedChatViewSource.slice(onErrorIndex, onDoneIndex))
-      .toContain('markAssistantFailed(findAssistantMessage(data.messageId ?? currentAssistantMessageId), data.message ?? \'流式响应失败\')')
+      .toContain('if (shouldApplyStreamingEvent(assistantMessage))')
+    expect(normalizedChatViewSource.slice(onErrorIndex, onDoneIndex))
+      .toContain('markAssistantFailed(assistantMessage, data.message ?? \'流式响应失败\')')
     expect(normalizedChatViewSource.slice(onTransportErrorIndex))
       .not.toContain('markAssistantFailed(findAssistantMessage(currentAssistantMessageId))')
     expect(normalizedChatViewSource.slice(onTransportErrorIndex))

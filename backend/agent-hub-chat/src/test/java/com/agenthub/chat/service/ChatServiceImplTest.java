@@ -2407,4 +2407,3 @@ class ChatServiceImplTest {
         }
     }
 }
-

@@ -840,6 +840,10 @@ export interface StoppableAssistantMessageLike {
   status?: string | null
 }
 
+export interface StreamingMessageStateLike {
+  status?: string | null
+}
+
 export interface StreamAssistantMessageLike {
   id: number
 }
@@ -847,12 +851,28 @@ export interface StreamAssistantMessageLike {
 export function findStoppableAssistantMessage<T extends StoppableAssistantMessageLike>(messages: T[]) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const messageItem = messages[index]
-    if (messageItem.role === 'assistant' && messageItem.status !== 'STOPPED') {
+    if (messageItem.role === 'assistant' && shouldApplyStreamingEvent(messageItem)) {
       return messageItem
     }
   }
 
   return undefined
+}
+
+export function shouldApplyStreamingEvent<T extends StreamingMessageStateLike>(messageItem?: T): messageItem is T {
+  return messageItem?.status === 'STREAMING'
+}
+
+export function applyMessageCompletedIfStreaming<T extends StreamingMessageStateLike>(
+  messageItem: T | undefined,
+  status?: string | null
+) {
+  if (!shouldApplyStreamingEvent(messageItem)) {
+    return false
+  }
+
+  messageItem.status = status ?? 'COMPLETED'
+  return true
 }
 
 export function applyStreamAssistantMessageId<T extends StreamAssistantMessageLike>(
@@ -2295,7 +2315,7 @@ function handleSend() {
           return
         }
         const assistantMessage = findAssistantMessage(currentAssistantMessageId)
-        if (assistantMessage) {
+        if (shouldApplyStreamingEvent(assistantMessage)) {
           startReasoningTiming(assistantMessage)
           assistantMessage.reasoningContent = `${assistantMessage.reasoningContent ?? ''}${data.content}`
           appendReasoningEvent(ensureProcessEvents(assistantMessage), data.content)
@@ -2303,37 +2323,39 @@ function handleSend() {
       },
       onAnswerDelta: (data) => {
         const assistantMessage = findAssistantMessage(currentAssistantMessageId)
-        if (assistantMessage) {
+        if (shouldApplyStreamingEvent(assistantMessage)) {
           assistantMessage.content += data.content
         }
       },
       onToolCall: (data) => {
         const assistantMessage = findAssistantMessage(currentAssistantMessageId)
-        if (assistantMessage) {
+        if (shouldApplyStreamingEvent(assistantMessage)) {
           applyToolCallEvent(ensureProcessEvents(assistantMessage), data)
         }
       },
       onToolOutput: (data) => {
         const assistantMessage = findAssistantMessage(currentAssistantMessageId)
-        if (assistantMessage) {
+        if (shouldApplyStreamingEvent(assistantMessage)) {
           applyToolOutputEvent(ensureProcessEvents(assistantMessage), data)
         }
       },
       onToolResult: (data) => {
         const assistantMessage = findAssistantMessage(currentAssistantMessageId)
-        if (assistantMessage) {
+        if (shouldApplyStreamingEvent(assistantMessage)) {
           applyToolResultEvent(ensureProcessEvents(assistantMessage), data)
         }
       },
       onMessageCompleted: (data) => {
         const assistantMessage = findAssistantMessage(data.messageId ?? currentAssistantMessageId)
-        if (assistantMessage) {
+        if (applyMessageCompletedIfStreaming(assistantMessage, data.status)) {
           finishReasoningTiming(assistantMessage)
-          assistantMessage.status = data.status ?? 'COMPLETED'
         }
       },
       onError: (data) => {
-        markAssistantFailed(findAssistantMessage(data.messageId ?? currentAssistantMessageId), data.message ?? '流式响应失败')
+        const assistantMessage = findAssistantMessage(data.messageId ?? currentAssistantMessageId)
+        if (shouldApplyStreamingEvent(assistantMessage)) {
+          markAssistantFailed(assistantMessage, data.message ?? '流式响应失败')
+        }
         message.error(data.message ?? '\u6d41\u5f0f\u54cd\u5e94\u5931\u8d25')
         closeStream()
         void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)

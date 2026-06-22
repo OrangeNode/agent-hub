@@ -51,6 +51,10 @@ import com.agenthub.tool.runtime.ToolExecutionContext;
 import com.agenthub.tool.runtime.ToolExecutionRequest;
 import com.agenthub.tool.runtime.ToolExecutionResult;
 import com.agenthub.tool.runtime.ToolRegistry;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -59,6 +63,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
 import org.junit.jupiter.api.Test;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.transaction.support.AbstractPlatformTransactionManager;
@@ -128,7 +133,7 @@ class ChatServiceImplTest {
         assertThat(assistantMessage.getStatus()).isEqualTo("STREAMING");
 
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
-        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        verify(messageMapper).update(updatedMessageCaptor.capture(), any());
         ChatMessage completedAssistantMessage = updatedMessageCaptor.getValue();
         assertThat(completedAssistantMessage.getId()).isEqualTo(2L);
         assertThat(completedAssistantMessage.getContent()).isEqualTo("你好呀");
@@ -421,11 +426,11 @@ class ChatServiceImplTest {
         service.stream(7L, 100L, 10L, null, "用 docx 帮我写", false, List.of(), List.of(), List.of(6L));
 
         verify(llmClient, never()).stream(any(), any());
-        verify(messageMapper).updateById(argThat((ChatMessage message) ->
+        verify(messageMapper).update(argThat((ChatMessage message) ->
                 "FAILED".equals(message.getStatus())
                         && message.getErrorMessage() != null
                         && message.getErrorMessage().contains("同步 Skill 包到沙箱失败")
-        ));
+        ), any());
         assertThat(sender.eventTypes()).contains(SseEventType.ERROR, SseEventType.DONE);
         assertThat(sender.completed).isTrue();
     }
@@ -472,12 +477,12 @@ class ChatServiceImplTest {
 
         verify(sandboxClient, never()).syncSkillZips(any(), any());
         verify(llmClient, never()).stream(any(), any());
-        verify(messageMapper).updateById(argThat((ChatMessage message) ->
+        verify(messageMapper).update(argThat((ChatMessage message) ->
                 "FAILED".equals(message.getStatus())
                         && message.getErrorMessage() != null
                         && message.getErrorMessage().contains("Skill 6(docx)")
                         && message.getErrorMessage().contains("objectKey")
-        ));
+        ), any());
         assertThat(sender.eventTypes()).contains(SseEventType.ERROR, SseEventType.DONE);
         assertThat(sender.completed).isTrue();
     }
@@ -821,15 +826,21 @@ class ChatServiceImplTest {
         ChatMessage message = message(2L, 100L, 7L, "ASSISTANT", "部分回答");
         message.setStatus("STREAMING");
         when(messageMapper.selectById(2L)).thenReturn(message);
+        when(messageMapper.update(any(ChatMessage.class), any())).thenReturn(1);
 
         service.stopGeneration(7L, 2L);
 
         ArgumentCaptor<ChatMessage> messageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
-        verify(messageMapper).updateById(messageCaptor.capture());
+        ArgumentCaptor<Wrapper<ChatMessage>> wrapperCaptor = wrapperCaptor();
+        verify(messageMapper).update(messageCaptor.capture(), wrapperCaptor.capture());
+        verify(messageMapper, never()).updateById(any(ChatMessage.class));
         ChatMessage stoppedMessage = messageCaptor.getValue();
+        assertThat(stoppedMessage.getId()).isEqualTo(2L);
+        assertThat(stoppedMessage.getUserId()).isEqualTo(7L);
         assertThat(stoppedMessage.getStatus()).isEqualTo("STOPPED");
         assertThat(stoppedMessage.getErrorMessage()).isEqualTo("用户已中止生成");
         assertThat(stoppedMessage.getCompletedAt()).isNotNull();
+        assertStreamingAssistantUpdateWrapper(wrapperCaptor.getValue(), 2L, 7L);
     }
 
     @Test
@@ -845,7 +856,36 @@ class ChatServiceImplTest {
 
         service.stopGeneration(7L, 2L);
 
+        verify(messageMapper, never()).update(any(ChatMessage.class), any());
         verify(messageMapper, never()).updateById(any(ChatMessage.class));
+    }
+
+    @Test
+    void shouldNotOverwriteTerminalMessageWhenStreamingCompletionUpdateMisses() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.answer("完成回答"),
+                LlmStreamChunk.done()
+        ));
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, sender, llmClient);
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(messageMapper.update(any(ChatMessage.class), any())).thenReturn(0);
+
+        service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
+
+        ArgumentCaptor<ChatMessage> messageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        ArgumentCaptor<Wrapper<ChatMessage>> wrapperCaptor = wrapperCaptor();
+        verify(messageMapper).update(messageCaptor.capture(), wrapperCaptor.capture());
+        verify(messageMapper, never()).updateById(any(ChatMessage.class));
+        assertThat(messageCaptor.getValue().getId()).isEqualTo(2L);
+        assertThat(messageCaptor.getValue().getUserId()).isEqualTo(7L);
+        assertThat(messageCaptor.getValue().getStatus()).isEqualTo("COMPLETED");
+        assertStreamingAssistantUpdateWrapper(wrapperCaptor.getValue(), 2L, 7L);
     }
 
     @Test
@@ -864,7 +904,7 @@ class ChatServiceImplTest {
                 .hasMessage("消息不存在")
                 .extracting("errorCode")
                 .isEqualTo(ErrorCode.NOT_FOUND);
-        verify(messageMapper, never()).updateById(any(ChatMessage.class));
+        verify(messageMapper, never()).update(any(ChatMessage.class), any());
     }
 
     @Test
@@ -883,7 +923,7 @@ class ChatServiceImplTest {
                 .hasMessage("只能中止助手生成消息")
                 .extracting("errorCode")
                 .isEqualTo(ErrorCode.BAD_REQUEST);
-        verify(messageMapper, never()).updateById(any(ChatMessage.class));
+        verify(messageMapper, never()).update(any(ChatMessage.class), any());
     }
 
     @Test
@@ -914,7 +954,7 @@ class ChatServiceImplTest {
         service.stream(7L, 100L, 10L, null, "继续", true, List.of(), List.of());
 
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
-        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        verify(messageMapper).update(updatedMessageCaptor.capture(), any());
         ChatMessage failedAssistantMessage = updatedMessageCaptor.getValue();
         assertThat(failedAssistantMessage.getStatus()).isEqualTo("FAILED");
         assertThat(failedAssistantMessage.getErrorMessage()).isEqualTo("网络异常");
@@ -938,7 +978,7 @@ class ChatServiceImplTest {
         service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
 
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
-        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        verify(messageMapper).update(updatedMessageCaptor.capture(), any());
         ChatMessage failedAssistantMessage = updatedMessageCaptor.getValue();
         assertThat(failedAssistantMessage.getStatus()).isEqualTo("FAILED");
         assertThat(failedAssistantMessage.getErrorMessage()).isEqualTo("模型返回错误");
@@ -980,7 +1020,7 @@ class ChatServiceImplTest {
         service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
 
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
-        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        verify(messageMapper).update(updatedMessageCaptor.capture(), any());
         ChatMessage failedAssistantMessage = updatedMessageCaptor.getValue();
         assertThat(failedAssistantMessage.getStatus()).isEqualTo("FAILED");
         assertThat(failedAssistantMessage.getContent()).isEqualTo("已经生成");
@@ -1030,7 +1070,7 @@ class ChatServiceImplTest {
 
         verify(toolRegistry, never()).execute(any(), any());
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
-        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        verify(messageMapper).update(updatedMessageCaptor.capture(), any());
         ChatMessage stoppedAssistantMessage = updatedMessageCaptor.getValue();
         assertThat(stoppedAssistantMessage.getStatus()).isEqualTo("STOPPED");
         assertThat(stoppedAssistantMessage.getErrorMessage()).isEqualTo("SSE 连接已断开");
@@ -1068,7 +1108,7 @@ class ChatServiceImplTest {
         assertThat(llmClient.requests.get(1).messages()).hasSize(1);
         assertTimedMessageContent(llmClient.requests.get(1).messages().getFirst().content(), "继续");
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
-        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        verify(messageMapper).update(updatedMessageCaptor.capture(), any());
         assertThat(updatedMessageCaptor.getValue().getStatus()).isEqualTo("COMPLETED");
         assertThat(updatedMessageCaptor.getValue().getContent()).isEqualTo("重试成功");
     }
@@ -1092,7 +1132,7 @@ class ChatServiceImplTest {
         service.stream(7L, 100L, 10L, null, "继续", true, List.of(), List.of());
 
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
-        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        verify(messageMapper).update(updatedMessageCaptor.capture(), any());
         ChatMessage failedAssistantMessage = updatedMessageCaptor.getValue();
         assertThat(failedAssistantMessage.getStatus()).isEqualTo("FAILED");
         assertThat(failedAssistantMessage.getReasoningContent()).isEqualTo("推理片段");
@@ -1141,7 +1181,7 @@ class ChatServiceImplTest {
                 SseEventType.CONVERSATION,
                 SseEventType.MESSAGE
         );
-        verify(messageMapper, never()).updateById(any(ChatMessage.class));
+        verify(messageMapper, never()).update(any(ChatMessage.class), any());
 
         executor.runCaptured();
 
@@ -1153,7 +1193,7 @@ class ChatServiceImplTest {
                 SseEventType.MESSAGE_COMPLETED,
                 SseEventType.DONE
         );
-        verify(messageMapper).updateById(any(ChatMessage.class));
+        verify(messageMapper).update(any(ChatMessage.class), any());
     }
 
     @Test
@@ -1192,7 +1232,7 @@ class ChatServiceImplTest {
         service.stream(7L, 100L, 10L, null, "continue", false, List.of(), List.of());
 
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
-        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        verify(messageMapper).update(updatedMessageCaptor.capture(), any());
         ChatMessage completedAssistantMessage = updatedMessageCaptor.getValue();
         assertThat(completedAssistantMessage.getContent()).isEqualTo("answer");
         assertThat(completedAssistantMessage.getReasoningContent()).isEmpty();
@@ -1294,7 +1334,7 @@ class ChatServiceImplTest {
         assertThat(toolResult.status()).isEqualTo("completed");
         assertThat(toolResult.content()).isEqualTo("repo: agent-hub");
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
-        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        verify(messageMapper).update(updatedMessageCaptor.capture(), any());
         assertThat(updatedMessageCaptor.getValue().getProcessEvents())
                 .contains("\"type\":\"tool\"", "\"name\":\"mcp.github.search_repositories\"",
                         "\"result\":\"repo: agent-hub\"");
@@ -1359,7 +1399,7 @@ class ChatServiceImplTest {
         assertThat(toolResult.status()).isEqualTo("failed");
         assertThat(toolResult.content()).isEqualTo("远程工具异常");
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
-        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        verify(messageMapper).update(updatedMessageCaptor.capture(), any());
         ChatMessage failedAssistantMessage = updatedMessageCaptor.getValue();
         assertThat(failedAssistantMessage.getStatus()).isEqualTo("FAILED");
         assertThat(failedAssistantMessage.getErrorMessage()).isEqualTo("远程工具异常");
@@ -1419,7 +1459,7 @@ class ChatServiceImplTest {
         assertThat(toolOutput.stream()).isEqualTo("stdout");
         assertThat(toolOutput.content()).isEmpty();
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
-        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        verify(messageMapper).update(updatedMessageCaptor.capture(), any());
         assertThat(updatedMessageCaptor.getValue().getProcessEvents())
                 .contains("\"stdout\":\"\"", "\"stderr\":\"\"");
     }
@@ -1464,7 +1504,7 @@ class ChatServiceImplTest {
         verify(toolRegistry, org.mockito.Mockito.times(100))
                 .execute(any(ToolExecutionRequest.class), any(ToolExecutionContext.class));
         ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
-        verify(messageMapper).updateById(updatedMessageCaptor.capture());
+        verify(messageMapper).update(updatedMessageCaptor.capture(), any());
         assertThat(updatedMessageCaptor.getValue().getStatus()).isEqualTo("COMPLETED");
         assertThat(updatedMessageCaptor.getValue().getContent()).isEqualTo("全部工具调用完成");
     }
@@ -1871,6 +1911,25 @@ class ChatServiceImplTest {
                 .doesNotContain("\n");
     }
 
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private ArgumentCaptor<Wrapper<ChatMessage>> wrapperCaptor() {
+        return ArgumentCaptor.forClass((Class) Wrapper.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void assertStreamingAssistantUpdateWrapper(Wrapper<ChatMessage> wrapper, Long messageId, Long userId) {
+        assertThat(wrapper).isInstanceOf(LambdaUpdateWrapper.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), ChatMessage.class);
+        LambdaUpdateWrapper<ChatMessage> updateWrapper = (LambdaUpdateWrapper<ChatMessage>) wrapper;
+        assertThat(updateWrapper.getSqlSegment())
+                .contains("id")
+                .contains("user_id")
+                .contains("role")
+                .contains("status");
+        assertThat(updateWrapper.getParamNameValuePairs().values())
+                .contains(messageId, userId, "ASSISTANT", "STREAMING");
+    }
+
     private TransactionTemplate transactionTemplate() {
         return transactionTemplate(null);
     }
@@ -2190,3 +2249,4 @@ class ChatServiceImplTest {
         }
     }
 }
+

@@ -48,6 +48,7 @@ import com.agenthub.tool.runtime.ToolExecutionRequest;
 import com.agenthub.tool.runtime.ToolExecutionResult;
 import com.agenthub.tool.runtime.ToolRegistry;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -475,7 +476,7 @@ public class ChatServiceImpl implements ChatService {
         message.setStatus(STATUS_STOPPED);
         message.setErrorMessage("用户已中止生成");
         message.setCompletedAt(OffsetDateTime.now());
-        messageMapper.updateById(message);
+        updateStreamingAssistantMessage(message);
     }
 
     @Override
@@ -1253,7 +1254,7 @@ public class ChatServiceImpl implements ChatService {
         assistantMessage.setProcessEvents(serializeProcessEvents(processRecorder.events()));
         assistantMessage.setStatus(STATUS_COMPLETED);
         assistantMessage.setCompletedAt(OffsetDateTime.now());
-        messageMapper.updateById(assistantMessage);
+        updateStreamingAssistantMessage(assistantMessage);
         if (!send(emitter, SseEventType.MESSAGE_COMPLETED,
                 new SseEventData.MessageCompleted(assistantMessage.getId(), STATUS_COMPLETED))) {
             failAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED, processRecorder);
@@ -1338,7 +1339,7 @@ public class ChatServiceImpl implements ChatService {
         assistantMessage.setStatus(STATUS_STOPPED);
         assistantMessage.setErrorMessage(reason == null || reason.isBlank() ? SSE_CONNECTION_CLOSED : reason);
         assistantMessage.setCompletedAt(OffsetDateTime.now());
-        messageMapper.updateById(assistantMessage);
+        updateStreamingAssistantMessage(assistantMessage);
     }
 
     private String failAssistantMessage(
@@ -1355,8 +1356,16 @@ public class ChatServiceImpl implements ChatService {
         assistantMessage.setStatus(STATUS_FAILED);
         assistantMessage.setErrorMessage(resolvedMessage);
         assistantMessage.setCompletedAt(OffsetDateTime.now());
-        messageMapper.updateById(assistantMessage);
+        updateStreamingAssistantMessage(assistantMessage);
         return resolvedMessage;
+    }
+
+    private boolean updateStreamingAssistantMessage(ChatMessage assistantMessage) {
+        return messageMapper.update(assistantMessage, new LambdaUpdateWrapper<ChatMessage>()
+                .eq(ChatMessage::getId, assistantMessage.getId())
+                .eq(ChatMessage::getUserId, assistantMessage.getUserId())
+                .eq(ChatMessage::getRole, ROLE_ASSISTANT)
+                .eq(ChatMessage::getStatus, STATUS_STREAMING)) > 0;
     }
 
     /**

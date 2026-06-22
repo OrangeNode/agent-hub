@@ -828,7 +828,11 @@ export function assistantDisplayContent(messageItem: AssistantDisplayMessageLike
     return messageItem.errorMessage || '生成失败'
   }
 
-  return messageItem.status === 'STOPPED' ? '已中止生成' : '正在生成回复...'
+  if (messageItem.status === 'STOPPED') {
+    return messageItem.errorMessage || '已中止生成'
+  }
+
+  return '正在生成回复...'
 }
 
 export interface StoppableAssistantMessageLike {
@@ -2067,16 +2071,21 @@ function refreshAfterStopping() {
 
 function stopCurrentStream() {
   const assistantMessage = findStoppableAssistantMessage(currentMessages.value)
-  markCurrentAssistantStopped()
-  closeStream()
   if (assistantMessage && assistantMessage.id > 0) {
-    void requestStopGeneration(assistantMessage.id).finally(refreshAfterStopping)
+    markCurrentAssistantStopped()
+    void requestStopGeneration(assistantMessage.id).finally(() => {
+      closeStream()
+      refreshAfterStopping()
+    })
     return
   }
+
+  markCurrentAssistantStopped()
+  closeStream()
   refreshAfterStopping()
 }
 
-function markCurrentAssistantStopped() {
+function markCurrentAssistantStopped(errorMessage?: string) {
   if (!streaming.value) {
     return
   }
@@ -2085,6 +2094,7 @@ function markCurrentAssistantStopped() {
   if (assistantMessage) {
     finishReasoningTiming(assistantMessage)
     assistantMessage.status = 'STOPPED'
+    assistantMessage.errorMessage = errorMessage ?? null
   }
 }
 
@@ -2285,6 +2295,7 @@ function handleSend() {
         void loadConversations()
       },
       onTransportError: () => {
+        markCurrentAssistantStopped('SSE 连接已断开，正在同步状态')
         closeStream()
         void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
         void refreshActiveArtifacts()

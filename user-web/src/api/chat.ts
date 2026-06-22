@@ -59,8 +59,11 @@ export interface ChatStreamErrorRecord {
   messageId?: number | null
   fatal?: boolean
   recoverable?: boolean
+  retryable?: boolean
   source?: string
   status?: string
+  traceId?: string | null
+  details?: Record<string, unknown> | null
 }
 
 export interface ChatArtifactRecord {

@@ -61,7 +61,7 @@ describe('聊天流工具事件', () => {
       ok: true,
       body: sseBody(
         'event: meta\ndata: {"protocol":"chat.sse.v1","conversationId":100,"messageId":200,"streamId":"chatmsg_200_20260622_000001","resumable":false}\n\n',
-        'event: error\ndata: {"code":"LLM_STREAM_FAILED","message":"模型调用失败","messageId":200,"fatal":true,"recoverable":false,"source":"LLM","status":"FAILED"}\n\n',
+        'event: error\ndata: {"code":"TOOL_LOOP_FAILED","message":"工具调用失败","messageId":200,"fatal":true,"recoverable":false,"retryable":false,"source":"TOOL","status":"FAILED","traceId":"trace-1","details":{"toolCallId":"call_1"}}\n\n',
         'event: done\ndata: {}\n\n'
       )
     }))
@@ -94,13 +94,18 @@ describe('聊天流工具事件', () => {
       },
       {
         type: 'error',
-        code: 'LLM_STREAM_FAILED',
-        message: '模型调用失败',
+        code: 'TOOL_LOOP_FAILED',
+        message: '工具调用失败',
         messageId: 200,
         fatal: true,
         recoverable: false,
-        source: 'LLM',
-        status: 'FAILED'
+        retryable: false,
+        source: 'TOOL',
+        status: 'FAILED',
+        traceId: 'trace-1',
+        details: {
+          toolCallId: 'call_1'
+        }
       }
     ])
   })

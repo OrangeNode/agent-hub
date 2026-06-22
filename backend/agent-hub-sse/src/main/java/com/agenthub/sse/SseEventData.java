@@ -1,5 +1,7 @@
 package com.agenthub.sse;
 
+import java.util.Map;
+
 public sealed interface SseEventData permits SseEventData.Conversation,
         SseEventData.Meta,
         SseEventData.Message,
@@ -42,14 +44,35 @@ public sealed interface SseEventData permits SseEventData.Conversation,
                  boolean fatal,
                  boolean recoverable,
                  String source,
-                 String status) implements SseEventData {
+                 String status,
+                 boolean retryable,
+                 String traceId,
+                 Map<String, Object> details) implements SseEventData {
+
+        public Error {
+            details = details == null ? Map.of() : Map.copyOf(details);
+        }
 
         public Error(String code, String message) {
-            this(code, message, null, true, false, "SERVER", "FAILED");
+            this(code, message, null, true, false, "SERVER", "FAILED", false, null, Map.of());
         }
 
         public static Error failed(String code, String message, Long messageId, String source, boolean recoverable) {
-            return new Error(code, message, messageId, true, recoverable, source, "FAILED");
+            return failed(code, message, messageId, source, recoverable, null, Map.of());
+        }
+
+        public static Error failed(String code,
+                                   String message,
+                                   Long messageId,
+                                   String source,
+                                   boolean retryable,
+                                   String traceId,
+                                   Map<String, ?> details) {
+            Map<String, Object> resolvedDetails = details == null
+                    ? Map.of()
+                    : Map.copyOf(details);
+            return new Error(code, message, messageId, true, retryable, source, "FAILED",
+                    retryable, traceId, resolvedDetails);
         }
     }
 

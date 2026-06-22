@@ -95,7 +95,9 @@ public class ChatServiceImpl implements ChatService {
     private static final String ERROR_SOURCE_TOOL = "TOOL";
     private static final String ERROR_SOURCE_SERVER = "SERVER";
     private static final String LLM_STREAM_FAILED = "LLM_STREAM_FAILED";
+    private static final String TOOL_LOOP_FAILED = "TOOL_LOOP_FAILED";
     private static final String SSE_CONNECTION_CLOSED = "SSE 连接已断开";
+    private static final String USER_STOPPED_GENERATION = "用户已中止生成";
     private static final int TITLE_MAX_OUTPUT_TOKENS = 64;
     private static final int DEFAULT_IMAGE_TOKEN_ESTIMATE = 1500;
     private static final int TOOL_CALL_MAX_COUNT = 100;
@@ -322,8 +324,9 @@ public class ChatServiceImpl implements ChatService {
                     preparedChat.assistantMessage(), preparedChat.conversation().getAgentKey(), thinkingEnabled,
                     preparedChat.skillContext()));
         } else {
-            // 初始事件发送失败说明客户端已断开，直接标记助手消息失败。
-            failAssistantMessage(preparedChat.assistantMessage(), new StringBuilder(), new StringBuilder(), SSE_CONNECTION_CLOSED);
+            // 初始事件发送失败说明客户端已断开，直接标记助手消息停止。
+            stopAssistantMessage(preparedChat.assistantMessage(), new StringBuilder(), new StringBuilder(),
+                    SSE_CONNECTION_CLOSED, new ProcessEventRecorder());
             sseEventSender.complete(emitter);
         }
         return emitter;
@@ -471,12 +474,12 @@ public class ChatServiceImpl implements ChatService {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "只能中止助手生成消息");
         }
         if (!STATUS_STREAMING.equals(message.getStatus())) {
+            if (STATUS_STOPPED.equals(message.getStatus())) {
+                updateStopRequestedAssistantMessage(message.getId(), userId);
+            }
             return;
         }
-        message.setStatus(STATUS_STOPPED);
-        message.setErrorMessage("用户已中止生成");
-        message.setCompletedAt(OffsetDateTime.now());
-        updateStreamingAssistantMessage(message);
+        updateStopRequestedAssistantMessage(message.getId(), userId);
     }
 
     @Override
@@ -1255,6 +1258,7 @@ public class ChatServiceImpl implements ChatService {
         assistantMessage.setStatus(STATUS_COMPLETED);
         assistantMessage.setCompletedAt(OffsetDateTime.now());
         if (!updateStreamingAssistantMessage(assistantMessage)) {
+            backfillStoppedAssistantMessage(assistantMessage, content, reasoningContent, processRecorder);
             return;
         }
         if (!send(emitter, SseEventType.MESSAGE_COMPLETED,
@@ -1316,8 +1320,10 @@ public class ChatServiceImpl implements ChatService {
             return;
         }
         String resolvedMessage = result.message();
-        send(emitter, SseEventType.ERROR, SseEventData.Error.failed(LLM_STREAM_FAILED, resolvedMessage,
-                assistantMessage.getId(), source, isContextLengthError(resolvedMessage)));
+        String code = ERROR_SOURCE_TOOL.equals(source) ? TOOL_LOOP_FAILED : LLM_STREAM_FAILED;
+        boolean retryable = ERROR_SOURCE_LLM.equals(source) && isContextLengthError(resolvedMessage);
+        send(emitter, SseEventType.ERROR, SseEventData.Error.failed(code, resolvedMessage,
+                assistantMessage.getId(), source, retryable));
     }
 
     /**
@@ -1343,9 +1349,9 @@ public class ChatServiceImpl implements ChatService {
         assistantMessage.setReasoningContent(reasoningContent.toString());
         assistantMessage.setProcessEvents(serializeProcessEvents(processRecorder.events()));
         assistantMessage.setStatus(STATUS_STOPPED);
-        assistantMessage.setErrorMessage(reason == null || reason.isBlank() ? SSE_CONNECTION_CLOSED : reason);
+        assistantMessage.setErrorMessage(resolveStopReason(assistantMessage, reason));
         assistantMessage.setCompletedAt(OffsetDateTime.now());
-        updateStreamingAssistantMessage(assistantMessage);
+        updateStoppedOrStreamingAssistantMessage(assistantMessage);
     }
 
     private MessageFailureResult failAssistantMessage(
@@ -1362,7 +1368,11 @@ public class ChatServiceImpl implements ChatService {
         assistantMessage.setStatus(STATUS_FAILED);
         assistantMessage.setErrorMessage(resolvedMessage);
         assistantMessage.setCompletedAt(OffsetDateTime.now());
-        return new MessageFailureResult(resolvedMessage, updateStreamingAssistantMessage(assistantMessage));
+        boolean updated = updateStreamingAssistantMessage(assistantMessage);
+        if (!updated) {
+            backfillStoppedAssistantMessage(assistantMessage, content, reasoningContent, processRecorder);
+        }
+        return new MessageFailureResult(resolvedMessage, updated);
     }
 
     private boolean updateStreamingAssistantMessage(ChatMessage assistantMessage) {
@@ -1371,6 +1381,63 @@ public class ChatServiceImpl implements ChatService {
                 .eq(ChatMessage::getUserId, assistantMessage.getUserId())
                 .eq(ChatMessage::getRole, ROLE_ASSISTANT)
                 .eq(ChatMessage::getStatus, STATUS_STREAMING)) > 0;
+    }
+
+    private boolean updateStoppedOrStreamingAssistantMessage(ChatMessage assistantMessage) {
+        return messageMapper.update(assistantMessage, new LambdaUpdateWrapper<ChatMessage>()
+                .eq(ChatMessage::getId, assistantMessage.getId())
+                .eq(ChatMessage::getUserId, assistantMessage.getUserId())
+                .eq(ChatMessage::getRole, ROLE_ASSISTANT)
+                .in(ChatMessage::getStatus, STATUS_STREAMING, STATUS_STOPPED)) > 0;
+    }
+
+    private void updateStopRequestedAssistantMessage(Long messageId, Long userId) {
+        ChatMessage update = new ChatMessage();
+        update.setStatus(STATUS_STOPPED);
+        update.setErrorMessage(USER_STOPPED_GENERATION);
+        update.setCompletedAt(OffsetDateTime.now());
+        messageMapper.update(update, new LambdaUpdateWrapper<ChatMessage>()
+                .eq(ChatMessage::getId, messageId)
+                .eq(ChatMessage::getUserId, userId)
+                .eq(ChatMessage::getRole, ROLE_ASSISTANT)
+                .in(ChatMessage::getStatus, STATUS_STREAMING, STATUS_STOPPED));
+    }
+
+    private void backfillStoppedAssistantMessage(
+            ChatMessage assistantMessage,
+            StringBuilder content,
+            StringBuilder reasoningContent,
+            ProcessEventRecorder processRecorder
+    ) {
+        ChatMessage current = messageMapper.selectById(assistantMessage.getId());
+        if (current == null || !STATUS_STOPPED.equals(current.getStatus())) {
+            return;
+        }
+        ChatMessage update = new ChatMessage();
+        update.setContent(content.toString());
+        update.setReasoningContent(reasoningContent.toString());
+        update.setProcessEvents(serializeProcessEvents(processRecorder.events()));
+        update.setStatus(STATUS_STOPPED);
+        update.setCompletedAt(OffsetDateTime.now());
+        messageMapper.update(update, new LambdaUpdateWrapper<ChatMessage>()
+                .eq(ChatMessage::getId, assistantMessage.getId())
+                .eq(ChatMessage::getUserId, assistantMessage.getUserId())
+                .eq(ChatMessage::getRole, ROLE_ASSISTANT)
+                .eq(ChatMessage::getStatus, STATUS_STOPPED));
+    }
+
+    private String resolveStopReason(ChatMessage assistantMessage, String reason) {
+        String resolvedReason = reason == null || reason.isBlank() ? SSE_CONNECTION_CLOSED : reason;
+        if (!SSE_CONNECTION_CLOSED.equals(resolvedReason)) {
+            return resolvedReason;
+        }
+        ChatMessage current = messageMapper.selectById(assistantMessage.getId());
+        if (current != null
+                && STATUS_STOPPED.equals(current.getStatus())
+                && USER_STOPPED_GENERATION.equals(current.getErrorMessage())) {
+            return USER_STOPPED_GENERATION;
+        }
+        return resolvedReason;
     }
 
     private record MessageFailureResult(String message, boolean updated) {

@@ -835,12 +835,15 @@ class ChatServiceImplTest {
         verify(messageMapper).update(messageCaptor.capture(), wrapperCaptor.capture());
         verify(messageMapper, never()).updateById(any(ChatMessage.class));
         ChatMessage stoppedMessage = messageCaptor.getValue();
-        assertThat(stoppedMessage.getId()).isEqualTo(2L);
-        assertThat(stoppedMessage.getUserId()).isEqualTo(7L);
+        assertThat(stoppedMessage.getId()).isNull();
+        assertThat(stoppedMessage.getUserId()).isNull();
         assertThat(stoppedMessage.getStatus()).isEqualTo("STOPPED");
         assertThat(stoppedMessage.getErrorMessage()).isEqualTo("用户已中止生成");
+        assertThat(stoppedMessage.getContent()).isNull();
+        assertThat(stoppedMessage.getReasoningContent()).isNull();
+        assertThat(stoppedMessage.getProcessEvents()).isNull();
         assertThat(stoppedMessage.getCompletedAt()).isNotNull();
-        assertStreamingAssistantUpdateWrapper(wrapperCaptor.getValue(), 2L, 7L);
+        assertStopRequestedAssistantUpdateWrapper(wrapperCaptor.getValue(), 2L, 7L);
     }
 
     @Test
@@ -858,6 +861,102 @@ class ChatServiceImplTest {
 
         verify(messageMapper, never()).update(any(ChatMessage.class), any());
         verify(messageMapper, never()).updateById(any(ChatMessage.class));
+    }
+
+    @Test
+    void shouldCorrectStoppedMessageReasonWithoutOverwritingGeneratedContent() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
+                new RecordingLlmClient(List.of(LlmStreamChunk.done())));
+        ChatMessage message = message(2L, 100L, 7L, "ASSISTANT", "已经生成的内容");
+        message.setStatus("STOPPED");
+        message.setErrorMessage("SSE 连接已断开");
+        when(messageMapper.selectById(2L)).thenReturn(message);
+
+        service.stopGeneration(7L, 2L);
+
+        ArgumentCaptor<ChatMessage> messageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper).update(messageCaptor.capture(), any());
+        ChatMessage stoppedMessage = messageCaptor.getValue();
+        assertThat(stoppedMessage.getStatus()).isEqualTo("STOPPED");
+        assertThat(stoppedMessage.getErrorMessage()).isEqualTo("用户已中止生成");
+        assertThat(stoppedMessage.getContent()).isNull();
+        assertThat(stoppedMessage.getReasoningContent()).isNull();
+        assertThat(stoppedMessage.getProcessEvents()).isNull();
+    }
+
+    @Test
+    void shouldKeepStoppedStatusAndBackfillContentWhenStopRequestWinsRaceBeforeAbort() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender(SseEventType.ANSWER_DELTA);
+        ManualExecutor executor = new ManualExecutor();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.answer("已生成内容"),
+                LlmStreamChunk.done()
+        ));
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                sender,
+                mock(AttachmentService.class),
+                contextBuilder(messageMapper, mock(AttachmentService.class), llmClient),
+                protocolType -> llmClient,
+                executor
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        ChatMessage streamingMessage = message(2L, 100L, 7L, "ASSISTANT", "");
+        streamingMessage.setStatus("STREAMING");
+        ChatMessage userStoppedMessage = message(2L, 100L, 7L, "ASSISTANT", "");
+        userStoppedMessage.setStatus("STOPPED");
+        userStoppedMessage.setErrorMessage("用户已中止生成");
+        when(messageMapper.selectById(2L)).thenReturn(streamingMessage, userStoppedMessage);
+
+        service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
+        service.stopGeneration(7L, 2L);
+        executor.runCaptured();
+
+        ArgumentCaptor<ChatMessage> messageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper, org.mockito.Mockito.atLeast(2)).update(messageCaptor.capture(), any());
+        assertThat(messageCaptor.getAllValues())
+                .anySatisfy(message -> {
+                    assertThat(message.getStatus()).isEqualTo("STOPPED");
+                    assertThat(message.getContent()).isEqualTo("已生成内容");
+                    assertThat(message.getErrorMessage()).isEqualTo("用户已中止生成");
+                });
+        assertThat(sender.eventTypes()).doesNotContain(SseEventType.MESSAGE_COMPLETED, SseEventType.ERROR);
+        assertThat(sender.eventTypes()).contains(SseEventType.DONE);
+    }
+
+    @Test
+    void shouldMarkAssistantStoppedWhenInitialSseEventSendingFails() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender(SseEventType.CONVERSATION);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.answer("不会执行")));
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, sender, llmClient);
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+
+        service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
+
+        ArgumentCaptor<ChatMessage> messageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper).update(messageCaptor.capture(), any());
+        assertThat(messageCaptor.getValue().getStatus()).isEqualTo("STOPPED");
+        assertThat(messageCaptor.getValue().getErrorMessage()).isEqualTo("SSE 连接已断开");
+        assertThat(llmClient.lastRequest).isNull();
+        assertThat(sender.eventTypes()).containsExactly(SseEventType.META, SseEventType.CONVERSATION);
+        assertThat(sender.completed).isTrue();
     }
 
     @Test
@@ -1435,6 +1534,9 @@ class ChatServiceImplTest {
         assertThat(failedAssistantMessage.getErrorMessage()).isEqualTo("远程工具异常");
         assertThat(failedAssistantMessage.getProcessEvents())
                 .contains("\"status\":\"failed\"", "\"result\":\"远程工具异常\"");
+        SseEventData.Error error = sender.eventDataOf(SseEventData.Error.class);
+        assertThat(error.code()).isEqualTo("TOOL_LOOP_FAILED");
+        assertThat(error.source()).isEqualTo("TOOL");
     }
 
     @Test
@@ -1576,7 +1678,7 @@ class ChatServiceImplTest {
         service.stream(7L, 100L, 10L, null, "生成超长工具任务", false, List.of(), List.of());
 
         SseEventData.Error error = sender.eventDataOf(SseEventData.Error.class);
-        assertThat(error.code()).isEqualTo("LLM_STREAM_FAILED");
+        assertThat(error.code()).isEqualTo("TOOL_LOOP_FAILED");
         assertThat(error.source()).isEqualTo("TOOL");
         assertThat(error.messageId()).isEqualTo(2L);
         assertThat(error.status()).isEqualTo("FAILED");
@@ -1958,6 +2060,20 @@ class ChatServiceImplTest {
                 .contains("status");
         assertThat(updateWrapper.getParamNameValuePairs().values())
                 .contains(messageId, userId, "ASSISTANT", "STREAMING");
+    }
+
+    @SuppressWarnings("unchecked")
+    private void assertStopRequestedAssistantUpdateWrapper(Wrapper<ChatMessage> wrapper, Long messageId, Long userId) {
+        assertThat(wrapper).isInstanceOf(LambdaUpdateWrapper.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), ChatMessage.class);
+        LambdaUpdateWrapper<ChatMessage> updateWrapper = (LambdaUpdateWrapper<ChatMessage>) wrapper;
+        assertThat(updateWrapper.getSqlSegment())
+                .contains("id")
+                .contains("user_id")
+                .contains("role")
+                .contains("status");
+        assertThat(updateWrapper.getParamNameValuePairs().values())
+                .contains(messageId, userId, "ASSISTANT", "STREAMING", "STOPPED");
     }
 
     private ChatMessageMapper messageMapper() {

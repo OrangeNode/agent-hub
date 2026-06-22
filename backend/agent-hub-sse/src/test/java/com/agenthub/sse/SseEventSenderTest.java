@@ -71,8 +71,11 @@ class SseEventSenderTest {
         assertThat(error.messageId()).isEqualTo(200L);
         assertThat(error.fatal()).isTrue();
         assertThat(error.recoverable()).isFalse();
+        assertThat(error.retryable()).isFalse();
         assertThat(error.source()).isEqualTo("LLM");
         assertThat(error.status()).isEqualTo("FAILED");
+        assertThat(error.traceId()).isNull();
+        assertThat(error.details()).isEmpty();
     }
 
     @Test
@@ -84,7 +87,29 @@ class SseEventSenderTest {
         assertThat(error.messageId()).isNull();
         assertThat(error.fatal()).isTrue();
         assertThat(error.recoverable()).isFalse();
+        assertThat(error.retryable()).isFalse();
         assertThat(error.source()).isEqualTo("SERVER");
         assertThat(error.status()).isEqualTo("FAILED");
+        assertThat(error.traceId()).isNull();
+        assertThat(error.details()).isEmpty();
+    }
+
+    @Test
+    void errorDataCarriesRetryTraceAndDetailsFields() {
+        SseEventData.Error error = SseEventData.Error.failed(
+                "TOOL_LOOP_FAILED",
+                "工具调用失败",
+                200L,
+                "TOOL",
+                true,
+                "trace-1",
+                Map.of("toolCallId", "call_1")
+        );
+
+        assertThat(error.code()).isEqualTo("TOOL_LOOP_FAILED");
+        assertThat(error.retryable()).isTrue();
+        assertThat(error.recoverable()).isTrue();
+        assertThat(error.traceId()).isEqualTo("trace-1");
+        assertThat(error.details()).containsEntry("toolCallId", "call_1");
     }
 }

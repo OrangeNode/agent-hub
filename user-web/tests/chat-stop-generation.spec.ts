@@ -72,12 +72,32 @@ describe('聊天生成中止', () => {
   it('停止真实消息时应等待停止请求完成后再刷新历史消息', () => {
     const stopCurrentStream = functionBlock('stopCurrentStream')
     const refreshAfterStopping = functionBlock('refreshAfterStopping')
+    const requestStopIndex = stopCurrentStream.indexOf('requestStopGeneration(assistantMessage.id)')
+    const closeStreamIndex = stopCurrentStream.indexOf('closeStream()', requestStopIndex)
+    const refreshIndex = stopCurrentStream.indexOf('refreshAfterStopping()', requestStopIndex)
 
     expect(refreshAfterStopping).toContain('void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)')
     expect(refreshAfterStopping).toContain('void refreshActiveArtifacts()')
     expect(refreshAfterStopping).toContain('void loadConversations()')
-    expect(stopCurrentStream).toContain('void requestStopGeneration(assistantMessage.id).finally(refreshAfterStopping)')
-    expect(stopCurrentStream).toContain('refreshAfterStopping()')
+    expect(stopCurrentStream).toContain('void requestStopGeneration(assistantMessage.id).finally(() => {')
+    expect(requestStopIndex).toBeGreaterThanOrEqual(0)
+    expect(closeStreamIndex).toBeGreaterThan(requestStopIndex)
+    expect(refreshIndex).toBeGreaterThan(closeStreamIndex)
+  })
+
+  it('停止真实消息时应先请求后中断 SSE，临时消息仍本地中断', () => {
+    const stopCurrentStream = functionBlock('stopCurrentStream')
+    const positiveBranchIndex = stopCurrentStream.indexOf('if (assistantMessage && assistantMessage.id > 0) {')
+    const requestStopIndex = stopCurrentStream.indexOf('requestStopGeneration(assistantMessage.id)', positiveBranchIndex)
+    const closeAfterRequestIndex = stopCurrentStream.indexOf('closeStream()', requestStopIndex)
+    const localStopIndex = stopCurrentStream.indexOf('markCurrentAssistantStopped()', closeAfterRequestIndex)
+    const localCloseIndex = stopCurrentStream.indexOf('closeStream()', localStopIndex)
+
+    expect(positiveBranchIndex).toBeGreaterThanOrEqual(0)
+    expect(requestStopIndex).toBeGreaterThan(positiveBranchIndex)
+    expect(closeAfterRequestIndex).toBeGreaterThan(requestStopIndex)
+    expect(localStopIndex).toBeGreaterThan(closeAfterRequestIndex)
+    expect(localCloseIndex).toBeGreaterThan(localStopIndex)
   })
 
   it('按钮禁用状态不应包含流式生成状态', () => {
@@ -128,6 +148,14 @@ describe('聊天生成中止', () => {
     expect(assistantDisplayContent({ status: 'FAILED', content: '', errorMessage: '模型调用失败' })).toBe('模型调用失败')
   })
 
+  it('传输断线本地停止后应显示同步状态提示', () => {
+    expect(assistantDisplayContent({
+      status: 'STOPPED',
+      content: '',
+      errorMessage: 'SSE 连接已断开，正在同步状态'
+    })).toBe('SSE 连接已断开，正在同步状态')
+  })
+
   it('流式错误应记录失败消息，传输错误只刷新不永久失败', () => {
     const onErrorIndex = normalizedChatViewSource.indexOf('onError: (data) => {')
     const onTransportErrorIndex = normalizedChatViewSource.indexOf('onTransportError: () => {')
@@ -137,6 +165,8 @@ describe('聊天生成中止', () => {
       .toContain('markAssistantFailed(findAssistantMessage(data.messageId ?? currentAssistantMessageId), data.message ?? \'流式响应失败\')')
     expect(normalizedChatViewSource.slice(onTransportErrorIndex))
       .not.toContain('markAssistantFailed(findAssistantMessage(currentAssistantMessageId))')
+    expect(normalizedChatViewSource.slice(onTransportErrorIndex))
+      .toContain('markCurrentAssistantStopped(\'SSE 连接已断开，正在同步状态\')')
     expect(normalizedChatViewSource.slice(onTransportErrorIndex))
       .toContain('void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)')
   })

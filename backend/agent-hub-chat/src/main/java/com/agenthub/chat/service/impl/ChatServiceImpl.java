@@ -303,10 +303,15 @@ public class ChatServiceImpl implements ChatService {
         }
 
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT);
-        boolean connected = send(emitter, SseEventType.CONVERSATION,
+        Long assistantMessageId = preparedChat.assistantMessage().getId();
+        String streamId = "chatmsg_" + assistantMessageId + "_" + System.currentTimeMillis();
+        boolean connected = send(emitter, SseEventType.META,
+                new SseEventData.Meta("chat.sse.v1", preparedChat.conversation().getId(), assistantMessageId,
+                        streamId, false))
+                && send(emitter, SseEventType.CONVERSATION,
                 new SseEventData.Conversation(preparedChat.conversation().getId(), preparedChat.conversation().getTitle()))
                 && send(emitter, SseEventType.MESSAGE,
-                new SseEventData.Message(preparedChat.assistantMessage().getId(), ROLE_ASSISTANT));
+                new SseEventData.Message(assistantMessageId, ROLE_ASSISTANT));
         if (connected) {
             streamExecutor.execute(() -> streamLlm(emitter, preparedChat.conversation().getUserId(),
                     preparedChat.conversation().getId(), runtimeConfig, preparedChat.context().messages(),
@@ -1253,7 +1258,8 @@ public class ChatServiceImpl implements ChatService {
     ) {
         String resolvedMessage = failAssistantMessage(assistantMessage, content, reasoningContent, errorMessage,
                 processRecorder);
-        send(emitter, SseEventType.ERROR, new SseEventData.Error(LLM_STREAM_FAILED, resolvedMessage));
+        send(emitter, SseEventType.ERROR, SseEventData.Error.failed(LLM_STREAM_FAILED, resolvedMessage,
+                assistantMessage.getId(), "LLM", isContextLengthError(resolvedMessage)));
     }
 
     /**

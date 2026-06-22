@@ -136,7 +136,14 @@ class ChatServiceImplTest {
         assertThat(completedAssistantMessage.getStatus()).isEqualTo("COMPLETED");
         assertThat(completedAssistantMessage.getCompletedAt()).isNotNull();
 
+        SseEventData.Meta meta = sender.eventDataOf(SseEventData.Meta.class);
+        assertThat(meta.protocol()).isEqualTo("chat.sse.v1");
+        assertThat(meta.conversationId()).isEqualTo(100L);
+        assertThat(meta.messageId()).isEqualTo(2L);
+        assertThat(meta.streamId()).startsWith("chatmsg_2_");
+        assertThat(meta.resumable()).isFalse();
         assertThat(sender.eventTypes()).containsExactly(
+                SseEventType.META,
                 SseEventType.CONVERSATION,
                 SseEventType.MESSAGE,
                 SseEventType.REASONING_DELTA,
@@ -857,6 +864,7 @@ class ChatServiceImplTest {
         assertThat(failedAssistantMessage.getStatus()).isEqualTo("FAILED");
         assertThat(failedAssistantMessage.getErrorMessage()).isEqualTo("模型返回错误");
         assertThat(sender.eventTypes()).containsExactly(
+                SseEventType.META,
                 SseEventType.CONVERSATION,
                 SseEventType.MESSAGE,
                 SseEventType.ERROR,
@@ -949,6 +957,7 @@ class ChatServiceImplTest {
         assertThat(stoppedAssistantMessage.getErrorMessage()).isEqualTo("SSE 连接已断开");
         assertThat(stoppedAssistantMessage.getCompletedAt()).isNotNull();
         assertThat(sender.eventTypes()).containsExactly(
+                SseEventType.META,
                 SseEventType.CONVERSATION,
                 SseEventType.MESSAGE,
                 SseEventType.TOOL_CALL,
@@ -1010,7 +1019,14 @@ class ChatServiceImplTest {
         assertThat(failedAssistantMessage.getReasoningContent()).isEqualTo("推理片段");
         assertThat(failedAssistantMessage.getContent()).isEqualTo("回答片段");
         assertThat(failedAssistantMessage.getErrorMessage()).isEqualTo("模型返回错误");
-        assertThat(sender.eventDataOf(SseEventData.Error.class).code()).isEqualTo("LLM_STREAM_FAILED");
+        SseEventData.Error error = sender.eventDataOf(SseEventData.Error.class);
+        assertThat(error.code()).isEqualTo("LLM_STREAM_FAILED");
+        assertThat(error.message()).isEqualTo(failedAssistantMessage.getErrorMessage());
+        assertThat(error.messageId()).isEqualTo(2L);
+        assertThat(error.fatal()).isTrue();
+        assertThat(error.recoverable()).isFalse();
+        assertThat(error.source()).isEqualTo("LLM");
+        assertThat(error.status()).isEqualTo("FAILED");
     }
 
     @Test
@@ -1041,12 +1057,17 @@ class ChatServiceImplTest {
 
         assertThat(emitter).isNotNull();
         assertThat(executor.captured).isNotNull();
-        assertThat(sender.eventTypes()).containsExactly(SseEventType.CONVERSATION, SseEventType.MESSAGE);
+        assertThat(sender.eventTypes()).containsExactly(
+                SseEventType.META,
+                SseEventType.CONVERSATION,
+                SseEventType.MESSAGE
+        );
         verify(messageMapper, never()).updateById(any(ChatMessage.class));
 
         executor.runCaptured();
 
         assertThat(sender.eventTypes()).containsExactly(
+                SseEventType.META,
                 SseEventType.CONVERSATION,
                 SseEventType.MESSAGE,
                 SseEventType.ANSWER_DELTA,
@@ -1097,6 +1118,7 @@ class ChatServiceImplTest {
         assertThat(completedAssistantMessage.getContent()).isEqualTo("answer");
         assertThat(completedAssistantMessage.getReasoningContent()).isEmpty();
         assertThat(sender.eventTypes()).containsExactly(
+                SseEventType.META,
                 SseEventType.CONVERSATION,
                 SseEventType.MESSAGE,
                 SseEventType.ANSWER_DELTA,
@@ -1178,6 +1200,7 @@ class ChatServiceImplTest {
         assertThat(contextCaptor.getValue().assistantMessageId()).isEqualTo(2L);
         assertThat(contextCaptor.getValue().agentKey()).isEqualTo("official-writing");
         assertThat(sender.eventTypes()).containsExactly(
+                SseEventType.META,
                 SseEventType.CONVERSATION,
                 SseEventType.MESSAGE,
                 SseEventType.TOOL_CALL,
@@ -1243,6 +1266,7 @@ class ChatServiceImplTest {
         service.stream(7L, 100L, 10L, null, "搜索仓库", false, List.of(), List.of());
 
         assertThat(sender.eventTypes()).containsExactly(
+                SseEventType.META,
                 SseEventType.CONVERSATION,
                 SseEventType.MESSAGE,
                 SseEventType.TOOL_CALL,

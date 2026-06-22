@@ -83,8 +83,12 @@ public class McpToolProvider implements ToolProvider {
             if (server == null || !Boolean.TRUE.equals(server.getEnabled())) {
                 continue;
             }
+            String exposedName = exposedToolName(server.getServerKey(), tool.getToolName());
+            if (!exposedName.equals(binding.getToolName())) {
+                continue;
+            }
             definitions.add(new LlmToolDefinition(
-                    exposedToolName(server.getServerKey(), tool.getToolName()),
+                    exposedName,
                     defaultText(tool.getDescription(), tool.getDisplayName()),
                     parseParameters(tool.getInputSchema())
             ));

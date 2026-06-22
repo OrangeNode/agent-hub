@@ -93,6 +93,21 @@ class McpMigrationSmokeTest {
     }
 
     @Test
+    void shouldAllowFullLengthMcpExposedToolNameInCallLog() {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+
+        Integer exposedToolNameLength = jdbcTemplate.queryForObject("""
+                SELECT character_maximum_length
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                    AND table_name = 'mcp_tool_call_log'
+                    AND column_name = 'exposed_tool_name'
+                """, Integer.class);
+
+        assertThat(exposedToolNameLength).isGreaterThanOrEqualTo(320);
+    }
+
+    @Test
     void shouldRegisterMcpMenuAndPermissions() {
         JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
 

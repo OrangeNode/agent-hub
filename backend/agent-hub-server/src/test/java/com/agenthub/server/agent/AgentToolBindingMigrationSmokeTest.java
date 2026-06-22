@@ -68,6 +68,21 @@ class AgentToolBindingMigrationSmokeTest {
     }
 
     @Test
+    void shouldAllowFullLengthMcpExposedToolName() {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+
+        Integer toolNameLength = jdbcTemplate.queryForObject("""
+                SELECT character_maximum_length
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                    AND table_name = 'agent_tool_binding'
+                    AND column_name = 'tool_name'
+                """, Integer.class);
+
+        assertThat(toolNameLength).isGreaterThanOrEqualTo(320);
+    }
+
+    @Test
     void shouldRegisterAgentToolBindingMapper() {
         assertThat(bindingMapper).isNotNull();
     }

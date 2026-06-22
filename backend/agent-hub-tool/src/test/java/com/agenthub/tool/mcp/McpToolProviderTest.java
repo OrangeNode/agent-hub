@@ -73,6 +73,21 @@ class McpToolProviderTest {
     }
 
     @Test
+    void shouldNotExposeStaleBindingWithMismatchedExposedName() {
+        McpServer oldServer = server(9L, "deleted-github", true);
+        McpTool oldTool = tool(2L, 9L, "search_repositories", true);
+        when(bindingMapper.selectByAgentIdAndProviderType(1L, "MCP")).thenReturn(List.of(
+                binding(10L, "mcp.github.search_repositories", 2L, true, "MCP")
+        ));
+        when(toolMapper.selectById(2L)).thenReturn(oldTool);
+        when(serverMapper.selectById(9L)).thenReturn(oldServer);
+
+        List<LlmToolDefinition> tools = provider.listTools(context());
+
+        assertThat(tools).isEmpty();
+    }
+
+    @Test
     void shouldNotExposeMcpToolsWhenAgentIdMissing() {
         assertThat(provider.listTools(new ToolExecutionContext(
                 7L,

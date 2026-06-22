@@ -2054,19 +2054,17 @@ function closeStream() {
 }
 
 function stopCurrentStream() {
+  const assistantMessage = findStoppableAssistantMessage(currentMessages.value)
   markCurrentAssistantStopped()
-  const stopGenerationRequest = currentAssistantMessageId > 0
-    ? stopGeneration(currentAssistantMessageId)
-    : Promise.resolve()
-
+  if (assistantMessage && assistantMessage.id > 0) {
+    void stopGeneration(assistantMessage.id).catch((error) => {
+      message.error(error instanceof Error ? error.message : '中止生成失败')
+    })
+  }
   closeStream()
-  void stopGenerationRequest.catch((error) => {
-    message.error(error instanceof Error ? error.message : '中止生成失败')
-  }).finally(() => {
-    void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
-    void refreshActiveArtifacts()
-    void loadConversations()
-  })
+  void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
+  void refreshActiveArtifacts()
+  void loadConversations()
 }
 
 function markCurrentAssistantStopped() {

@@ -63,7 +63,10 @@ describe('聊天生成中止', () => {
     const stopCurrentStream = functionBlock('stopCurrentStream')
 
     expect(normalizedChatViewSource).toContain('stopGeneration')
-    expect(stopCurrentStream).toContain('stopGeneration(currentAssistantMessageId)')
+    expect(stopCurrentStream).toContain('const assistantMessage = findStoppableAssistantMessage(currentMessages.value)')
+    expect(stopCurrentStream).toContain('assistantMessage && assistantMessage.id > 0')
+    expect(stopCurrentStream).toContain('stopGeneration(assistantMessage.id)')
+    expect(stopCurrentStream).not.toContain('currentAssistantMessageId')
   })
 
   it('按钮禁用状态不应包含流式生成状态', () => {
@@ -105,7 +108,6 @@ describe('聊天生成中止', () => {
 
   it('空内容的失败助手消息不应继续显示正在生成', () => {
     expect(assistantDisplayContent({
-      role: 'assistant',
       status: 'FAILED',
       content: ''
     })).toBe('生成失败')

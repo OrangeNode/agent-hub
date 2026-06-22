@@ -90,6 +90,9 @@ public class ChatServiceImpl implements ChatService {
     private static final String STATUS_FAILED = "FAILED";
     private static final String ROLE_USER = "USER";
     private static final String ROLE_ASSISTANT = "ASSISTANT";
+    private static final String ERROR_SOURCE_LLM = "LLM";
+    private static final String ERROR_SOURCE_TOOL = "TOOL";
+    private static final String ERROR_SOURCE_SERVER = "SERVER";
     private static final String LLM_STREAM_FAILED = "LLM_STREAM_FAILED";
     private static final String SSE_CONNECTION_CLOSED = "SSE 连接已断开";
     private static final int TITLE_MAX_OUTPUT_TOKENS = 64;
@@ -773,6 +776,7 @@ public class ChatServiceImpl implements ChatService {
         ProcessEventRecorder processRecorder = new ProcessEventRecorder();
         List<Long> skillIds = skillContext == null ? List.of() : skillContext.skillIds();
         AtomicBoolean finished = new AtomicBoolean(false);
+        String errorSource = ERROR_SOURCE_SERVER;
         ToolExecutionContext toolContext = new ToolExecutionContext(
                 userId,
                 conversationId,
@@ -797,11 +801,14 @@ public class ChatServiceImpl implements ChatService {
         List<LlmMessage> loopMessages = new ArrayList<>(messages);
         try {
             syncSkillsToSandbox(userId, conversationId, skillContext);
+            errorSource = ERROR_SOURCE_TOOL;
             availableTools = listTools(toolContext);
+            errorSource = ERROR_SOURCE_LLM;
             LlmClient client = llmClientFactory.apply(runtimeConfig.protocolType());
             loopMessages = withSandboxPathRules(messages, availableTools);
             int toolCallCount = 0;
             while (!finished.get()) {
+                errorSource = ERROR_SOURCE_LLM;
                 StreamAttemptOutcome outcome = streamOnce(client, runtimeConfig, loopMessages, reasoningRequested,
                         availableTools, emitter, assistantMessage, content, reasoningContent, processRecorder, finished);
                 if (outcome.retryRequested() && !finished.get()) {
@@ -817,11 +824,12 @@ public class ChatServiceImpl implements ChatService {
                 if (finished.get() || outcome.toolCalls().isEmpty()) {
                     return;
                 }
+                errorSource = ERROR_SOURCE_TOOL;
                 if (availableTools.isEmpty()) {
                     throw new BusinessException(ErrorCode.INTERNAL_ERROR, "工具服务不可用");
                 }
                 if (toolCallCount + outcome.toolCalls().size() > TOOL_CALL_MAX_COUNT) {
-                    failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent,
+                    failAssistantMessageAndSendToolError(emitter, assistantMessage, content, reasoningContent,
                             "工具调用次数超过上限", processRecorder);
                     return;
                 }
@@ -840,7 +848,7 @@ public class ChatServiceImpl implements ChatService {
                 }
             }
             if (finished.compareAndSet(false, true)) {
-                failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent,
+                failAssistantMessageAndSendToolError(emitter, assistantMessage, content, reasoningContent,
                         "工具调用轮次超过上限", processRecorder);
             }
         } catch (Exception exception) {
@@ -849,7 +857,7 @@ public class ChatServiceImpl implements ChatService {
                         availableTools, content, reasoningContent, processRecorder, finished, exception);
             } else if (finished.compareAndSet(false, true)) {
                 failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent,
-                        exception.getMessage(), processRecorder);
+                        exception.getMessage(), errorSource, processRecorder);
             }
         } finally {
             send(emitter, SseEventType.DONE, new SseEventData.Done());
@@ -1256,10 +1264,35 @@ public class ChatServiceImpl implements ChatService {
             String errorMessage,
             ProcessEventRecorder processRecorder
     ) {
+        failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent, errorMessage,
+                ERROR_SOURCE_LLM, processRecorder);
+    }
+
+    private void failAssistantMessageAndSendToolError(
+            SseEmitter emitter,
+            ChatMessage assistantMessage,
+            StringBuilder content,
+            StringBuilder reasoningContent,
+            String errorMessage,
+            ProcessEventRecorder processRecorder
+    ) {
+        failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent, errorMessage,
+                ERROR_SOURCE_TOOL, processRecorder);
+    }
+
+    private void failAssistantMessageAndSendError(
+            SseEmitter emitter,
+            ChatMessage assistantMessage,
+            StringBuilder content,
+            StringBuilder reasoningContent,
+            String errorMessage,
+            String source,
+            ProcessEventRecorder processRecorder
+    ) {
         String resolvedMessage = failAssistantMessage(assistantMessage, content, reasoningContent, errorMessage,
                 processRecorder);
         send(emitter, SseEventType.ERROR, SseEventData.Error.failed(LLM_STREAM_FAILED, resolvedMessage,
-                assistantMessage.getId(), "LLM", isContextLengthError(resolvedMessage)));
+                assistantMessage.getId(), source, isContextLengthError(resolvedMessage)));
     }
 
     /**

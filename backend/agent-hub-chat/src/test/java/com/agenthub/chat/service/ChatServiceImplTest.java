@@ -1391,6 +1391,50 @@ class ChatServiceImplTest {
     }
 
     @Test
+    void shouldMarkToolCallLimitErrorSourceAsTool() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        CountingToolLoopClient llmClient = new CountingToolLoopClient(101);
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                sender,
+                mock(AttachmentService.class),
+                null,
+                contextBuilder(messageMapper, mock(AttachmentService.class), llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                mock(SandboxToolService.class),
+                toolRegistry
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(toolRegistry.listTools(any(ToolExecutionContext.class))).thenReturn(List.of(new LlmToolDefinition(
+                "sandbox.list_files",
+                "列出文件",
+                Map.of("type", "object")
+        )));
+        when(toolRegistry.execute(any(ToolExecutionRequest.class), any(ToolExecutionContext.class)))
+                .thenReturn(ToolExecutionResult.completed("file /workspace/artifacts/output.txt"));
+
+        service.stream(7L, 100L, 10L, null, "生成超长工具任务", false, List.of(), List.of());
+
+        SseEventData.Error error = sender.eventDataOf(SseEventData.Error.class);
+        assertThat(error.code()).isEqualTo("LLM_STREAM_FAILED");
+        assertThat(error.source()).isEqualTo("TOOL");
+        assertThat(error.messageId()).isEqualTo(2L);
+        assertThat(error.status()).isEqualTo("FAILED");
+        assertThat(sender.eventTypes()).contains(SseEventType.ERROR, SseEventType.DONE);
+    }
+
+    @Test
     void shouldIncludeSandboxPathRulesInSystemPromptWhenToolsAvailable() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
         ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
@@ -1565,8 +1609,10 @@ class ChatServiceImplTest {
 
         service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
 
-        assertThat(events).contains("tx:commit", "sse:CONVERSATION", "sse:MESSAGE");
-        assertThat(events.indexOf("tx:commit")).isLessThan(events.indexOf("sse:CONVERSATION"));
+        assertThat(events).contains("tx:commit", "sse:META", "sse:CONVERSATION", "sse:MESSAGE");
+        assertThat(events.indexOf("tx:commit")).isLessThan(events.indexOf("sse:META"));
+        assertThat(events.indexOf("sse:META")).isLessThan(events.indexOf("sse:CONVERSATION"));
+        assertThat(events.indexOf("sse:CONVERSATION")).isLessThan(events.indexOf("sse:MESSAGE"));
     }
 
     @Test

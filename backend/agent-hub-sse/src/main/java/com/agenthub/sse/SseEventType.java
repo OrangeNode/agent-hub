@@ -2,6 +2,7 @@ package com.agenthub.sse;
 
 public enum SseEventType {
     CONVERSATION("conversation"),
+    META("meta"),
     MESSAGE("message"),
     REASONING_DELTA("reasoning_delta"),
     ANSWER_DELTA("answer_delta"),

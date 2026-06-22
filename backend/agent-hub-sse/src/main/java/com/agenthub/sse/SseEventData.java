@@ -1,6 +1,7 @@
 package com.agenthub.sse;
 
 public sealed interface SseEventData permits SseEventData.Conversation,
+        SseEventData.Meta,
         SseEventData.Message,
         SseEventData.Delta,
         SseEventData.ToolCall,
@@ -11,6 +12,10 @@ public sealed interface SseEventData permits SseEventData.Conversation,
         SseEventData.Done {
 
     record Conversation(Long conversationId, String title) implements SseEventData {
+    }
+
+    record Meta(String protocol, Long conversationId, Long messageId, String streamId, boolean resumable)
+            implements SseEventData {
     }
 
     record Message(Long messageId, String role) implements SseEventData {
@@ -31,7 +36,21 @@ public sealed interface SseEventData permits SseEventData.Conversation,
     record MessageCompleted(Long messageId, String status) implements SseEventData {
     }
 
-    record Error(String code, String message) implements SseEventData {
+    record Error(String code,
+                 String message,
+                 Long messageId,
+                 boolean fatal,
+                 boolean recoverable,
+                 String source,
+                 String status) implements SseEventData {
+
+        public Error(String code, String message) {
+            this(code, message, null, true, false, "SERVER", "FAILED");
+        }
+
+        public static Error failed(String code, String message, Long messageId, String source, boolean recoverable) {
+            return new Error(code, message, messageId, true, recoverable, source, "FAILED");
+        }
     }
 
     record Done() implements SseEventData {

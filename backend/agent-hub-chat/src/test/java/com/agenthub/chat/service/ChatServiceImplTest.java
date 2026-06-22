@@ -1610,6 +1610,10 @@ class ChatServiceImplTest {
         service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
 
         assertThat(events).contains("tx:commit", "sse:META", "sse:CONVERSATION", "sse:MESSAGE");
+        List<String> sseEvents = events.stream()
+                .filter(event -> event.startsWith("sse:"))
+                .toList();
+        assertThat(sseEvents.getFirst()).isEqualTo("sse:META");
         assertThat(events.indexOf("tx:commit")).isLessThan(events.indexOf("sse:META"));
         assertThat(events.indexOf("sse:META")).isLessThan(events.indexOf("sse:CONVERSATION"));
         assertThat(events.indexOf("sse:CONVERSATION")).isLessThan(events.indexOf("sse:MESSAGE"));

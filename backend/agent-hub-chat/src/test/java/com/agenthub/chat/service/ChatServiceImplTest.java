@@ -919,19 +919,25 @@ class ChatServiceImplTest {
         userStoppedMessage.setStatus("STOPPED");
         userStoppedMessage.setErrorMessage("用户已中止生成");
         when(messageMapper.selectById(2L)).thenReturn(streamingMessage, userStoppedMessage);
+        when(messageMapper.update(any(ChatMessage.class), any())).thenReturn(1, 0, 1);
 
         service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
         service.stopGeneration(7L, 2L);
         executor.runCaptured();
 
         ArgumentCaptor<ChatMessage> messageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
-        verify(messageMapper, org.mockito.Mockito.atLeast(2)).update(messageCaptor.capture(), any());
-        assertThat(messageCaptor.getAllValues())
-                .anySatisfy(message -> {
-                    assertThat(message.getStatus()).isEqualTo("STOPPED");
-                    assertThat(message.getContent()).isEqualTo("已生成内容");
-                    assertThat(message.getErrorMessage()).isEqualTo("用户已中止生成");
-                });
+        ArgumentCaptor<Wrapper<ChatMessage>> wrapperCaptor = wrapperCaptor();
+        verify(messageMapper, org.mockito.Mockito.times(3)).update(messageCaptor.capture(), wrapperCaptor.capture());
+        List<ChatMessage> updates = messageCaptor.getAllValues();
+        assertThat(updates.get(0).getStatus()).isEqualTo("STOPPED");
+        assertThat(updates.get(0).getErrorMessage()).isEqualTo("用户已中止生成");
+        assertThat(updates.get(1).getStatus()).isEqualTo("STOPPED");
+        assertThat(updates.get(1).getContent()).isEqualTo("已生成内容");
+        assertThat(updates.get(1).getErrorMessage()).isEqualTo("SSE 连接已断开");
+        assertStreamingAssistantUpdateWrapper(wrapperCaptor.getAllValues().get(1), 2L, 7L);
+        assertThat(updates.get(2).getStatus()).isEqualTo("STOPPED");
+        assertThat(updates.get(2).getContent()).isEqualTo("已生成内容");
+        assertThat(updates.get(2).getErrorMessage()).isNull();
         assertThat(sender.eventTypes()).doesNotContain(SseEventType.MESSAGE_COMPLETED, SseEventType.ERROR);
         assertThat(sender.eventTypes()).contains(SseEventType.DONE);
     }

@@ -1349,9 +1349,11 @@ public class ChatServiceImpl implements ChatService {
         assistantMessage.setReasoningContent(reasoningContent.toString());
         assistantMessage.setProcessEvents(serializeProcessEvents(processRecorder.events()));
         assistantMessage.setStatus(STATUS_STOPPED);
-        assistantMessage.setErrorMessage(resolveStopReason(assistantMessage, reason));
+        assistantMessage.setErrorMessage(reason == null || reason.isBlank() ? SSE_CONNECTION_CLOSED : reason);
         assistantMessage.setCompletedAt(OffsetDateTime.now());
-        updateStoppedOrStreamingAssistantMessage(assistantMessage);
+        if (!updateStreamingAssistantMessage(assistantMessage)) {
+            backfillStoppedAssistantMessage(assistantMessage, content, reasoningContent, processRecorder);
+        }
     }
 
     private MessageFailureResult failAssistantMessage(
@@ -1381,14 +1383,6 @@ public class ChatServiceImpl implements ChatService {
                 .eq(ChatMessage::getUserId, assistantMessage.getUserId())
                 .eq(ChatMessage::getRole, ROLE_ASSISTANT)
                 .eq(ChatMessage::getStatus, STATUS_STREAMING)) > 0;
-    }
-
-    private boolean updateStoppedOrStreamingAssistantMessage(ChatMessage assistantMessage) {
-        return messageMapper.update(assistantMessage, new LambdaUpdateWrapper<ChatMessage>()
-                .eq(ChatMessage::getId, assistantMessage.getId())
-                .eq(ChatMessage::getUserId, assistantMessage.getUserId())
-                .eq(ChatMessage::getRole, ROLE_ASSISTANT)
-                .in(ChatMessage::getStatus, STATUS_STREAMING, STATUS_STOPPED)) > 0;
     }
 
     private void updateStopRequestedAssistantMessage(Long messageId, Long userId) {
@@ -1424,20 +1418,6 @@ public class ChatServiceImpl implements ChatService {
                 .eq(ChatMessage::getUserId, assistantMessage.getUserId())
                 .eq(ChatMessage::getRole, ROLE_ASSISTANT)
                 .eq(ChatMessage::getStatus, STATUS_STOPPED));
-    }
-
-    private String resolveStopReason(ChatMessage assistantMessage, String reason) {
-        String resolvedReason = reason == null || reason.isBlank() ? SSE_CONNECTION_CLOSED : reason;
-        if (!SSE_CONNECTION_CLOSED.equals(resolvedReason)) {
-            return resolvedReason;
-        }
-        ChatMessage current = messageMapper.selectById(assistantMessage.getId());
-        if (current != null
-                && STATUS_STOPPED.equals(current.getStatus())
-                && USER_STOPPED_GENERATION.equals(current.getErrorMessage())) {
-            return USER_STOPPED_GENERATION;
-        }
-        return resolvedReason;
     }
 
     private record MessageFailureResult(String message, boolean updated) {

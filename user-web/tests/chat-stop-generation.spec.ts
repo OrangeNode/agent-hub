@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyStreamConversationId,
   applyStreamAssistantMessageId,
   assistantDisplayContent,
   findStoppableAssistantMessage,
@@ -117,9 +118,29 @@ describe('聊天生成中止', () => {
     expect(messages[1].id).toBe(200)
   })
 
+  it('meta 事件应提前把临时会话替换为真实会话 ID', () => {
+    const messageMap: Record<number, Array<{ id: number; role: string }>> = {
+      [-100]: [
+        { id: -2, role: 'user' },
+        { id: 200, role: 'assistant' }
+      ]
+    }
+
+    const currentConversationId = applyStreamConversationId(messageMap, -100, 100)
+
+    expect(currentConversationId).toBe(100)
+    expect(messageMap[100]).toEqual([
+      { id: -2, role: 'user' },
+      { id: 200, role: 'assistant' }
+    ])
+    expect(messageMap[-100]).toBeUndefined()
+  })
+
   it('流式 meta 和 message 事件应复用同一消息 ID 同步逻辑', () => {
     expect(normalizedChatViewSource).toContain('const applyStreamAssistantMessageIdFromEvent = (messageId?: number | null) => {')
+    expect(normalizedChatViewSource).toContain('const applyStreamConversationIdFromEvent = (streamConversationId?: number | null) => {')
     expect(normalizedChatViewSource).toContain('onMeta: (data) => {')
+    expect(normalizedChatViewSource).toContain('applyStreamConversationIdFromEvent(data.conversationId)')
     expect(normalizedChatViewSource).toContain('applyStreamAssistantMessageIdFromEvent(data.messageId)')
     expect(normalizedChatViewSource).toContain('onMessage: (data) => {')
   })

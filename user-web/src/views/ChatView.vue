@@ -873,6 +873,24 @@ export function applyStreamAssistantMessageId<T extends StreamAssistantMessageLi
   return streamMessageId
 }
 
+export function applyStreamConversationId<T>(
+  messageMap: Record<number, T[]>,
+  currentConversationId: number | null,
+  streamConversationId?: number | null
+) {
+  if (!currentConversationId || !streamConversationId || streamConversationId <= 0) {
+    return currentConversationId
+  }
+
+  if (currentConversationId > 0) {
+    return currentConversationId
+  }
+
+  messageMap[streamConversationId] = messageMap[currentConversationId] ?? []
+  delete messageMap[currentConversationId]
+  return streamConversationId
+}
+
 export interface NewConversationState {
   activeConversationId: number | null
   activeAgentKey: string | null
@@ -2230,6 +2248,13 @@ function handleSend() {
   const applyStreamAssistantMessageIdFromEvent = (messageId?: number | null) => {
     currentAssistantMessageId = applyStreamAssistantMessageId(messages, currentAssistantMessageId, messageId)
   }
+  const applyStreamConversationIdFromEvent = (streamConversationId?: number | null) => {
+    activeConversationId.value = applyStreamConversationId(
+      messageMap.value,
+      activeConversationId.value,
+      streamConversationId
+    )
+  }
 
   streamControllerRef.value = openChatStream(
     {
@@ -2248,19 +2273,18 @@ function handleSend() {
         if (data.protocol !== 'chat.sse.v1') {
           message.warning(`聊天流协议版本不兼容：${data.protocol}`)
         }
+        applyStreamConversationIdFromEvent(data.conversationId)
         applyStreamAssistantMessageIdFromEvent(data.messageId)
       },
       onConversation: (data) => {
         const previousId = activeConversationId.value
-        if (previousId && previousId < 0) {
-          messageMap.value[data.conversationId] = messageMap.value[previousId] ?? []
-          delete messageMap.value[previousId]
-          activeConversationId.value = data.conversationId
-        }
+        applyStreamConversationIdFromEvent(data.conversationId)
 
         conversations.value = [
           { id: data.conversationId, title: data.title, updatedAt: '刚刚', agentKey: activeAgentKey.value },
-          ...conversations.value.filter((item) => item.id !== data.conversationId && item.id !== previousId)
+          ...conversations.value.filter((item) =>
+            item.id !== data.conversationId && item.id !== previousId && item.id !== conversationId
+          )
         ]
       },
       onMessage: (data) => {

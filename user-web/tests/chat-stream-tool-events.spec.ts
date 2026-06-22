@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { openChatStream } from '../src/api/chat'
 
 function sseBody(...frames: string[]) {
@@ -12,6 +12,10 @@ function sseBody(...frames: string[]) {
     }
   })
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('聊天流工具事件', () => {
   it('应该按 toolCallId 分发工具调用链事件', async () => {
@@ -28,17 +32,18 @@ describe('聊天流工具事件', () => {
 
     await new Promise<void>((resolve, reject) => {
       const timeout = window.setTimeout(() => reject(new Error('等待工具事件超时')), 1000)
+      const finish = (callback: () => void) => {
+        window.clearTimeout(timeout)
+        callback()
+      }
       openChatStream(
         { prompt: '输出 txt', token: 'token' },
         {
           onToolCall: (data) => events.push({ type: 'call', ...data }),
           onToolOutput: (data) => events.push({ type: 'output', ...data }),
           onToolResult: (data) => events.push({ type: 'result', ...data }),
-          onDone: () => {
-            window.clearTimeout(timeout)
-            resolve()
-          },
-          onTransportError: reject
+          onDone: () => finish(resolve),
+          onTransportError: (error) => finish(() => reject(error))
         }
       )
     })
@@ -48,7 +53,6 @@ describe('聊天流工具事件', () => {
       { type: 'output', toolCallId: 'call_1', stream: 'stdout', content: '写入中' },
       { type: 'result', toolCallId: 'call_1', name: 'write_file', status: 'completed', content: '文件写入完成' }
     ])
-    vi.unstubAllGlobals()
   })
 
   it('应该分发协议 meta 和扩展错误事件', async () => {
@@ -64,16 +68,17 @@ describe('聊天流工具事件', () => {
 
     await new Promise<void>((resolve, reject) => {
       const timeout = window.setTimeout(() => reject(new Error('等待协议事件超时')), 1000)
+      const finish = (callback: () => void) => {
+        window.clearTimeout(timeout)
+        callback()
+      }
       openChatStream(
         { prompt: '你好', token: 'token' },
         {
           onMeta: (data) => events.push({ type: 'meta', ...data }),
           onError: (data) => events.push({ type: 'error', ...data }),
-          onDone: () => {
-            window.clearTimeout(timeout)
-            resolve()
-          },
-          onTransportError: reject
+          onDone: () => finish(resolve),
+          onTransportError: (error) => finish(() => reject(error))
         }
       )
     })
@@ -98,6 +103,5 @@ describe('聊天流工具事件', () => {
         status: 'FAILED'
       }
     ])
-    vi.unstubAllGlobals()
   })
 })

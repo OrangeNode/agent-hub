@@ -107,6 +107,7 @@
       :title="toolModalAgent ? `${toolModalAgent.name} 绑定工具` : '绑定工具'"
       class="form-modal"
       :style="{ width: 'min(960px, calc(100vw - 32px))' }"
+      @update:show="handleToolModalShowChange"
     >
       <div class="tool-modal-body">
         <n-input
@@ -128,8 +129,15 @@
       </div>
       <template #footer>
         <n-space justify="end">
-          <n-button @click="showToolModal = false">取消</n-button>
-          <n-button type="primary" :loading="toolSaving" @click="submitToolBindings">保存</n-button>
+          <n-button @click="closeToolModal">取消</n-button>
+          <n-button
+            type="primary"
+            :loading="toolSaving"
+            :disabled="toolLoading || toolLoadFailed"
+            @click="submitToolBindings"
+          >
+            保存
+          </n-button>
         </n-space>
       </template>
     </n-modal>
@@ -187,10 +195,12 @@ const selectedSkillIds = ref<number[]>([])
 const showToolModal = ref(false)
 const toolModalAgent = ref<AgentRecord | null>(null)
 const toolLoading = ref(false)
+const toolLoadFailed = ref(false)
 const toolSaving = ref(false)
 const toolKeyword = ref('')
 const toolOptions = ref<AgentToolOptionRecord[]>([])
 const selectedToolNames = ref<DataTableRowKey[]>([])
+const toolRequestVersion = ref(0)
 
 const statusOptions: SelectOption[] = [
   { label: '启用', value: 'true' },
@@ -241,7 +251,7 @@ const filteredToolOptions = computed(() => {
   }
 
   return toolOptions.value.filter((item) =>
-    [item.toolName, item.displayName, item.description, item.serverName].some((value) =>
+    [item.toolName, item.displayName, item.description, item.serverName, item.serverKey].some((value) =>
       (value ?? '').toLowerCase().includes(keywordText)
     )
   )
@@ -421,10 +431,36 @@ function bindingSortValue(binding: { sort?: number | null; sortOrder?: number | 
   return binding.sortOrder ?? binding.sort ?? 0
 }
 
+function invalidateToolRequest() {
+  toolRequestVersion.value += 1
+}
+
+function isCurrentToolRequest(requestVersion: number, agentId: number) {
+  return showToolModal.value && toolRequestVersion.value === requestVersion && toolModalAgent.value?.agentId === agentId
+}
+
+function closeToolModal() {
+  invalidateToolRequest()
+  showToolModal.value = false
+  toolLoading.value = false
+  toolSaving.value = false
+}
+
+function handleToolModalShowChange(show: boolean) {
+  if (!show) {
+    invalidateToolRequest()
+    toolLoading.value = false
+    toolSaving.value = false
+  }
+}
+
 async function openTools(agent: AgentRecord) {
+  const requestVersion = ++toolRequestVersion.value
   toolModalAgent.value = agent
   showToolModal.value = true
   toolLoading.value = true
+  toolLoadFailed.value = false
+  toolSaving.value = false
   toolKeyword.value = ''
   toolOptions.value = []
   selectedToolNames.value = []
@@ -433,6 +469,10 @@ async function openTools(agent: AgentRecord) {
       fetchAgentToolOptions(agent.agentId),
       fetchAgentToolBindings(agent.agentId)
     ])
+    if (!isCurrentToolRequest(requestVersion, agent.agentId)) {
+      return
+    }
+
     toolOptions.value = optionData
 
     const selectableToolNames = new Set(optionData.filter(isToolSelectable).map((item) => item.toolName))
@@ -443,9 +483,16 @@ async function openTools(agent: AgentRecord) {
       .map((item) => item.toolName)
       .filter((toolName) => selectableToolNames.has(toolName))
   } catch (error) {
+    if (!isCurrentToolRequest(requestVersion, agent.agentId)) {
+      return
+    }
+
+    toolLoadFailed.value = true
     message.error(error instanceof Error ? error.message : '加载 Agent 工具绑定失败')
   } finally {
-    toolLoading.value = false
+    if (isCurrentToolRequest(requestVersion, agent.agentId)) {
+      toolLoading.value = false
+    }
   }
 }
 
@@ -466,10 +513,12 @@ async function submitSkillBindings() {
 }
 
 async function submitToolBindings() {
-  if (!toolModalAgent.value) {
+  if (!toolModalAgent.value || toolLoading.value || toolLoadFailed.value) {
     return
   }
 
+  const agentId = toolModalAgent.value.agentId
+  const saveRequestVersion = toolRequestVersion.value
   toolSaving.value = true
   try {
     const selectedToolNameSet = new Set(selectedToolNames.value.map(String))
@@ -479,17 +528,22 @@ async function submitToolBindings() {
         toolName: item.toolName,
         providerType: item.providerType,
         providerRefId: item.providerRefId,
-        enabled: true,
-        sortOrder: index
+        sort: index
       }))
 
-    await updateAgentToolBindings(toolModalAgent.value.agentId, tools)
-    message.success('Agent 工具绑定已保存')
-    showToolModal.value = false
+    await updateAgentToolBindings(agentId, tools)
+    if (isCurrentToolRequest(saveRequestVersion, agentId)) {
+      message.success('Agent 工具绑定已保存')
+      closeToolModal()
+    }
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '保存 Agent 工具绑定失败')
+    if (isCurrentToolRequest(saveRequestVersion, agentId)) {
+      message.error(error instanceof Error ? error.message : '保存 Agent 工具绑定失败')
+    }
   } finally {
-    toolSaving.value = false
+    if (isCurrentToolRequest(saveRequestVersion, agentId)) {
+      toolSaving.value = false
+    }
   }
 }
 

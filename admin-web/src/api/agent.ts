@@ -49,9 +49,7 @@ export async function updateAgentToolBindings(agentId: number, tools: AgentToolB
       toolName: item.toolName,
       providerType: item.providerType,
       providerRefId: item.providerRefId,
-      enabled: item.enabled,
-      sortOrder: item.sortOrder,
-      sort: item.sortOrder
+      sort: item.sort
     }))
   })
   return response.data.data

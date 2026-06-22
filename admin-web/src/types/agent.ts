@@ -72,6 +72,5 @@ export interface AgentToolBindingPayload {
   toolName: string
   providerType: string
   providerRefId: number
-  enabled: boolean
-  sortOrder: number
+  sort: number
 }

@@ -221,6 +221,14 @@ async function readSseBody(body: ReadableStream<Uint8Array>, handlers: ChatStrea
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let doneSeen = false
+  const trackedHandlers: ChatStreamHandlers = {
+    ...handlers,
+    onDone: () => {
+      doneSeen = true
+      handlers.onDone?.()
+    }
+  }
 
   try {
     while (true) {
@@ -230,11 +238,14 @@ async function readSseBody(body: ReadableStream<Uint8Array>, handlers: ChatStrea
       }
 
       buffer += decoder.decode(value, { stream: true })
-      buffer = drainSseBuffer(buffer, handlers)
+      buffer = drainSseBuffer(buffer, trackedHandlers)
     }
 
     buffer += decoder.decode()
-    drainSseBuffer(`${buffer}\n\n`, handlers)
+    drainSseBuffer(`${buffer}\n\n`, trackedHandlers)
+    if (!doneSeen) {
+      throw new Error('SSE 连接在完成事件前已断开')
+    }
   } finally {
     reader.releaseLock()
   }

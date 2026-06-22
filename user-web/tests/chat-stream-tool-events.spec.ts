@@ -109,4 +109,45 @@ describe('聊天流工具事件', () => {
       }
     ])
   })
+
+  it('响应体未发送 done 直接结束时应触发传输错误', async () => {
+    const events: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      body: sseBody(
+        'event: meta\ndata: {"protocol":"chat.sse.v1","conversationId":100,"messageId":200,"streamId":"chatmsg_200_20260622_000001","resumable":false}\n\n'
+      )
+    }))
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error('等待传输错误超时')), 1000)
+      const finish = (callback: () => void) => {
+        window.clearTimeout(timeout)
+        callback()
+      }
+      openChatStream(
+        { prompt: '你好', token: 'token' },
+        {
+          onMeta: (data) => events.push({ type: 'meta', ...data }),
+          onDone: () => finish(() => reject(new Error('不应在缺少 done 时正常结束'))),
+          onTransportError: (error) => finish(() => {
+            expect(error).toBeInstanceOf(Error)
+            expect((error as Error).message).toBe('SSE 连接在完成事件前已断开')
+            resolve()
+          })
+        }
+      )
+    })
+
+    expect(events).toEqual([
+      {
+        type: 'meta',
+        protocol: 'chat.sse.v1',
+        conversationId: 100,
+        messageId: 200,
+        streamId: 'chatmsg_200_20260622_000001',
+        resumable: false
+      }
+    ])
+  })
 })

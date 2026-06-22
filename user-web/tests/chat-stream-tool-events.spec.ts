@@ -50,4 +50,54 @@ describe('聊天流工具事件', () => {
     ])
     vi.unstubAllGlobals()
   })
+
+  it('应该分发协议 meta 和扩展错误事件', async () => {
+    const events: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      body: sseBody(
+        'event: meta\ndata: {"protocol":"chat.sse.v1","conversationId":100,"messageId":200,"streamId":"chatmsg_200_20260622_000001","resumable":false}\n\n',
+        'event: error\ndata: {"code":"LLM_STREAM_FAILED","message":"模型调用失败","messageId":200,"fatal":true,"recoverable":false,"source":"LLM","status":"FAILED"}\n\n',
+        'event: done\ndata: {}\n\n'
+      )
+    }))
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error('等待协议事件超时')), 1000)
+      openChatStream(
+        { prompt: '你好', token: 'token' },
+        {
+          onMeta: (data) => events.push({ type: 'meta', ...data }),
+          onError: (data) => events.push({ type: 'error', ...data }),
+          onDone: () => {
+            window.clearTimeout(timeout)
+            resolve()
+          },
+          onTransportError: reject
+        }
+      )
+    })
+
+    expect(events).toEqual([
+      {
+        type: 'meta',
+        protocol: 'chat.sse.v1',
+        conversationId: 100,
+        messageId: 200,
+        streamId: 'chatmsg_200_20260622_000001',
+        resumable: false
+      },
+      {
+        type: 'error',
+        code: 'LLM_STREAM_FAILED',
+        message: '模型调用失败',
+        messageId: 200,
+        fatal: true,
+        recoverable: false,
+        source: 'LLM',
+        status: 'FAILED'
+      }
+    ])
+    vi.unstubAllGlobals()
+  })
 })

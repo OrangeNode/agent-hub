@@ -39,9 +39,28 @@ export interface ChatMessageRecord {
   role: 'USER' | 'ASSISTANT' | 'user' | 'assistant'
   content: string
   reasoningContent?: string | null
+  errorMessage?: string | null
   status: string
   attachments?: ChatAttachmentRecord[]
   processEvents?: ChatProcessEventRecord[] | null
+}
+
+export interface ChatStreamMetaRecord {
+  protocol: 'chat.sse.v1' | string
+  conversationId: number
+  messageId: number
+  streamId: string
+  resumable: boolean
+}
+
+export interface ChatStreamErrorRecord {
+  code: string
+  message: string
+  messageId?: number | null
+  fatal?: boolean
+  recoverable?: boolean
+  source?: string
+  status?: string
 }
 
 export interface ChatArtifactRecord {
@@ -128,6 +147,7 @@ export interface OpenChatStreamOptions {
 }
 
 export interface ChatStreamHandlers {
+  onMeta?: (data: ChatStreamMetaRecord) => void
   onConversation?: (data: { conversationId: number; title: string }) => void
   onMessage?: (data: { messageId: number; role: string }) => void
   onReasoningDelta?: (data: { content: string }) => void
@@ -136,7 +156,7 @@ export interface ChatStreamHandlers {
   onToolOutput?: (data: { toolCallId: string; stream: string; content: string }) => void
   onToolResult?: (data: { toolCallId: string; name: string; status: string; content: string }) => void
   onMessageCompleted?: (data: { messageId: number; status: string }) => void
-  onError?: (data: { code: string; message: string }) => void
+  onError?: (data: ChatStreamErrorRecord) => void
   onDone?: () => void
   onTransportError?: (error: unknown) => void
 }
@@ -278,6 +298,9 @@ function parseSseEvent(rawEvent: string): ParsedSseEvent | null {
 
 function dispatchSseEvent(event: ParsedSseEvent, handlers: ChatStreamHandlers) {
   switch (event.event) {
+    case 'meta':
+      dispatchJson(event.data, handlers.onMeta)
+      break
     case 'conversation':
       dispatchJson(event.data, handlers.onConversation)
       break

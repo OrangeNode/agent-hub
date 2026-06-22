@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
+import com.agenthub.tool.binding.mapper.AgentToolBindingMapper;
 import com.agenthub.tool.mcp.client.McpClient;
 import com.agenthub.tool.mcp.client.McpInitializeResult;
 import com.agenthub.tool.mcp.client.McpToolDescriptor;
@@ -174,13 +175,17 @@ class McpServerServiceImplTest {
         McpServerMapper serverMapper = mock(McpServerMapper.class);
         McpToolMapper toolMapper = mock(McpToolMapper.class);
         McpToolCallLogMapper callLogMapper = mock(McpToolCallLogMapper.class);
-        McpServerServiceImpl service = service(serverMapper, toolMapper, callLogMapper, mock(McpClient.class));
+        AgentToolBindingMapper bindingMapper = mock(AgentToolBindingMapper.class);
+        McpServerServiceImpl service = service(serverMapper, toolMapper, callLogMapper, mock(McpClient.class),
+                bindingMapper);
         when(serverMapper.selectById(1L)).thenReturn(server(1L));
+        when(toolMapper.selectList(any())).thenReturn(List.of(tool(2L, 1L)));
 
         service.delete(1L);
 
-        InOrder inOrder = inOrder(callLogMapper, toolMapper, serverMapper);
+        InOrder inOrder = inOrder(callLogMapper, bindingMapper, toolMapper, serverMapper);
         inOrder.verify(callLogMapper).delete(any());
+        inOrder.verify(bindingMapper).delete(any());
         inOrder.verify(toolMapper).delete(any());
         inOrder.verify(serverMapper).deleteById((Serializable) 1L);
     }
@@ -195,7 +200,17 @@ class McpServerServiceImplTest {
             McpToolCallLogMapper callLogMapper,
             McpClient mcpClient
     ) {
-        return new McpServerServiceImpl(serverMapper, toolMapper, callLogMapper, mcpClient);
+        return service(serverMapper, toolMapper, callLogMapper, mcpClient, mock(AgentToolBindingMapper.class));
+    }
+
+    private McpServerServiceImpl service(
+            McpServerMapper serverMapper,
+            McpToolMapper toolMapper,
+            McpToolCallLogMapper callLogMapper,
+            McpClient mcpClient,
+            AgentToolBindingMapper bindingMapper
+    ) {
+        return new McpServerServiceImpl(serverMapper, toolMapper, callLogMapper, mcpClient, bindingMapper);
     }
 
     private CreateMcpServerCommand createCommand() {
@@ -233,5 +248,13 @@ class McpServerServiceImplTest {
         server.setEnabled(true);
         server.setSort(0);
         return server;
+    }
+
+    private McpTool tool(Long id, Long serverId) {
+        McpTool tool = new McpTool();
+        tool.setId(id);
+        tool.setServerId(serverId);
+        tool.setToolName("search");
+        return tool;
     }
 }

@@ -101,8 +101,8 @@ class McpToolProviderTest {
         Map<String, Object> arguments = Map.of("query", "codex");
         ArgumentCaptor<McpToolCallLog> logCaptor = ArgumentCaptor.forClass(McpToolCallLog.class);
         when(bindingMapper.selectByAgentIdAndToolName(1L, "mcp.github.search_repositories")).thenReturn(binding());
-        when(serverMapper.selectOne(any())).thenReturn(server);
-        when(toolMapper.selectOne(any())).thenReturn(tool);
+        when(toolMapper.selectById(2L)).thenReturn(tool);
+        when(serverMapper.selectById(1L)).thenReturn(server);
         when(mcpClient.callTool(server, "search_repositories", arguments))
                 .thenReturn(new McpToolCallResult(false, "ok"));
         when(callLogMapper.insert(logCaptor.capture())).thenReturn(1);
@@ -147,13 +147,31 @@ class McpToolProviderTest {
     }
 
     @Test
+    void shouldNotAuthorizeRecreatedToolWithStaleBindingProviderRefId() {
+        McpTool oldTool = tool(2L, 9L, "search_repositories", true);
+        McpServer oldServer = server(9L, "deleted-github", true);
+        when(bindingMapper.selectByAgentIdAndToolName(1L, "mcp.github.search_repositories")).thenReturn(binding());
+        when(toolMapper.selectById(2L)).thenReturn(oldTool);
+        when(serverMapper.selectById(9L)).thenReturn(oldServer);
+
+        ToolExecutionResult result = provider.execute(
+                new ToolExecutionRequest("call-1", "mcp.github.search_repositories", Map.of("query", "codex")),
+                context()
+        );
+
+        assertThat(result.status()).isEqualTo("failed");
+        assertThat(result.content()).isEqualTo("当前 Agent 未授权使用工具: mcp.github.search_repositories");
+        verifyNoInteractions(callLogMapper, mcpClient);
+    }
+
+    @Test
     void shouldReturnFailedResultAndLogWhenMcpClientFails() {
         McpServer server = server(true);
         McpTool tool = tool(true);
         ArgumentCaptor<McpToolCallLog> logCaptor = ArgumentCaptor.forClass(McpToolCallLog.class);
         when(bindingMapper.selectByAgentIdAndToolName(1L, "mcp.github.search_repositories")).thenReturn(binding());
-        when(serverMapper.selectOne(any())).thenReturn(server);
-        when(toolMapper.selectOne(any())).thenReturn(tool);
+        when(toolMapper.selectById(2L)).thenReturn(tool);
+        when(serverMapper.selectById(1L)).thenReturn(server);
         when(mcpClient.callTool(eq(server), eq("search_repositories"), any()))
                 .thenThrow(new BusinessException(ErrorCode.INTERNAL_ERROR, "认证失败"));
         when(callLogMapper.insert(logCaptor.capture())).thenReturn(1);
@@ -174,7 +192,8 @@ class McpToolProviderTest {
         McpServer server = server(false);
         ArgumentCaptor<McpToolCallLog> logCaptor = ArgumentCaptor.forClass(McpToolCallLog.class);
         when(bindingMapper.selectByAgentIdAndToolName(1L, "mcp.github.search_repositories")).thenReturn(binding());
-        when(serverMapper.selectOne(any())).thenReturn(server);
+        when(toolMapper.selectById(2L)).thenReturn(tool(true));
+        when(serverMapper.selectById(1L)).thenReturn(server);
         when(callLogMapper.insert(logCaptor.capture())).thenReturn(1);
 
         ToolExecutionResult result = provider.execute(
@@ -196,8 +215,8 @@ class McpToolProviderTest {
         McpTool tool = tool(false);
         ArgumentCaptor<McpToolCallLog> logCaptor = ArgumentCaptor.forClass(McpToolCallLog.class);
         when(bindingMapper.selectByAgentIdAndToolName(1L, "mcp.github.search_repositories")).thenReturn(binding());
-        when(serverMapper.selectOne(any())).thenReturn(server);
-        when(toolMapper.selectOne(any())).thenReturn(tool);
+        when(toolMapper.selectById(2L)).thenReturn(tool);
+        when(serverMapper.selectById(1L)).thenReturn(server);
         when(callLogMapper.insert(logCaptor.capture())).thenReturn(1);
 
         ToolExecutionResult result = provider.execute(

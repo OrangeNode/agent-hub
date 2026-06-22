@@ -15,7 +15,6 @@ import com.agenthub.tool.runtime.ToolExecutionContext;
 import com.agenthub.tool.runtime.ToolExecutionRequest;
 import com.agenthub.tool.runtime.ToolExecutionResult;
 import com.agenthub.tool.runtime.ToolProvider;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -109,35 +108,27 @@ public class McpToolProvider implements ToolProvider {
             return ToolExecutionResult.failed("不支持的工具: " + request.toolName());
         }
 
-        if (!isAuthorized(context, request.toolName())) {
+        AuthorizedMcpTool authorizedTool = resolveAuthorizedTool(context, request.toolName());
+        if (authorizedTool == null) {
             return ToolExecutionResult.failed("当前 Agent 未授权使用工具: " + request.toolName());
         }
 
         OffsetDateTime startedAt = OffsetDateTime.now();
         long startedNanos = System.nanoTime();
-        McpServer server = null;
-        McpTool tool = null;
+        McpServer server = authorizedTool.server();
+        McpTool tool = authorizedTool.tool();
         try {
-            server = findServer(parsed.serverKey());
-            if (server == null) {
-                return ToolExecutionResult.failed("MCP 服务不存在: " + parsed.serverKey());
-            }
             if (!Boolean.TRUE.equals(server.getEnabled())) {
                 return failedWithLog(request, context, parsed, server, null, "MCP 服务未启用: " + parsed.serverKey(),
                         startedAt, startedNanos);
             }
 
-            tool = findTool(server.getId(), parsed.remoteToolName());
-            if (tool == null) {
-                return failedWithLog(request, context, parsed, server, null,
-                        "MCP 工具不存在: " + request.toolName(), startedAt, startedNanos);
-            }
             if (!Boolean.TRUE.equals(tool.getEnabled())) {
                 return failedWithLog(request, context, parsed, server, tool,
                         "MCP 工具未启用: " + request.toolName(), startedAt, startedNanos);
             }
 
-            McpToolCallResult callResult = mcpClient.callTool(server, parsed.remoteToolName(), request.arguments());
+            McpToolCallResult callResult = mcpClient.callTool(server, tool.getToolName(), request.arguments());
             String content = callResult == null ? "" : defaultString(callResult.content());
             if (callResult != null && callResult.error()) {
                 writeLog(request, context, parsed, server, tool, STATUS_FAILED, content, content, startedAt, startedNanos);
@@ -168,25 +159,28 @@ public class McpToolProvider implements ToolProvider {
         return ToolExecutionResult.failed(message);
     }
 
-    private McpServer findServer(String serverKey) {
-        return serverMapper.selectOne(new LambdaQueryWrapper<McpServer>()
-                .eq(McpServer::getServerKey, serverKey));
-    }
-
-    private McpTool findTool(Long serverId, String remoteToolName) {
-        return toolMapper.selectOne(new LambdaQueryWrapper<McpTool>()
-                .eq(McpTool::getServerId, serverId)
-                .eq(McpTool::getToolName, remoteToolName));
-    }
-
-    private boolean isAuthorized(ToolExecutionContext context, String toolName) {
+    private AuthorizedMcpTool resolveAuthorizedTool(ToolExecutionContext context, String toolName) {
         if (context == null || context.agentId() == null) {
-            return false;
+            return null;
         }
         AgentToolBinding binding = bindingMapper.selectByAgentIdAndToolName(context.agentId(), toolName);
-        return binding != null
-                && Boolean.TRUE.equals(binding.getEnabled())
-                && PROVIDER_TYPE_MCP.equals(binding.getProviderType());
+        if (binding == null || !Boolean.TRUE.equals(binding.getEnabled())
+                || !PROVIDER_TYPE_MCP.equals(binding.getProviderType())
+                || binding.getProviderRefId() == null) {
+            return null;
+        }
+        McpTool tool = toolMapper.selectById(binding.getProviderRefId());
+        if (tool == null || tool.getServerId() == null) {
+            return null;
+        }
+        McpServer server = serverMapper.selectById(tool.getServerId());
+        if (server == null) {
+            return null;
+        }
+        if (!toolName.equals(exposedToolName(server.getServerKey(), tool.getToolName()))) {
+            return null;
+        }
+        return new AuthorizedMcpTool(server, tool);
     }
 
     private void writeLog(
@@ -278,5 +272,8 @@ public class McpToolProvider implements ToolProvider {
     }
 
     private record ParsedToolName(String serverKey, String remoteToolName) {
+    }
+
+    private record AuthorizedMcpTool(McpServer server, McpTool tool) {
     }
 }

@@ -2,6 +2,8 @@ package com.agenthub.tool.mcp.service.impl;
 
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
+import com.agenthub.tool.binding.entity.AgentToolBinding;
+import com.agenthub.tool.binding.mapper.AgentToolBindingMapper;
 import com.agenthub.tool.mcp.client.McpClient;
 import com.agenthub.tool.mcp.client.McpInitializeResult;
 import com.agenthub.tool.mcp.client.McpToolDescriptor;
@@ -44,22 +46,26 @@ public class McpServerServiceImpl implements McpServerService {
     private static final int MAX_LIMIT = 500;
     private static final String SYNC_SUCCESS = "SUCCESS";
     private static final String SYNC_FAILED = "FAILED";
+    private static final String PROVIDER_TYPE_MCP = "MCP";
 
     private final McpServerMapper serverMapper;
     private final McpToolMapper toolMapper;
     private final McpToolCallLogMapper callLogMapper;
     private final McpClient mcpClient;
+    private final AgentToolBindingMapper bindingMapper;
 
     public McpServerServiceImpl(
             McpServerMapper serverMapper,
             McpToolMapper toolMapper,
             McpToolCallLogMapper callLogMapper,
-            McpClient mcpClient
+            McpClient mcpClient,
+            AgentToolBindingMapper bindingMapper
     ) {
         this.serverMapper = serverMapper;
         this.toolMapper = toolMapper;
         this.callLogMapper = callLogMapper;
         this.mcpClient = mcpClient;
+        this.bindingMapper = bindingMapper;
     }
 
     @Override
@@ -135,8 +141,19 @@ public class McpServerServiceImpl implements McpServerService {
     @Transactional
     public void delete(Long serverId) {
         requireServer(serverId);
+        List<Long> toolIds = toolMapper.selectList(new LambdaQueryWrapper<McpTool>()
+                        .eq(McpTool::getServerId, serverId))
+                .stream()
+                .map(McpTool::getId)
+                .filter(id -> id != null)
+                .toList();
         callLogMapper.delete(new LambdaQueryWrapper<McpToolCallLog>()
                 .eq(McpToolCallLog::getServerId, serverId));
+        if (!toolIds.isEmpty()) {
+            bindingMapper.delete(new LambdaQueryWrapper<AgentToolBinding>()
+                    .eq(AgentToolBinding::getProviderType, PROVIDER_TYPE_MCP)
+                    .in(AgentToolBinding::getProviderRefId, toolIds));
+        }
         toolMapper.delete(new LambdaQueryWrapper<McpTool>()
                 .eq(McpTool::getServerId, serverId));
         serverMapper.deleteById((Serializable) serverId);

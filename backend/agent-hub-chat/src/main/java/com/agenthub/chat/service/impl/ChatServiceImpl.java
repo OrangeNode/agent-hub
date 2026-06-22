@@ -1254,7 +1254,9 @@ public class ChatServiceImpl implements ChatService {
         assistantMessage.setProcessEvents(serializeProcessEvents(processRecorder.events()));
         assistantMessage.setStatus(STATUS_COMPLETED);
         assistantMessage.setCompletedAt(OffsetDateTime.now());
-        updateStreamingAssistantMessage(assistantMessage);
+        if (!updateStreamingAssistantMessage(assistantMessage)) {
+            return;
+        }
         if (!send(emitter, SseEventType.MESSAGE_COMPLETED,
                 new SseEventData.MessageCompleted(assistantMessage.getId(), STATUS_COMPLETED))) {
             failAssistantMessage(assistantMessage, content, reasoningContent, SSE_CONNECTION_CLOSED, processRecorder);
@@ -1308,8 +1310,12 @@ public class ChatServiceImpl implements ChatService {
             String source,
             ProcessEventRecorder processRecorder
     ) {
-        String resolvedMessage = failAssistantMessage(assistantMessage, content, reasoningContent, errorMessage,
+        MessageFailureResult result = failAssistantMessage(assistantMessage, content, reasoningContent, errorMessage,
                 processRecorder);
+        if (!result.updated()) {
+            return;
+        }
+        String resolvedMessage = result.message();
         send(emitter, SseEventType.ERROR, SseEventData.Error.failed(LLM_STREAM_FAILED, resolvedMessage,
                 assistantMessage.getId(), source, isContextLengthError(resolvedMessage)));
     }
@@ -1317,7 +1323,7 @@ public class ChatServiceImpl implements ChatService {
     /**
      * 持久化失败状态时保留已生成的正文和推理内容，方便用户看到部分结果。
      */
-    private String failAssistantMessage(
+    private MessageFailureResult failAssistantMessage(
             ChatMessage assistantMessage,
             StringBuilder content,
             StringBuilder reasoningContent,
@@ -1342,7 +1348,7 @@ public class ChatServiceImpl implements ChatService {
         updateStreamingAssistantMessage(assistantMessage);
     }
 
-    private String failAssistantMessage(
+    private MessageFailureResult failAssistantMessage(
             ChatMessage assistantMessage,
             StringBuilder content,
             StringBuilder reasoningContent,
@@ -1356,8 +1362,7 @@ public class ChatServiceImpl implements ChatService {
         assistantMessage.setStatus(STATUS_FAILED);
         assistantMessage.setErrorMessage(resolvedMessage);
         assistantMessage.setCompletedAt(OffsetDateTime.now());
-        updateStreamingAssistantMessage(assistantMessage);
-        return resolvedMessage;
+        return new MessageFailureResult(resolvedMessage, updateStreamingAssistantMessage(assistantMessage));
     }
 
     private boolean updateStreamingAssistantMessage(ChatMessage assistantMessage) {
@@ -1366,6 +1371,9 @@ public class ChatServiceImpl implements ChatService {
                 .eq(ChatMessage::getUserId, assistantMessage.getUserId())
                 .eq(ChatMessage::getRole, ROLE_ASSISTANT)
                 .eq(ChatMessage::getStatus, STATUS_STREAMING)) > 0;
+    }
+
+    private record MessageFailureResult(String message, boolean updated) {
     }
 
     /**

@@ -76,7 +76,7 @@ class ChatServiceImplTest {
     @Test
     void shouldStreamNewConversationAndPersistMessagesAndEvents() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
@@ -166,7 +166,7 @@ class ChatServiceImplTest {
     @Test
     void shouldInjectAgentSystemPromptAndUseAgentDefaultModelWhenModelNotSelected() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         AgentService agentService = mock(AgentService.class);
@@ -216,7 +216,7 @@ class ChatServiceImplTest {
     @Test
     void shouldInjectSelectedSkillsForDefaultAgentWithProgressiveDisclosure() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         SkillRuntimeService skillRuntimeService = mock(SkillRuntimeService.class);
@@ -267,7 +267,7 @@ class ChatServiceImplTest {
     @Test
     void shouldSyncSelectedSkillZipsBeforeLlmStream() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         SkillRuntimeService skillRuntimeService = mock(SkillRuntimeService.class);
@@ -330,7 +330,7 @@ class ChatServiceImplTest {
     @Test
     void shouldComputeMissingSkillZipSha256FromLegacyStoredZip() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         SkillRuntimeService skillRuntimeService = mock(SkillRuntimeService.class);
@@ -383,7 +383,7 @@ class ChatServiceImplTest {
     @Test
     void shouldFailAssistantMessageAndSkipLlmWhenSkillZipSyncFails() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         SkillRuntimeService skillRuntimeService = mock(SkillRuntimeService.class);
@@ -438,7 +438,7 @@ class ChatServiceImplTest {
     @Test
     void shouldFailAssistantMessageAndSkipSandboxSyncWhenSkillPackageMetadataIsMissing() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         SkillRuntimeService skillRuntimeService = mock(SkillRuntimeService.class);
@@ -490,7 +490,7 @@ class ChatServiceImplTest {
     @Test
     void shouldUseBoundSkillsForBusinessAgentAndIgnoreSelectedSkills() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         AgentService agentService = mock(AgentService.class);
@@ -549,7 +549,7 @@ class ChatServiceImplTest {
     @Test
     void shouldSyncBoundSkillZipsBeforeLlmStreamForBusinessAgent() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         AgentService agentService = mock(AgentService.class);
@@ -612,7 +612,7 @@ class ChatServiceImplTest {
     @Test
     void shouldKeepExistingConversationAgentWhenRequestOmitsAgentKey() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         AgentService agentService = mock(AgentService.class);
@@ -659,7 +659,7 @@ class ChatServiceImplTest {
     @Test
     void shouldRejectDisabledAgentBeforePreparingChatRecords() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AgentService agentService = mock(AgentService.class);
         ChatServiceImpl service = new ChatServiceImpl(
@@ -690,7 +690,7 @@ class ChatServiceImplTest {
     @Test
     void shouldRejectExistingConversationOwnedByOtherUser() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
                 new RecordingLlmClient(List.of(LlmStreamChunk.done())));
@@ -708,7 +708,7 @@ class ChatServiceImplTest {
     @Test
     void shouldRejectBlankPrompt() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
                 new RecordingLlmClient(List.of(LlmStreamChunk.done())));
@@ -725,7 +725,7 @@ class ChatServiceImplTest {
     @Test
     void shouldAllowImageOnlyMessage() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.done()));
@@ -761,7 +761,7 @@ class ChatServiceImplTest {
     @Test
     void shouldValidateConversationOwnershipBeforeListMessages() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
                 new RecordingLlmClient(List.of(LlmStreamChunk.done())));
@@ -778,7 +778,7 @@ class ChatServiceImplTest {
     @Test
     void shouldListMessagesWithAttachments() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
@@ -819,7 +819,7 @@ class ChatServiceImplTest {
     @Test
     void shouldStopStreamingAssistantMessage() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
                 new RecordingLlmClient(List.of(LlmStreamChunk.done())));
@@ -846,7 +846,7 @@ class ChatServiceImplTest {
     @Test
     void shouldIgnoreStoppingCompletedAssistantMessage() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
                 new RecordingLlmClient(List.of(LlmStreamChunk.done())));
@@ -863,7 +863,7 @@ class ChatServiceImplTest {
     @Test
     void shouldNotOverwriteTerminalMessageWhenStreamingCompletionUpdateMisses() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
@@ -886,12 +886,42 @@ class ChatServiceImplTest {
         assertThat(messageCaptor.getValue().getUserId()).isEqualTo(7L);
         assertThat(messageCaptor.getValue().getStatus()).isEqualTo("COMPLETED");
         assertStreamingAssistantUpdateWrapper(wrapperCaptor.getValue(), 2L, 7L);
+        assertThat(sender.eventTypes()).doesNotContain(SseEventType.MESSAGE_COMPLETED);
+        assertThat(sender.eventTypes()).contains(SseEventType.DONE);
+    }
+
+    @Test
+    void shouldNotSendErrorWhenStreamingFailureUpdateMisses() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.error("模型返回错误")
+        ));
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, sender, llmClient);
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(messageMapper.update(any(ChatMessage.class), any())).thenReturn(0);
+
+        service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
+
+        ArgumentCaptor<ChatMessage> messageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        ArgumentCaptor<Wrapper<ChatMessage>> wrapperCaptor = wrapperCaptor();
+        verify(messageMapper).update(messageCaptor.capture(), wrapperCaptor.capture());
+        verify(messageMapper, never()).updateById(any(ChatMessage.class));
+        assertThat(messageCaptor.getValue().getStatus()).isEqualTo("FAILED");
+        assertThat(messageCaptor.getValue().getErrorMessage()).isEqualTo("模型返回错误");
+        assertStreamingAssistantUpdateWrapper(wrapperCaptor.getValue(), 2L, 7L);
+        assertThat(sender.eventTypes()).doesNotContain(SseEventType.ERROR);
+        assertThat(sender.eventTypes()).contains(SseEventType.DONE);
     }
 
     @Test
     void shouldRejectStoppingOtherUserMessageAsNotFound() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
                 new RecordingLlmClient(List.of(LlmStreamChunk.done())));
@@ -910,7 +940,7 @@ class ChatServiceImplTest {
     @Test
     void shouldRejectStoppingUserMessage() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
                 new RecordingLlmClient(List.of(LlmStreamChunk.done())));
@@ -929,7 +959,7 @@ class ChatServiceImplTest {
     @Test
     void shouldMarkAssistantMessageFailedAndSendErrorAndDoneWhenLlmThrows() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         LlmClient throwingClient = (request, chunkConsumer) -> {
@@ -966,7 +996,7 @@ class ChatServiceImplTest {
     @Test
     void shouldKeepAssistantMessageFailedWhenLlmErrorChunkIsFollowedByDone() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, sender,
@@ -994,7 +1024,7 @@ class ChatServiceImplTest {
     @Test
     void shouldKeepAnswerContentWhenLlmThrowsAfterAnswerDelta() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         LlmClient throwingClient = (request, chunkConsumer) -> {
@@ -1030,7 +1060,7 @@ class ChatServiceImplTest {
     @Test
     void shouldStopAssistantMessageAndSkipToolExecutionWhenClientDisconnectsBeforeToolCallEvent() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         RecordingSseEventSender sender = new RecordingSseEventSender(SseEventType.TOOL_CALL);
@@ -1088,7 +1118,7 @@ class ChatServiceImplTest {
     @Test
     void shouldRetryOnceWithCompactMessagesWhenContextLengthErrorOccursBeforeDelta() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         RetryingLlmClient llmClient = new RetryingLlmClient(List.of(
@@ -1116,7 +1146,7 @@ class ChatServiceImplTest {
     @Test
     void shouldKeepReasoningAndAnswerContentWhenLlmReturnsErrorChunk() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, sender,
@@ -1151,7 +1181,7 @@ class ChatServiceImplTest {
     @Test
     void shouldReturnEmitterBeforeExecutingLlmTask() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         ManualExecutor executor = new ManualExecutor();
@@ -1199,7 +1229,7 @@ class ChatServiceImplTest {
     @Test
     void shouldNotRequestReasoningWhenThinkingDisabled() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.done()));
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
@@ -1216,7 +1246,7 @@ class ChatServiceImplTest {
     @Test
     void shouldDiscardReasoningChunksWhenThinkingDisabled() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
@@ -1249,7 +1279,7 @@ class ChatServiceImplTest {
     @Test
     void shouldUseToolRegistryForToolDefinitionsAndExecution() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
@@ -1343,7 +1373,7 @@ class ChatServiceImplTest {
     @Test
     void shouldRecordFailedToolResultWhenRegistryExecutionThrows() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
@@ -1410,7 +1440,7 @@ class ChatServiceImplTest {
     @Test
     void shouldDefaultToolOutputStreamAndContentWhenRegistryEmitsNullOutput() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
@@ -1467,7 +1497,7 @@ class ChatServiceImplTest {
     @Test
     void shouldAllowOneHundredSandboxToolCallsBeforeCompleting() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
@@ -1512,7 +1542,7 @@ class ChatServiceImplTest {
     @Test
     void shouldMarkToolCallLimitErrorSourceAsTool() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
@@ -1556,7 +1586,7 @@ class ChatServiceImplTest {
     @Test
     void shouldIncludeSandboxPathRulesInSystemPromptWhenToolsAvailable() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
@@ -1604,7 +1634,7 @@ class ChatServiceImplTest {
     @Test
     void shouldRenameOwnedConversation() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
                 new RecordingLlmClient(List.of(LlmStreamChunk.done())));
@@ -1623,7 +1653,7 @@ class ChatServiceImplTest {
     @Test
     void shouldRejectImagesWhenModelDoesNotSupportImageInput() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
@@ -1650,7 +1680,7 @@ class ChatServiceImplTest {
     @Test
     void shouldBindReadyAttachmentsToUserMessage() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
@@ -1669,7 +1699,7 @@ class ChatServiceImplTest {
     @Test
     void shouldSendImagePartsToLlmClient() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.done()));
@@ -1706,7 +1736,7 @@ class ChatServiceImplTest {
     @Test
     void shouldCommitPreparedRecordsBeforeSendingSseEvents() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         List<String> events = new ArrayList<>();
         RecordingSseEventSender sender = new RecordingSseEventSender(events);
@@ -1741,7 +1771,7 @@ class ChatServiceImplTest {
     @Test
     void shouldBuildSummaryContextOutsidePreparationTransaction() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         ChatConversationSummaryMapper summaryMapper = mock(ChatConversationSummaryMapper.class);
@@ -1784,7 +1814,7 @@ class ChatServiceImplTest {
     @Test
     void shouldNotStartLlmOrSaveAssistantWhenBindingAttachmentFails() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.done()));
@@ -1813,7 +1843,7 @@ class ChatServiceImplTest {
     @Test
     void shouldResolveRecentReusableImagesWithoutLatestMessageLookup() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
-        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AttachmentService attachmentService = mock(AttachmentService.class);
         ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
@@ -1928,6 +1958,12 @@ class ChatServiceImplTest {
                 .contains("status");
         assertThat(updateWrapper.getParamNameValuePairs().values())
                 .contains(messageId, userId, "ASSISTANT", "STREAMING");
+    }
+
+    private ChatMessageMapper messageMapper() {
+        ChatMessageMapper mapper = mock(ChatMessageMapper.class);
+        when(mapper.update(any(ChatMessage.class), any())).thenReturn(1);
+        return mapper;
     }
 
     private TransactionTemplate transactionTemplate() {

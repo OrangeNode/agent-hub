@@ -3,6 +3,7 @@ package com.agenthub.tool.mcp.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -23,10 +24,12 @@ import com.agenthub.tool.mcp.mapper.McpServerMapper;
 import com.agenthub.tool.mcp.mapper.McpToolCallLogMapper;
 import com.agenthub.tool.mcp.mapper.McpToolMapper;
 import com.agenthub.tool.mcp.service.impl.McpServerServiceImpl;
+import java.io.Serializable;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 
 class McpServerServiceImplTest {
 
@@ -164,6 +167,22 @@ class McpServerServiceImplTest {
         assertThat(result.message()).isEqualTo("认证失败");
         assertThat(serverCaptor.getValue().getLastSyncStatus()).isEqualTo("FAILED");
         assertThat(serverCaptor.getValue().getLastSyncMessage()).isEqualTo("认证失败");
+    }
+
+    @Test
+    void shouldDeleteCallLogsAndToolsBeforeServer() {
+        McpServerMapper serverMapper = mock(McpServerMapper.class);
+        McpToolMapper toolMapper = mock(McpToolMapper.class);
+        McpToolCallLogMapper callLogMapper = mock(McpToolCallLogMapper.class);
+        McpServerServiceImpl service = service(serverMapper, toolMapper, callLogMapper, mock(McpClient.class));
+        when(serverMapper.selectById(1L)).thenReturn(server(1L));
+
+        service.delete(1L);
+
+        InOrder inOrder = inOrder(callLogMapper, toolMapper, serverMapper);
+        inOrder.verify(callLogMapper).delete(any());
+        inOrder.verify(toolMapper).delete(any());
+        inOrder.verify(serverMapper).deleteById((Serializable) 1L);
     }
 
     private McpServerServiceImpl service(McpServerMapper serverMapper) {

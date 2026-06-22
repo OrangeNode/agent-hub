@@ -135,6 +135,10 @@ public class McpServerServiceImpl implements McpServerService {
     @Transactional
     public void delete(Long serverId) {
         requireServer(serverId);
+        callLogMapper.delete(new LambdaQueryWrapper<McpToolCallLog>()
+                .eq(McpToolCallLog::getServerId, serverId));
+        toolMapper.delete(new LambdaQueryWrapper<McpTool>()
+                .eq(McpTool::getServerId, serverId));
         serverMapper.deleteById((Serializable) serverId);
     }
 

@@ -268,8 +268,11 @@ stderr
   "messageId": 456,
   "fatal": true,
   "recoverable": false,
+  "retryable": false,
   "source": "LLM",
-  "status": "FAILED"
+  "status": "FAILED",
+  "traceId": null,
+  "details": {}
 }
 ```
 
@@ -281,13 +284,16 @@ stderr
 | `message` | string | 是 | 可展示的中文错误消息。 |
 | `messageId` | number | 否 | 关联助手消息 ID。 |
 | `fatal` | boolean | 是 | 是否导致本轮消息终止。v1 流内错误通常为 `true`。 |
-| `recoverable` | boolean | 是 | 前端是否可提示用户重试或调整输入。 |
+| `recoverable` | boolean | 是 | 兼容字段，语义同 `retryable`，新客户端优先使用 `retryable`。 |
+| `retryable` | boolean | 是 | 前端是否可提示用户重试或调整输入。 |
 | `source` | string | 是 | 错误来源。 |
 | `status` | string | 是 | 对应消息最终状态，通常为 `FAILED`。 |
+| `traceId` | string/null | 否 | 服务端链路追踪 ID；没有可填 `null`。 |
+| `details` | object | 否 | 结构化诊断信息，默认 `{}`，不得包含敏感凭据。 |
 
 错误码建议：
 
-| code | source | recoverable | 说明 |
+| code | source | retryable | 说明 |
 | --- | --- | --- | --- |
 | `LLM_STREAM_FAILED` | `LLM` | false | 模型流失败或模型返回错误。 |
 | `TOOL_LOOP_FAILED` | `TOOL` | false | 工具循环出现不可恢复失败。 |
@@ -296,7 +302,7 @@ stderr
 | `GENERATION_STOPPED` | `CLIENT` | true | 用户主动停止。主动停止不要求发送 `error`。 |
 | `PROTOCOL_UNSUPPORTED` | `SERVER` | false | 协议版本不兼容。 |
 
-v1 首轮实现可兼容现有 `Error(code, message)` 结构，但后续应补齐 `messageId`、`fatal`、`recoverable`、`source` 和 `status`。
+v1 首轮实现可兼容现有 `Error(code, message)` 结构，但标准错误事件应补齐 `messageId`、`fatal`、`recoverable`、`retryable`、`source`、`status`、`traceId` 和 `details`。
 
 ## 停止生成
 

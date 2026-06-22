@@ -461,6 +461,24 @@ public class ChatServiceImpl implements ChatService {
     }
 
     @Override
+    public void stopGeneration(Long userId, Long messageId) {
+        ChatMessage message = messageMapper.selectById(messageId);
+        if (message == null || !Objects.equals(message.getUserId(), userId)) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "消息不存在");
+        }
+        if (!ROLE_ASSISTANT.equals(message.getRole())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "只能中止助手生成消息");
+        }
+        if (!STATUS_STREAMING.equals(message.getStatus())) {
+            return;
+        }
+        message.setStatus(STATUS_STOPPED);
+        message.setErrorMessage("用户已中止生成");
+        message.setCompletedAt(OffsetDateTime.now());
+        messageMapper.updateById(message);
+    }
+
+    @Override
     public List<ChatArtifactItem> listArtifacts(Long userId, Long conversationId) {
         requireActiveConversation(userId, conversationId);
         if (sandboxToolService == null) {
@@ -1612,6 +1630,7 @@ public class ChatServiceImpl implements ChatService {
                 message.getContent(),
                 message.getReasoningContent(),
                 message.getStatus(),
+                message.getErrorMessage(),
                 attachments,
                 deserializeProcessEvents(message.getProcessEvents())
         );

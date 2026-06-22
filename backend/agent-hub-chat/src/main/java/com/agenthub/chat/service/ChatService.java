@@ -52,6 +52,8 @@ public interface ChatService {
      */
     List<MessageItem> listMessages(Long userId, Long conversationId);
 
+    void stopGeneration(Long userId, Long messageId);
+
     List<ChatArtifactItem> listArtifacts(Long userId, Long conversationId);
 
     ChatArtifactContent previewArtifact(Long userId, Long conversationId, Long artifactId, int maxBytes);

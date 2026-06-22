@@ -82,6 +82,13 @@ public class ChatController {
         return ApiResponse.success(chatService.listMessages(loginUser.userId(), conversationId));
     }
 
+    @PostMapping("/messages/{messageId}/stop")
+    public ApiResponse<Void> stopGeneration(Authentication authentication, @PathVariable Long messageId) {
+        LoginUser loginUser = (LoginUser) authentication.getPrincipal();
+        chatService.stopGeneration(loginUser.userId(), messageId);
+        return ApiResponse.success();
+    }
+
     @GetMapping("/conversations/{conversationId}/artifacts")
     public ApiResponse<List<ChatArtifactItem>> listArtifacts(
             Authentication authentication,

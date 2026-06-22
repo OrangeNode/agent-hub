@@ -781,6 +781,8 @@ class ChatServiceImplTest {
         when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
         ChatMessage userMessage = message(1L, 100L, 7L, "USER", "看图");
         ChatMessage assistantMessage = message(2L, 100L, 7L, "ASSISTANT", "这是一只猫");
+        assistantMessage.setStatus("FAILED");
+        assistantMessage.setErrorMessage("模型调用失败");
         assistantMessage.setProcessEvents("""
                 [{"type":"tool","tool":{"toolCallId":"call_1","name":"exec","status":"completed","stdout":"ok","stderr":"","result":"stdout:\\nok\\nstderr:\\n"}}]
                 """);
@@ -802,9 +804,86 @@ class ChatServiceImplTest {
         assertThat(messages).hasSize(2);
         assertThat(messages.get(0).attachments()).containsExactly(attachment);
         assertThat(messages.get(1).attachments()).isEmpty();
+        assertThat(messages.get(1).status()).isEqualTo("FAILED");
+        assertThat(messages.get(1).errorMessage()).isEqualTo("模型调用失败");
         assertThat(messages.get(1).processEvents()).hasSize(1);
         assertThat(messages.get(1).processEvents().getFirst().tool().name()).isEqualTo("exec");
         assertThat(messages.get(1).processEvents().getFirst().tool().stdout()).isEqualTo("ok");
+    }
+
+    @Test
+    void shouldStopStreamingAssistantMessage() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
+                new RecordingLlmClient(List.of(LlmStreamChunk.done())));
+        ChatMessage message = message(2L, 100L, 7L, "ASSISTANT", "部分回答");
+        message.setStatus("STREAMING");
+        when(messageMapper.selectById(2L)).thenReturn(message);
+
+        service.stopGeneration(7L, 2L);
+
+        ArgumentCaptor<ChatMessage> messageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper).updateById(messageCaptor.capture());
+        ChatMessage stoppedMessage = messageCaptor.getValue();
+        assertThat(stoppedMessage.getStatus()).isEqualTo("STOPPED");
+        assertThat(stoppedMessage.getErrorMessage()).isEqualTo("用户已中止生成");
+        assertThat(stoppedMessage.getCompletedAt()).isNotNull();
+    }
+
+    @Test
+    void shouldIgnoreStoppingCompletedAssistantMessage() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
+                new RecordingLlmClient(List.of(LlmStreamChunk.done())));
+        ChatMessage message = message(2L, 100L, 7L, "ASSISTANT", "完整回答");
+        message.setStatus("COMPLETED");
+        when(messageMapper.selectById(2L)).thenReturn(message);
+
+        service.stopGeneration(7L, 2L);
+
+        verify(messageMapper, never()).updateById(any(ChatMessage.class));
+    }
+
+    @Test
+    void shouldRejectStoppingOtherUserMessageAsNotFound() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
+                new RecordingLlmClient(List.of(LlmStreamChunk.done())));
+        ChatMessage message = message(2L, 100L, 9L, "ASSISTANT", "其他用户回答");
+        message.setStatus("STREAMING");
+        when(messageMapper.selectById(2L)).thenReturn(message);
+
+        assertThatThrownBy(() -> service.stopGeneration(7L, 2L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("消息不存在")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.NOT_FOUND);
+        verify(messageMapper, never()).updateById(any(ChatMessage.class));
+    }
+
+    @Test
+    void shouldRejectStoppingUserMessage() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);
+        AiModelService modelService = mock(AiModelService.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
+                new RecordingLlmClient(List.of(LlmStreamChunk.done())));
+        ChatMessage message = message(1L, 100L, 7L, "USER", "用户问题");
+        message.setStatus("COMPLETED");
+        when(messageMapper.selectById(1L)).thenReturn(message);
+
+        assertThatThrownBy(() -> service.stopGeneration(7L, 1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("只能中止助手生成消息")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(messageMapper, never()).updateById(any(ChatMessage.class));
     }
 
     @Test

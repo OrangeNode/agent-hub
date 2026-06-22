@@ -10,6 +10,7 @@ public record MessageItem(
         String content,
         String reasoningContent,
         String status,
+        String errorMessage,
         List<AttachmentItem> attachments,
         List<MessageProcessEvent> processEvents
 ) {

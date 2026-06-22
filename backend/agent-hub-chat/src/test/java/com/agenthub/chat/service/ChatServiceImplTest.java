@@ -1421,6 +1421,7 @@ class ChatServiceImplTest {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
         ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
+        AgentService agentService = mock(AgentService.class);
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         RetryingLlmClient llmClient = new RetryingLlmClient(List.of(
@@ -1439,7 +1440,7 @@ class ChatServiceImplTest {
                 transactionTemplate(),
                 sender,
                 mock(AttachmentService.class),
-                null,
+                agentService,
                 contextBuilder(messageMapper, mock(AttachmentService.class), llmClient),
                 protocolType -> llmClient,
                 Runnable::run,
@@ -1459,6 +1460,13 @@ class ChatServiceImplTest {
         when(toolRegistry.listTools(any(ToolExecutionContext.class))).thenReturn(List.of(githubSearchTool));
         when(toolRegistry.execute(any(ToolExecutionRequest.class), any(ToolExecutionContext.class)))
                 .thenReturn(ToolExecutionResult.completed("repo: agent-hub"));
+        when(agentService.requireEnabledRuntimeConfig("official-writing")).thenReturn(new AgentRuntimeConfig(
+                1L,
+                "official-writing",
+                "公文写作 Agent",
+                "你是一个公文写作助手。",
+                10L
+        ));
 
         service.stream(7L, 100L, 10L, null, "运行脚本", false, List.of(), List.of());
 
@@ -1476,6 +1484,7 @@ class ChatServiceImplTest {
         assertThat(listContextCaptor.getValue().conversationId()).isEqualTo(100L);
         assertThat(listContextCaptor.getValue().assistantMessageId()).isEqualTo(2L);
         assertThat(listContextCaptor.getValue().agentKey()).isEqualTo("official-writing");
+        assertThat(listContextCaptor.getValue().agentId()).isEqualTo(1L);
         ArgumentCaptor<ToolExecutionRequest> requestCaptor = ArgumentCaptor.forClass(ToolExecutionRequest.class);
         ArgumentCaptor<ToolExecutionContext> contextCaptor = ArgumentCaptor.forClass(ToolExecutionContext.class);
         verify(toolRegistry).execute(requestCaptor.capture(), contextCaptor.capture());
@@ -1488,6 +1497,7 @@ class ChatServiceImplTest {
         assertThat(contextCaptor.getValue().conversationId()).isEqualTo(100L);
         assertThat(contextCaptor.getValue().assistantMessageId()).isEqualTo(2L);
         assertThat(contextCaptor.getValue().agentKey()).isEqualTo("official-writing");
+        assertThat(contextCaptor.getValue().agentId()).isEqualTo(1L);
         assertThat(sender.eventTypes()).containsExactly(
                 SseEventType.META,
                 SseEventType.CONVERSATION,
@@ -1766,6 +1776,9 @@ class ChatServiceImplTest {
                 "写一个 python 快速排序算法，输入数据为 input.txt，输出结果为 output.txt，最后把代码和 input、output 给我下载",
                 false, List.of(), List.of());
 
+        ArgumentCaptor<ToolExecutionContext> contextCaptor = ArgumentCaptor.forClass(ToolExecutionContext.class);
+        verify(toolRegistry).listTools(contextCaptor.capture());
+        assertThat(contextCaptor.getValue().agentId()).isNull();
         assertThat(llmClient.lastRequest).isNotNull();
         assertThat(llmClient.lastRequest.messages().getFirst().role()).isEqualTo("system");
         assertThat(llmClient.lastRequest.messages().getFirst().content())

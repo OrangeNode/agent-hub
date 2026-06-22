@@ -100,12 +100,53 @@
         </n-space>
       </template>
     </n-modal>
+
+    <n-modal
+      v-model:show="showToolModal"
+      preset="card"
+      :title="toolModalAgent ? `${toolModalAgent.name} 绑定工具` : '绑定工具'"
+      class="form-modal"
+      :style="{ width: 'min(960px, calc(100vw - 32px))' }"
+      @update:show="handleToolModalShowChange"
+    >
+      <div class="tool-modal-body">
+        <n-input
+          v-model:value="toolKeyword"
+          clearable
+          placeholder="搜索工具名、展示名、描述或 MCP 服务名"
+        />
+        <n-data-table
+          v-model:checked-row-keys="selectedToolNames"
+          :columns="toolColumns"
+          :data="filteredToolOptions"
+          :loading="toolLoading"
+          :pagination="{ pageSize: 8 }"
+          :row-key="toolRowKey"
+          :bordered="false"
+          :single-line="false"
+          :scroll-x="860"
+        />
+      </div>
+      <template #footer>
+        <n-space justify="end">
+          <n-button @click="closeToolModal">取消</n-button>
+          <n-button
+            type="primary"
+            :loading="toolSaving"
+            :disabled="toolLoading || toolLoadFailed"
+            @click="submitToolBindings"
+          >
+            保存
+          </n-button>
+        </n-space>
+      </template>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue'
-import type { DataTableColumns, SelectOption } from 'naive-ui'
+import type { DataTableColumns, DataTableRowKey, SelectOption } from 'naive-ui'
 import {
   NButton,
   NCard,
@@ -122,10 +163,18 @@ import {
   NTag,
   useMessage
 } from 'naive-ui'
-import { createAgent, deleteAgent, fetchAgents, updateAgent } from '../api/agent'
+import {
+  createAgent,
+  deleteAgent,
+  fetchAgents,
+  fetchAgentToolBindings,
+  fetchAgentToolOptions,
+  updateAgent,
+  updateAgentToolBindings
+} from '../api/agent'
 import { fetchAiModels } from '../api/ai'
 import { fetchAgentSkillBindings, fetchAvailableSkills, updateAgentSkillBindings } from '../api/skill'
-import type { AgentFormPayload, AgentRecord } from '../types/agent'
+import type { AgentFormPayload, AgentRecord, AgentToolOptionRecord } from '../types/agent'
 import type { AiModelRecord } from '../types/ai'
 import type { SkillOptionRecord } from '../types/skill'
 
@@ -143,6 +192,15 @@ const showSkillModal = ref(false)
 const skillLoading = ref(false)
 const skillSaving = ref(false)
 const selectedSkillIds = ref<number[]>([])
+const showToolModal = ref(false)
+const toolModalAgent = ref<AgentRecord | null>(null)
+const toolLoading = ref(false)
+const toolLoadFailed = ref(false)
+const toolSaving = ref(false)
+const toolKeyword = ref('')
+const toolOptions = ref<AgentToolOptionRecord[]>([])
+const selectedToolNames = ref<DataTableRowKey[]>([])
+const toolRequestVersion = ref(0)
 
 const statusOptions: SelectOption[] = [
   { label: '启用', value: 'true' },
@@ -186,6 +244,66 @@ const filteredAgents = computed(() =>
   })
 )
 
+const filteredToolOptions = computed(() => {
+  const keywordText = toolKeyword.value.trim().toLowerCase()
+  if (!keywordText) {
+    return toolOptions.value
+  }
+
+  return toolOptions.value.filter((item) =>
+    [item.toolName, item.displayName, item.description, item.serverName, item.serverKey].some((value) =>
+      (value ?? '').toLowerCase().includes(keywordText)
+    )
+  )
+})
+
+const toolColumns = computed<DataTableColumns<AgentToolOptionRecord>>(() => [
+  {
+    type: 'selection',
+    disabled: (row) => !isToolSelectable(row)
+  },
+  {
+    title: '工具名 / 展示名',
+    key: 'toolName',
+    minWidth: 240,
+    ellipsis: { tooltip: true },
+    render: (row) =>
+      h('div', { class: 'tool-name-cell' }, [
+        h('div', { class: 'tool-display-name' }, row.displayName || row.toolName),
+        h('div', { class: 'tool-raw-name' }, row.toolName)
+      ])
+  },
+  {
+    title: 'MCP 服务名',
+    key: 'serverName',
+    minWidth: 160,
+    render: (row) => row.serverName || row.serverKey || '-'
+  },
+  {
+    title: '描述',
+    key: 'description',
+    minWidth: 260,
+    ellipsis: { tooltip: true },
+    render: (row) => row.description || '暂无描述'
+  },
+  {
+    title: '状态',
+    key: 'status',
+    width: 190,
+    render: (row) =>
+      h(NSpace, { size: 6 }, {
+        default: () => [
+          h(NTag, { type: row.serverEnabled ? 'success' : 'warning', bordered: false }, {
+            default: () => (row.serverEnabled ? '服务启用' : '服务停用')
+          }),
+          h(NTag, { type: row.toolEnabled ? 'success' : 'warning', bordered: false }, {
+            default: () => (row.toolEnabled ? '工具启用' : '工具停用')
+          })
+        ]
+      })
+  }
+])
+
 const columns: DataTableColumns<AgentRecord> = [
   { title: '名称', key: 'name', width: 180 },
   { title: '标识', key: 'agentKey', width: 180, ellipsis: { tooltip: true } },
@@ -209,12 +327,13 @@ const columns: DataTableColumns<AgentRecord> = [
   {
     title: '操作',
     key: 'actions',
-    width: 300,
+    width: 360,
     render: (row) =>
       h(NSpace, { wrap: false }, {
         default: () => [
           h(NButton, { size: 'small', tertiary: true, onClick: () => openEdit(row) }, { default: () => '编辑' }),
           h(NButton, { size: 'small', tertiary: true, onClick: () => openSkills(row) }, { default: () => 'Skill' }),
+          h(NButton, { size: 'small', tertiary: true, onClick: () => openTools(row) }, { default: () => '工具' }),
           h(
             NSwitch,
             {
@@ -300,6 +419,83 @@ async function openSkills(agent: AgentRecord) {
   }
 }
 
+function toolRowKey(row: AgentToolOptionRecord) {
+  return row.toolName
+}
+
+function isToolSelectable(tool: AgentToolOptionRecord) {
+  return Boolean(tool.serverEnabled && tool.toolEnabled)
+}
+
+function bindingSortValue(binding: { sort?: number | null; sortOrder?: number | null }) {
+  return binding.sortOrder ?? binding.sort ?? 0
+}
+
+function invalidateToolRequest() {
+  toolRequestVersion.value += 1
+}
+
+function isCurrentToolRequest(requestVersion: number, agentId: number) {
+  return showToolModal.value && toolRequestVersion.value === requestVersion && toolModalAgent.value?.agentId === agentId
+}
+
+function closeToolModal() {
+  invalidateToolRequest()
+  showToolModal.value = false
+  toolLoading.value = false
+  toolSaving.value = false
+}
+
+function handleToolModalShowChange(show: boolean) {
+  if (!show) {
+    invalidateToolRequest()
+    toolLoading.value = false
+    toolSaving.value = false
+  }
+}
+
+async function openTools(agent: AgentRecord) {
+  const requestVersion = ++toolRequestVersion.value
+  toolModalAgent.value = agent
+  showToolModal.value = true
+  toolLoading.value = true
+  toolLoadFailed.value = false
+  toolSaving.value = false
+  toolKeyword.value = ''
+  toolOptions.value = []
+  selectedToolNames.value = []
+  try {
+    const [optionData, bindingData] = await Promise.all([
+      fetchAgentToolOptions(agent.agentId),
+      fetchAgentToolBindings(agent.agentId)
+    ])
+    if (!isCurrentToolRequest(requestVersion, agent.agentId)) {
+      return
+    }
+
+    toolOptions.value = optionData
+
+    const selectableToolNames = new Set(optionData.filter(isToolSelectable).map((item) => item.toolName))
+    selectedToolNames.value = bindingData
+      .filter((item) => item.enabled)
+      .slice()
+      .sort((a, b) => bindingSortValue(a) - bindingSortValue(b))
+      .map((item) => item.toolName)
+      .filter((toolName) => selectableToolNames.has(toolName))
+  } catch (error) {
+    if (!isCurrentToolRequest(requestVersion, agent.agentId)) {
+      return
+    }
+
+    toolLoadFailed.value = true
+    message.error(error instanceof Error ? error.message : '加载 Agent 工具绑定失败')
+  } finally {
+    if (isCurrentToolRequest(requestVersion, agent.agentId)) {
+      toolLoading.value = false
+    }
+  }
+}
+
 async function submitSkillBindings() {
   if (!skillModalAgent.value) {
     return
@@ -313,6 +509,41 @@ async function submitSkillBindings() {
     message.error(error instanceof Error ? error.message : '保存 Agent Skill 绑定失败')
   } finally {
     skillSaving.value = false
+  }
+}
+
+async function submitToolBindings() {
+  if (!toolModalAgent.value || toolLoading.value || toolLoadFailed.value) {
+    return
+  }
+
+  const agentId = toolModalAgent.value.agentId
+  const saveRequestVersion = toolRequestVersion.value
+  toolSaving.value = true
+  try {
+    const selectedToolNameSet = new Set(selectedToolNames.value.map(String))
+    const tools = toolOptions.value
+      .filter((item) => selectedToolNameSet.has(item.toolName) && isToolSelectable(item))
+      .map((item, index) => ({
+        toolName: item.toolName,
+        providerType: item.providerType,
+        providerRefId: item.providerRefId,
+        sort: index
+      }))
+
+    await updateAgentToolBindings(agentId, tools)
+    if (isCurrentToolRequest(saveRequestVersion, agentId)) {
+      message.success('Agent 工具绑定已保存')
+      closeToolModal()
+    }
+  } catch (error) {
+    if (isCurrentToolRequest(saveRequestVersion, agentId)) {
+      message.error(error instanceof Error ? error.message : '保存 Agent 工具绑定失败')
+    }
+  } finally {
+    if (isCurrentToolRequest(saveRequestVersion, agentId)) {
+      toolSaving.value = false
+    }
   }
 }
 
@@ -403,6 +634,34 @@ onMounted(() => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0 16px;
+}
+
+.tool-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tool-name-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tool-display-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-raw-name {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 :deep(.n-card) {

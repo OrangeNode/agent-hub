@@ -32,3 +32,45 @@ export interface AgentFormPayload {
   enabled: boolean
   sort: number
 }
+
+export interface AgentToolBindingRecord {
+  bindingId: number
+  agentId: number
+  toolName: string
+  providerType: string
+  providerRefId: number
+  serverKey?: string | null
+  serverName?: string | null
+  toolDisplayName?: string | null
+  toolDescription?: string | null
+  displayName?: string | null
+  description?: string | null
+  serverEnabled: boolean
+  toolEnabled: boolean
+  enabled: boolean
+  sort?: number | null
+  sortOrder?: number | null
+}
+
+export interface AgentToolOptionRecord {
+  toolName: string
+  providerType: string
+  providerRefId: number
+  serverKey?: string | null
+  serverName?: string | null
+  remoteToolName?: string | null
+  exposedToolName?: string | null
+  displayName?: string | null
+  description?: string | null
+  serverEnabled: boolean
+  toolEnabled: boolean
+  enabled?: boolean
+  sortOrder?: number | null
+}
+
+export interface AgentToolBindingPayload {
+  toolName: string
+  providerType: string
+  providerRefId: number
+  sort: number
+}

@@ -314,6 +314,7 @@ public class ChatServiceImpl implements ChatService {
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT);
         Long assistantMessageId = preparedChat.assistantMessage().getId();
         String streamId = "chatmsg_" + assistantMessageId + "_" + System.currentTimeMillis();
+        Long resolvedAgentId = agentRuntime == null ? null : agentRuntime.agentId();
         boolean connected = send(emitter, SseEventType.META,
                 new SseEventData.Meta("chat.sse.v1", preparedChat.conversation().getId(), assistantMessageId,
                         streamId, false))
@@ -324,8 +325,8 @@ public class ChatServiceImpl implements ChatService {
         if (connected) {
             streamExecutor.execute(() -> streamLlm(emitter, preparedChat.conversation().getUserId(),
                     preparedChat.conversation().getId(), runtimeConfig, preparedChat.context().messages(),
-                    preparedChat.assistantMessage(), preparedChat.conversation().getAgentKey(), thinkingEnabled,
-                    preparedChat.skillContext()));
+                    preparedChat.assistantMessage(), preparedChat.conversation().getAgentKey(), resolvedAgentId,
+                    thinkingEnabled, preparedChat.skillContext()));
         } else {
             // 初始事件发送失败说明客户端已断开，直接标记助手消息停止。
             stopAssistantMessage(preparedChat.assistantMessage(), new StringBuilder(), new StringBuilder(),
@@ -809,6 +810,7 @@ public class ChatServiceImpl implements ChatService {
             List<LlmMessage> messages,
             ChatMessage assistantMessage,
             String agentKey,
+            Long agentId,
             boolean thinkingEnabled,
             SkillRuntimeContext skillContext
     ) {
@@ -823,6 +825,7 @@ public class ChatServiceImpl implements ChatService {
                 conversationId,
                 assistantMessage.getId(),
                 agentKey,
+                agentId,
                 skillIds,
                 (toolCallId, toolName, stream, output) -> {
                     String safeStream = hasText(stream) ? stream : "stdout";

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { assistantDisplayContent, findStoppableAssistantMessage, resolveSendButtonDisabled } from '../src/views/ChatView.vue'
+import {
+  applyStreamAssistantMessageId,
+  assistantDisplayContent,
+  findStoppableAssistantMessage,
+  resolveSendButtonDisabled
+} from '../src/views/ChatView.vue'
 import chatApiSource from '../src/api/chat.ts?raw'
 import chatViewSource from '../src/views/ChatView.vue?raw'
 
@@ -98,6 +103,25 @@ describe('聊天生成中止', () => {
     expect(closeAfterRequestIndex).toBeGreaterThan(requestStopIndex)
     expect(localStopIndex).toBeGreaterThan(closeAfterRequestIndex)
     expect(localCloseIndex).toBeGreaterThan(localStopIndex)
+  })
+
+  it('meta 事件应提前把临时助手消息替换为真实消息 ID', () => {
+    const messages = [
+      { id: -2, role: 'user' },
+      { id: -1, role: 'assistant' }
+    ]
+
+    const currentMessageId = applyStreamAssistantMessageId(messages, -1, 200)
+
+    expect(currentMessageId).toBe(200)
+    expect(messages[1].id).toBe(200)
+  })
+
+  it('流式 meta 和 message 事件应复用同一消息 ID 同步逻辑', () => {
+    expect(normalizedChatViewSource).toContain('const applyStreamAssistantMessageIdFromEvent = (messageId?: number | null) => {')
+    expect(normalizedChatViewSource).toContain('onMeta: (data) => {')
+    expect(normalizedChatViewSource).toContain('applyStreamAssistantMessageIdFromEvent(data.messageId)')
+    expect(normalizedChatViewSource).toContain('onMessage: (data) => {')
   })
 
   it('按钮禁用状态不应包含流式生成状态', () => {

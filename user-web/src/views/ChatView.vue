@@ -840,6 +840,10 @@ export interface StoppableAssistantMessageLike {
   status?: string | null
 }
 
+export interface StreamAssistantMessageLike {
+  id: number
+}
+
 export function findStoppableAssistantMessage<T extends StoppableAssistantMessageLike>(messages: T[]) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const messageItem = messages[index]
@@ -849,6 +853,24 @@ export function findStoppableAssistantMessage<T extends StoppableAssistantMessag
   }
 
   return undefined
+}
+
+export function applyStreamAssistantMessageId<T extends StreamAssistantMessageLike>(
+  messages: T[],
+  currentMessageId: number,
+  streamMessageId?: number | null
+) {
+  if (!streamMessageId || streamMessageId <= 0) {
+    return currentMessageId
+  }
+
+  const assistantMessage = messages.find((messageItem) => messageItem.id === currentMessageId)
+  if (!assistantMessage) {
+    return currentMessageId
+  }
+
+  assistantMessage.id = streamMessageId
+  return streamMessageId
 }
 
 export interface NewConversationState {
@@ -2205,6 +2227,10 @@ function handleSend() {
   clearSelectedReuseAttachments()
   streaming.value = true
 
+  const applyStreamAssistantMessageIdFromEvent = (messageId?: number | null) => {
+    currentAssistantMessageId = applyStreamAssistantMessageId(messages, currentAssistantMessageId, messageId)
+  }
+
   streamControllerRef.value = openChatStream(
     {
       prompt: currentPrompt,
@@ -2218,6 +2244,12 @@ function handleSend() {
       skillIds: currentSkillIds
     },
     {
+      onMeta: (data) => {
+        if (data.protocol !== 'chat.sse.v1') {
+          message.warning(`聊天流协议版本不兼容：${data.protocol}`)
+        }
+        applyStreamAssistantMessageIdFromEvent(data.messageId)
+      },
       onConversation: (data) => {
         const previousId = activeConversationId.value
         if (previousId && previousId < 0) {
@@ -2232,11 +2264,7 @@ function handleSend() {
         ]
       },
       onMessage: (data) => {
-        const assistantMessage = findAssistantMessage(currentAssistantMessageId)
-        if (assistantMessage) {
-          assistantMessage.id = data.messageId
-          currentAssistantMessageId = data.messageId
-        }
+        applyStreamAssistantMessageIdFromEvent(data.messageId)
       },
       onReasoningDelta: (data) => {
         if (!currentThinkingEnabled) {

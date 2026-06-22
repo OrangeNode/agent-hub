@@ -22,6 +22,16 @@
         </dependency>
         <dependency>
             <groupId>com.agenthub</groupId>
+            <artifactId>agent-hub-security</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.agenthub</groupId>
+            <artifactId>agent-hub-agent</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.agenthub</groupId>
             <artifactId>agent-hub-ai</artifactId>
             <version>${project.version}</version>
         </dependency>

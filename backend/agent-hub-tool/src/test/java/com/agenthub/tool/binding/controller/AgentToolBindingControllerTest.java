@@ -13,12 +13,47 @@ import com.agenthub.tool.binding.controller.request.UpdateAgentToolBindingsReque
 import com.agenthub.tool.binding.dto.AgentToolBindingItem;
 import com.agenthub.tool.binding.dto.AgentToolOptionItem;
 import com.agenthub.tool.binding.service.AgentToolBindingService;
+import java.lang.reflect.Method;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
 
 class AgentToolBindingControllerTest {
+
+    private static final String REQUIRED_AUTHORITY = "hasAuthority('agent:tool:update')";
+
+    @Test
+    void shouldDeclareHttpMappingsAndPermissions() throws NoSuchMethodException {
+        RequestMapping requestMapping = AgentToolBindingController.class.getAnnotation(RequestMapping.class);
+        assertThat(requestMapping.value()).containsExactly("/api/agents/{agentId}/tools");
+
+        Method listBindings = AgentToolBindingController.class.getMethod("listBindings", Long.class);
+        GetMapping listMapping = listBindings.getAnnotation(GetMapping.class);
+        assertThat(listMapping.value()).isEmpty();
+        assertThat(listMapping.path()).isEmpty();
+        assertPreAuthorize(listBindings);
+
+        Method listOptions = AgentToolBindingController.class.getMethod("listOptions", Long.class);
+        GetMapping optionsMapping = listOptions.getAnnotation(GetMapping.class);
+        assertThat(optionsMapping.value()).containsExactly("/options");
+        assertPreAuthorize(listOptions);
+
+        Method updateBindings = AgentToolBindingController.class.getMethod(
+                "updateBindings",
+                Authentication.class,
+                Long.class,
+                UpdateAgentToolBindingsRequest.class
+        );
+        PutMapping updateMapping = updateBindings.getAnnotation(PutMapping.class);
+        assertThat(updateMapping.value()).isEmpty();
+        assertThat(updateMapping.path()).isEmpty();
+        assertPreAuthorize(updateBindings);
+    }
 
     @Test
     void shouldListBindings() {
@@ -109,5 +144,10 @@ class AgentToolBindingControllerTest {
                 true,
                 true
         );
+    }
+
+    private void assertPreAuthorize(Method method) {
+        PreAuthorize preAuthorize = method.getAnnotation(PreAuthorize.class);
+        assertThat(preAuthorize.value()).isEqualTo(REQUIRED_AUTHORITY);
     }
 }

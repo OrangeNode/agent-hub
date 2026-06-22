@@ -7,6 +7,19 @@ export interface ConversationRecord {
   agentKey?: string | null
   modelId?: number | null
   status: string
+  updatedAt?: string | null
+}
+
+export interface PageResult<T> {
+  items: T[]
+  total: number
+  limit: number
+  offset: number
+}
+
+export interface FetchConversationsParams {
+  limit?: number
+  offset?: number
 }
 
 export interface ChatAttachmentRecord {
@@ -360,8 +373,13 @@ function dispatchJson<T>(data: string, handler: ((data: T) => void) | undefined)
   }
 }
 
-export async function fetchConversations() {
-  const response = await http.get<ApiResponse<ConversationRecord[]>>('/chat/conversations')
+export async function fetchConversations(params: FetchConversationsParams = {}) {
+  const response = await http.get<ApiResponse<PageResult<ConversationRecord>>>('/chat/conversations', {
+    params: {
+      limit: params.limit ?? 20,
+      offset: params.offset ?? 0
+    }
+  })
   return response.data.data
 }
 

@@ -7,6 +7,7 @@ import com.agenthub.chat.artifact.dto.ChatArtifactItem;
 import com.agenthub.chat.message.dto.MessageItem;
 import com.agenthub.chat.service.ChatService;
 import com.agenthub.common.api.ApiResponse;
+import com.agenthub.common.api.PageResult;
 import com.agenthub.security.principal.LoginUser;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -65,9 +66,13 @@ public class ChatController {
      * 查询当前用户的会话列表。
      */
     @GetMapping("/conversations")
-    public ApiResponse<List<ConversationItem>> listConversations(Authentication authentication) {
+    public ApiResponse<PageResult<ConversationItem>> listConversations(
+            Authentication authentication,
+            @RequestParam(defaultValue = "20") int limit,
+            @RequestParam(defaultValue = "0") int offset
+    ) {
         LoginUser loginUser = (LoginUser) authentication.getPrincipal();
-        return ApiResponse.success(chatService.listConversations(loginUser.userId()));
+        return ApiResponse.success(chatService.listConversations(loginUser.userId(), limit, offset));
     }
 
     /**

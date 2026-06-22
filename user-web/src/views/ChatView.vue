@@ -65,30 +65,34 @@
         </div>
       </nav>
 
-      <section class="recent-section">
-        <h2>最近</h2>
-        <div
-          v-for="conversation in conversations"
-          :key="conversation.id"
-          class="recent-item"
-          :class="{ active: conversation.id === activeConversationId }"
-        >
-          <button type="button" class="recent-title" @click="switchConversation(conversation.id)">
-            {{ conversation.title }}
-          </button>
-          <div class="recent-actions">
-            <button
-              type="button"
-              class="recent-more"
-              aria-label="更多操作"
-              @click.stop="toggleConversationMenu(conversation.id, $event)"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 12h.01M19 12h.01M5 12h.01" />
-              </svg>
+      <section ref="conversationListRef" class="recent-section" @scroll="handleConversationListScroll">
+        <template v-for="group in groupedConversations" :key="group.key">
+          <h2 class="recent-group-title">{{ group.title }}</h2>
+          <div
+            v-for="conversation in group.items"
+            :key="conversation.id"
+            class="recent-item"
+            :class="{ active: conversation.id === activeConversationId }"
+          >
+            <button type="button" class="recent-title" @click="switchConversation(conversation.id)">
+              {{ conversation.title }}
             </button>
+            <div class="recent-actions">
+              <button
+                type="button"
+                class="recent-more"
+                aria-label="更多操作"
+                @click.stop="toggleConversationMenu(conversation.id, $event)"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 12h.01M19 12h.01M5 12h.01" />
+                </svg>
+              </button>
+            </div>
           </div>
-        </div>
+        </template>
+        <div v-if="conversationsLoading" class="recent-load-state">加载中...</div>
+        <div v-else-if="!conversations.length" class="recent-load-state">暂无会话</div>
       </section>
 
       <div class="sidebar-footer">
@@ -1010,6 +1014,7 @@ import {
 import type { ChatProcessEvent, ChatToolTrace } from './chat-tool-events.helpers'
 import {
   canClearAgentSelection,
+  groupConversationsByRecency,
   mapConversationRecord,
   resolveAgentSelectionForConversation
 } from './chat-agent.helpers'
@@ -1018,6 +1023,8 @@ import ThinkingModeSelect from './ThinkingModeSelect.vue'
 
 type ChatRole = 'user' | 'assistant'
 type ThinkingMode = 'instant' | 'thinking'
+
+const CONVERSATION_PAGE_SIZE = 20
 
 interface ChatMessageItem {
   id: number
@@ -1091,6 +1098,7 @@ const openConversationMenuId = ref<number | null>(null)
 const conversationMenuPosition = ref({ top: 0, left: 0 })
 const pendingDeleteConversationId = ref<number | null>(null)
 const streamControllerRef = ref<AbortController | null>(null)
+const conversationListRef = ref<HTMLElement | null>(null)
 const imageInputRef = ref<HTMLInputElement | null>(null)
 const pendingImages = ref<PendingImage[]>([])
 const imagePreviewUrl = ref<string | null>(null)
@@ -1110,6 +1118,8 @@ const artifactPreviewOpen = ref(false)
 const artifactsLoading = ref(false)
 const artifactPreviewLoading = ref(false)
 const artifactDownloading = ref(false)
+const conversationsLoading = ref(false)
+const conversationHasMore = ref(true)
 let reasoningTimer: ReturnType<typeof window.setInterval> | null = null
 let sentLocalPreviewUrls = new Set<string>()
 
@@ -1187,6 +1197,7 @@ const activeConversation = computed(() =>
 const agentOptions = ref<AgentOption[]>([])
 
 const conversations = ref<ConversationItem[]>([])
+const groupedConversations = computed(() => groupConversationsByRecency(conversations.value))
 
 const messageMap = ref<Record<number, ChatMessageItem[]>>({})
 
@@ -1331,10 +1342,22 @@ function mapArtifact(item: ChatArtifactRecord): ChatArtifactItem {
   }
 }
 
-async function loadConversations() {
+async function loadConversations(options: { reset?: boolean } = {}) {
+  if (conversationsLoading.value) {
+    return
+  }
+
+  const reset = options.reset ?? true
+  const offset = reset ? 0 : conversations.value.filter((conversation) => conversation.id > 0).length
   try {
-    const data = await fetchConversations()
-    conversations.value = data.map(mapConversation)
+    conversationsLoading.value = true
+    const data = await fetchConversations({
+      limit: CONVERSATION_PAGE_SIZE,
+      offset
+    })
+    const nextConversations = data.items.map(mapConversation)
+    conversations.value = reset ? nextConversations : mergeConversations(conversations.value, nextConversations)
+    conversationHasMore.value = conversations.value.filter((conversation) => conversation.id > 0).length < data.total
     if (activeConversationId.value) {
       syncActiveAgentFromConversation()
     }
@@ -1347,6 +1370,38 @@ async function loadConversations() {
     }
   } catch (error) {
     message.error(error instanceof Error ? error.message : '加载会话失败')
+  } finally {
+    conversationsLoading.value = false
+  }
+}
+
+function mergeConversations(current: ConversationItem[], next: ConversationItem[]) {
+  const seen = new Set<number>()
+  return [...current, ...next].filter((conversation) => {
+    if (seen.has(conversation.id)) {
+      return false
+    }
+    seen.add(conversation.id)
+    return true
+  })
+}
+
+function loadMoreConversations() {
+  if (!conversationHasMore.value || conversationsLoading.value) {
+    return
+  }
+
+  void loadConversations({ reset: false })
+}
+
+function handleConversationListScroll(event: Event) {
+  const target = event.currentTarget as HTMLElement | null
+  if (!target) {
+    return
+  }
+
+  if (target.scrollTop + target.clientHeight >= target.scrollHeight - 48) {
+    loadMoreConversations()
   }
 }
 
@@ -2206,7 +2261,7 @@ function handleSend() {
     conversations.value.unshift({
       id: nextId,
       title: '新聊天',
-      updatedAt: '刚刚',
+      updatedAt: new Date().toISOString(),
       agentKey: activeAgentKey.value
     })
     messageMap.value[nextId] = []
@@ -2301,7 +2356,12 @@ function handleSend() {
         applyStreamConversationIdFromEvent(data.conversationId)
 
         conversations.value = [
-          { id: data.conversationId, title: data.title, updatedAt: '刚刚', agentKey: activeAgentKey.value },
+          {
+            id: data.conversationId,
+            title: data.title,
+            updatedAt: new Date().toISOString(),
+            agentKey: activeAgentKey.value
+          },
           ...conversations.value.filter((item) =>
             item.id !== data.conversationId && item.id !== previousId && item.id !== conversationId
           )
@@ -2699,6 +2759,16 @@ svg {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.recent-group-title:not(:first-child) {
+  margin-top: 18px;
+}
+
+.recent-load-state {
+  padding: 10px 8px;
+  color: #8a8f98;
+  font-size: 12px;
 }
 
 .recent-item {

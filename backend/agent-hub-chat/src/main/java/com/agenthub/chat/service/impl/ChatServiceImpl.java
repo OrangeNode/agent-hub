@@ -27,6 +27,7 @@ import com.agenthub.chat.message.mapper.ChatMessageMapper;
 import com.agenthub.chat.service.ChatService;
 import com.agenthub.chat.title.ConversationTitleService;
 import com.agenthub.common.api.ErrorCode;
+import com.agenthub.common.api.PageResult;
 import com.agenthub.common.exception.BusinessException;
 import com.agenthub.sse.SseEventData;
 import com.agenthub.sse.SseEventSender;
@@ -101,6 +102,8 @@ public class ChatServiceImpl implements ChatService {
     private static final int TITLE_MAX_OUTPUT_TOKENS = 64;
     private static final int DEFAULT_IMAGE_TOKEN_ESTIMATE = 1500;
     private static final int TOOL_CALL_MAX_COUNT = 100;
+    private static final int DEFAULT_CONVERSATION_PAGE_LIMIT = 20;
+    private static final int MAX_CONVERSATION_PAGE_LIMIT = 50;
     private static final ObjectMapper PROCESS_EVENT_OBJECT_MAPPER = new ObjectMapper();
     private static final TypeReference<List<MessageProcessEvent>> PROCESS_EVENT_LIST_TYPE = new TypeReference<>() {
     };
@@ -428,15 +431,31 @@ public class ChatServiceImpl implements ChatService {
      * 查询用户仍处于有效状态的会话列表。
      */
     @Override
-    public List<ConversationItem> listConversations(Long userId) {
-        LambdaQueryWrapper<ChatConversation> wrapper = new LambdaQueryWrapper<ChatConversation>()
-                .eq(ChatConversation::getUserId, userId)
-                .eq(ChatConversation::getStatus, STATUS_ACTIVE)
+    public PageResult<ConversationItem> listConversations(Long userId, int limit, int offset) {
+        int safeLimit = normalizeConversationLimit(limit);
+        int safeOffset = Math.max(0, offset);
+        long total = conversationMapper.selectCount(activeConversationQuery(userId));
+        LambdaQueryWrapper<ChatConversation> wrapper = activeConversationQuery(userId)
                 .orderByDesc(ChatConversation::getUpdatedAt)
-                .orderByDesc(ChatConversation::getId);
-        return conversationMapper.selectList(wrapper).stream()
+                .orderByDesc(ChatConversation::getId)
+                .last("LIMIT " + safeLimit + " OFFSET " + safeOffset);
+        List<ConversationItem> items = conversationMapper.selectList(wrapper).stream()
                 .map(this::toConversationItem)
                 .toList();
+        return PageResult.of(items, total, safeLimit, safeOffset);
+    }
+
+    private LambdaQueryWrapper<ChatConversation> activeConversationQuery(Long userId) {
+        return new LambdaQueryWrapper<ChatConversation>()
+                .eq(ChatConversation::getUserId, userId)
+                .eq(ChatConversation::getStatus, STATUS_ACTIVE);
+    }
+
+    private int normalizeConversationLimit(int limit) {
+        if (limit <= 0) {
+            return DEFAULT_CONVERSATION_PAGE_LIMIT;
+        }
+        return Math.min(limit, MAX_CONVERSATION_PAGE_LIMIT);
     }
 
     /**
@@ -1682,7 +1701,8 @@ public class ChatServiceImpl implements ChatService {
                 conversation.getTitle(),
                 conversation.getAgentKey(),
                 conversation.getModelId(),
-                conversation.getStatus()
+                conversation.getStatus(),
+                conversation.getUpdatedAt()
         );
     }
 

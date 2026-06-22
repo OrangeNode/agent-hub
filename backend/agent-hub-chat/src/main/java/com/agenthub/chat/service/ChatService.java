@@ -5,6 +5,7 @@ import com.agenthub.chat.artifact.dto.ChatArtifactContent;
 import com.agenthub.chat.artifact.dto.ChatArtifactDownload;
 import com.agenthub.chat.artifact.dto.ChatArtifactItem;
 import com.agenthub.chat.message.dto.MessageItem;
+import com.agenthub.common.api.PageResult;
 import java.util.List;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -45,7 +46,7 @@ public interface ChatService {
     /**
      * 查询用户的有效会话列表。
      */
-    List<ConversationItem> listConversations(Long userId);
+    PageResult<ConversationItem> listConversations(Long userId, int limit, int offset);
 
     /**
      * 查询指定会话的消息列表，并校验会话归属。

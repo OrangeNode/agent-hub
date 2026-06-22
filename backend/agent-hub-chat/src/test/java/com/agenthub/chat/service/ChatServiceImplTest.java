@@ -24,6 +24,7 @@ import com.agenthub.ai.model.dto.AiModelRuntimeConfig;
 import com.agenthub.ai.model.service.AiModelService;
 import com.agenthub.chat.context.ConversationContextBuilder;
 import com.agenthub.chat.context.SimpleTokenEstimator;
+import com.agenthub.chat.conversation.dto.ConversationItem;
 import com.agenthub.chat.conversation.entity.ChatConversation;
 import com.agenthub.chat.conversation.mapper.ChatConversationMapper;
 import com.agenthub.chat.message.entity.ChatMessage;
@@ -31,6 +32,7 @@ import com.agenthub.chat.message.mapper.ChatMessageMapper;
 import com.agenthub.chat.service.impl.ChatServiceImpl;
 import com.agenthub.chat.summary.mapper.ChatConversationSummaryMapper;
 import com.agenthub.chat.title.ConversationTitleService;
+import com.agenthub.common.api.PageResult;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
 import com.agenthub.sse.SseEventData;
@@ -58,6 +60,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -72,6 +75,38 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 class ChatServiceImplTest {
+
+    @Test
+    void shouldPageConversationListAndReturnUpdatedAt() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService,
+                new RecordingSseEventSender(), new RecordingLlmClient(List.of()));
+        OffsetDateTime newestUpdatedAt = OffsetDateTime.parse("2026-06-22T10:00:00+08:00");
+        OffsetDateTime olderUpdatedAt = OffsetDateTime.parse("2026-06-20T10:00:00+08:00");
+        ChatConversation newest = conversation(101L, 7L, "ACTIVE");
+        newest.setTitle("最新会话");
+        newest.setUpdatedAt(newestUpdatedAt);
+        ChatConversation older = conversation(100L, 7L, "ACTIVE");
+        older.setTitle("较早会话");
+        older.setUpdatedAt(olderUpdatedAt);
+        when(conversationMapper.selectCount(any())).thenReturn(42L);
+        when(conversationMapper.selectList(any())).thenReturn(List.of(newest, older));
+
+        PageResult<ConversationItem> result = service.listConversations(7L, 20, 40);
+
+        assertThat(result.total()).isEqualTo(42L);
+        assertThat(result.limit()).isEqualTo(20);
+        assertThat(result.offset()).isEqualTo(40);
+        assertThat(result.items()).extracting(ConversationItem::conversationId).containsExactly(101L, 100L);
+        assertThat(result.items()).extracting(ConversationItem::updatedAt)
+                .containsExactly(newestUpdatedAt, olderUpdatedAt);
+        ArgumentCaptor<Wrapper<ChatConversation>> wrapperCaptor = conversationWrapperCaptor();
+        verify(conversationMapper).selectList(wrapperCaptor.capture());
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), ChatConversation.class);
+        assertThat(wrapperCaptor.getValue().getSqlSegment()).contains("LIMIT 20 OFFSET 40");
+    }
 
     @Test
     void shouldStreamNewConversationAndPersistMessagesAndEvents() {
@@ -2051,6 +2086,11 @@ class ChatServiceImplTest {
 
     @SuppressWarnings({"unchecked", "rawtypes"})
     private ArgumentCaptor<Wrapper<ChatMessage>> wrapperCaptor() {
+        return ArgumentCaptor.forClass((Class) Wrapper.class);
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private ArgumentCaptor<Wrapper<ChatConversation>> conversationWrapperCaptor() {
         return ArgumentCaptor.forClass((Class) Wrapper.class);
     }
 

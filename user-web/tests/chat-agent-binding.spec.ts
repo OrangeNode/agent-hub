@@ -12,11 +12,12 @@ describe('聊天会话 Agent 绑定', () => {
       title: '历史会话',
       agentKey: 'official-writing',
       modelId: 10,
-      status: 'ACTIVE'
+      status: 'ACTIVE',
+      updatedAt: '2026-06-22T10:00:00+08:00'
     })).toEqual({
       id: 100,
       title: '历史会话',
-      updatedAt: '最近',
+      updatedAt: '2026-06-22T10:00:00+08:00',
       agentKey: 'official-writing'
     })
   })
@@ -26,7 +27,7 @@ describe('聊天会话 Agent 绑定', () => {
       activeConversation: {
         id: 100,
         title: '历史会话',
-        updatedAt: '最近',
+        updatedAt: '2026-06-22T10:00:00+08:00',
         agentKey: 'official-writing'
       },
       messageCount: 2
@@ -38,7 +39,7 @@ describe('聊天会话 Agent 绑定', () => {
       conversation: {
         id: 100,
         title: '历史会话',
-        updatedAt: '最近',
+        updatedAt: '2026-06-22T10:00:00+08:00',
         agentKey: 'official-writing'
       },
       agents: [

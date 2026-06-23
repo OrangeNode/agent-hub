@@ -29,7 +29,6 @@ RUNTIME_PACKAGES=(
   ca-certificates
   coreutils
   curl
-  dotnet-sdk-8.0
   findutils
   fontconfig
   fonts-dejavu-core
@@ -38,6 +37,7 @@ RUNTIME_PACKAGES=(
   fonts-noto-core
   gawk
   git
+  golang-go
   grep
   gzip
   iproute2
@@ -48,6 +48,7 @@ RUNTIME_PACKAGES=(
   login
   npm
   nodejs
+  openjdk-21-jdk-headless
   pandoc
   passwd
   procps
@@ -171,7 +172,6 @@ EOF
   sudo chroot "${ROOTFS_DIR}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get update
   sudo chroot "${ROOTFS_DIR}" /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${all_packages[@]}"
   install_python_packages
-  warm_dotnet_package_cache
   sudo chroot "${ROOTFS_DIR}" apt-get clean
   cleanup_rootfs_mounts
   trap - RETURN ERR
@@ -188,36 +188,12 @@ install_python_packages() {
     python3 -m pip install --no-cache-dir --break-system-packages "${python_packages[@]}"
 }
 
-warm_dotnet_package_cache() {
-  local warmup_dir="/tmp/dotnet-package-warmup"
-  local warmup_project="${warmup_dir}/dotnet-package-warmup.csproj"
-  echo "预热 dotnet NuGet 包缓存: DocumentFormat.OpenXml 3.0.2"
-  sudo mkdir -p "${ROOTFS_DIR}/opt/nuget/packages"
-  sudo rm -rf "${ROOTFS_DIR}${warmup_dir}"
-  sudo chroot "${ROOTFS_DIR}" /usr/bin/env \
-    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
-    DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
-    NUGET_PACKAGES=/opt/nuget/packages \
-    dotnet new console -o "${warmup_dir}" --force >/dev/null
-  sudo chroot "${ROOTFS_DIR}" /usr/bin/env \
-    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
-    DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
-    NUGET_PACKAGES=/opt/nuget/packages \
-    dotnet add "${warmup_project}" package DocumentFormat.OpenXml --version 3.0.2 >/dev/null
-  sudo chroot "${ROOTFS_DIR}" /usr/bin/env \
-    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
-    DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
-    NUGET_PACKAGES=/opt/nuget/packages \
-    dotnet restore "${warmup_project}" >/dev/null
-  sudo rm -rf "${ROOTFS_DIR}${warmup_dir}"
-}
-
 configure_rootfs() {
 	echo "写入 sandbox-agent、workspace 和 init"
   sudo install -m 0755 "${BUILD_DIR}/agent/sandbox-agent" "${ROOTFS_DIR}/usr/local/bin/sandbox-agent"
-  sudo mkdir -p "${ROOTFS_DIR}/workspace/input" "${ROOTFS_DIR}/workspace/artifacts" "${ROOTFS_DIR}/tmp" "${ROOTFS_DIR}/opt/nuget/packages"
+  sudo mkdir -p "${ROOTFS_DIR}/workspace/input" "${ROOTFS_DIR}/workspace/artifacts" "${ROOTFS_DIR}/tmp"
   sudo chroot "${ROOTFS_DIR}" useradd --uid 1000 --create-home --shell /bin/bash sandbox 2>/dev/null || true
-  sudo chroot "${ROOTFS_DIR}" chown -R sandbox:sandbox /workspace /home/sandbox /opt/nuget
+  sudo chroot "${ROOTFS_DIR}" chown -R sandbox:sandbox /workspace /home/sandbox
   sudo chmod 1777 "${ROOTFS_DIR}/tmp"
   sudo tee "${ROOTFS_DIR}/sbin/init" >/dev/null <<'EOF'
 #!/bin/sh
@@ -246,14 +222,14 @@ configure_network_from_cmdline() {
   done
 }
 
-mkdir -p /workspace/input /workspace/artifacts /tmp /opt/nuget/packages
+mkdir -p /workspace/input /workspace/artifacts /tmp
 chmod 1777 /tmp
-chown -R sandbox:sandbox /workspace /opt/nuget
+chown -R sandbox:sandbox /workspace
 ip link set lo up 2>/dev/null || true
 ip link set eth0 up 2>/dev/null || true
 configure_network_from_cmdline
 
-exec su -s /bin/sh sandbox -c 'DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 NUGET_PACKAGES=/opt/nuget/packages SANDBOX_WORKSPACE=/workspace SANDBOX_AGENT_ADDR=0.0.0.0:8081 /usr/local/bin/sandbox-agent'
+exec su -s /bin/sh sandbox -c 'SANDBOX_WORKSPACE=/workspace SANDBOX_AGENT_ADDR=0.0.0.0:8081 /usr/local/bin/sandbox-agent'
 EOF
   sudo chmod 0755 "${ROOTFS_DIR}/sbin/init"
   echo "nameserver 1.1.1.1" | sudo tee "${ROOTFS_DIR}/etc/resolv.conf" >/dev/null

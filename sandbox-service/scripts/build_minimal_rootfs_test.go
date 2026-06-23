@@ -26,7 +26,6 @@ func TestMinimalRootfsIncludesDocxSkillRuntimeDependencies(t *testing.T) {
 
 	for _, expected := range []string{
 		`ROOTFS_SIZE_MB="${SANDBOX_ROOTFS_SIZE_MB:-8192}"`,
-		"dotnet-sdk-8.0",
 		"pandoc",
 		"python3-docx",
 		"python3-lxml",
@@ -64,6 +63,19 @@ func TestMinimalRootfsIncludesPdfAndEditablePptRuntimeDependencies(t *testing.T)
 	}
 }
 
+func TestMinimalRootfsIncludesJavaAndGoRuntimeDependencies(t *testing.T) {
+	content := readScript(t, "build-minimal-rootfs.sh")
+
+	for _, expected := range []string{
+		"golang-go",
+		"openjdk-21-jdk-headless",
+	} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("build-minimal-rootfs.sh missing Java/Go runtime dependency %q", expected)
+		}
+	}
+}
+
 func TestMinimalRootfsAvoidsHeavyNumericStackByDefault(t *testing.T) {
 	content := readScript(t, "build-minimal-rootfs.sh")
 
@@ -93,18 +105,20 @@ func TestMinimalRootfsCleansStaleChrootMounts(t *testing.T) {
 	}
 }
 
-func TestMinimalRootfsWarmsDotnetOpenXmlPackageCache(t *testing.T) {
+func TestMinimalRootfsExcludesCSharpRuntimeDependencies(t *testing.T) {
 	content := readScript(t, "build-minimal-rootfs.sh")
 
-	for _, expected := range []string{
+	for _, unexpected := range []string{
+		"dotnet-sdk-8.0",
+		"warm_dotnet_package_cache",
 		"DocumentFormat.OpenXml",
-		"--version 3.0.2",
 		"NUGET_PACKAGES=/opt/nuget/packages",
 		"DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1",
 		"DOTNET_CLI_TELEMETRY_OPTOUT=1",
+		"/opt/nuget/packages",
 	} {
-		if !strings.Contains(content, expected) {
-			t.Fatalf("build-minimal-rootfs.sh missing dotnet package cache setup %q", expected)
+		if strings.Contains(content, unexpected) {
+			t.Fatalf("build-minimal-rootfs.sh should not include C# rootfs dependency %q", unexpected)
 		}
 	}
 }

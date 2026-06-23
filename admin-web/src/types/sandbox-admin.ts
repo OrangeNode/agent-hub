@@ -60,6 +60,12 @@ export interface SandboxWarmPoolSnapshot {
   targetSize: number
   size: number
   starting: number
+  lastFillAt?: string | null
+  lastSuccessAt?: string | null
+  lastFillError?: string | null
+  nextRetryAt?: string | null
+  hotAcquireCount?: number
+  coldStartCount?: number
   vms: SandboxVmMetadata[]
 }
 

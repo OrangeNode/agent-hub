@@ -1,6 +1,7 @@
 package host
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -45,6 +46,33 @@ func TestWarmPoolAcquireReusesPooledVMFirst(t *testing.T) {
 	}
 }
 
+func TestWarmPoolAcquireTriggersAsyncRefill(t *testing.T) {
+	factory := &fakeVMFactory{}
+	pool := NewWarmPool(factory, 1)
+	if err := pool.Fill(); err != nil {
+		t.Fatalf("Fill() error = %v", err)
+	}
+
+	vm, err := pool.Acquire()
+	if err != nil {
+		t.Fatalf("Acquire() error = %v", err)
+	}
+	if vm.ID() != "vm-1" {
+		t.Fatalf("vm.ID() = %q", vm.ID())
+	}
+
+	waitWarmUntil(t, 200*time.Millisecond, func() bool {
+		return pool.Size() == 1 && factory.StartCount() == 2
+	})
+	snapshot := pool.Snapshot()
+	if snapshot.HotAcquireCount != 1 {
+		t.Fatalf("HotAcquireCount = %d", snapshot.HotAcquireCount)
+	}
+	if snapshot.ColdStartCount != 0 {
+		t.Fatalf("ColdStartCount = %d", snapshot.ColdStartCount)
+	}
+}
+
 func TestWarmPoolAcquireStartsWhenPoolIsEmpty(t *testing.T) {
 	factory := &fakeVMFactory{}
 	pool := NewWarmPool(factory, 1)
@@ -59,6 +87,9 @@ func TestWarmPoolAcquireStartsWhenPoolIsEmpty(t *testing.T) {
 	}
 	if factory.StartCount() != 1 {
 		t.Fatalf("starts = %d", factory.StartCount())
+	}
+	if pool.Snapshot().ColdStartCount != 1 {
+		t.Fatalf("ColdStartCount = %d", pool.Snapshot().ColdStartCount)
 	}
 }
 
@@ -133,6 +164,31 @@ func TestWarmPoolConcurrentFillDoesNotStartMoreThanTarget(t *testing.T) {
 	}
 }
 
+func TestWarmPoolMaintainerRetriesAfterFailure(t *testing.T) {
+	wantErr := errors.New("temporary firecracker failure")
+	factory := &flakyWarmFactory{err: wantErr}
+	pool := NewWarmPool(factory, 1)
+	pool.SetRetryBackoffForTest(func(int) time.Duration {
+		return 10 * time.Millisecond
+	})
+	pool.StartMaintainer()
+	defer pool.StopMaintainer()
+
+	waitWarmUntil(t, 200*time.Millisecond, func() bool {
+		return pool.Snapshot().LastFillError == wantErr.Error()
+	})
+	firstSnapshot := pool.Snapshot()
+	if firstSnapshot.NextRetryAt == nil {
+		t.Fatal("expected NextRetryAt after failed fill")
+	}
+
+	factory.SetError(nil)
+	waitWarmUntil(t, 500*time.Millisecond, func() bool {
+		snapshot := pool.Snapshot()
+		return snapshot.Size == 1 && snapshot.LastFillError == "" && snapshot.LastSuccessAt != nil
+	})
+}
+
 func TestWarmPoolUsesDefaultTargetForNonPositiveSize(t *testing.T) {
 	pool := NewWarmPool(&fakeVMFactory{}, 0)
 
@@ -141,12 +197,46 @@ func TestWarmPoolUsesDefaultTargetForNonPositiveSize(t *testing.T) {
 	}
 }
 
+func waitWarmUntil(t *testing.T, timeout time.Duration, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("condition was not met before timeout")
+}
+
 type blockingWarmFactory struct {
 	mu       sync.Mutex
 	starts   int
 	started  chan struct{}
 	released chan struct{}
 	once     sync.Once
+}
+
+type flakyWarmFactory struct {
+	mu     sync.Mutex
+	err    error
+	starts int
+}
+
+func (f *flakyWarmFactory) Start() (VM, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.starts++
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &fakeVM{id: "vm-flaky"}, nil
+}
+
+func (f *flakyWarmFactory) SetError(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
 }
 
 func newBlockingWarmFactory() *blockingWarmFactory {

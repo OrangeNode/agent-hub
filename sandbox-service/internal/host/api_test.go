@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -870,6 +871,11 @@ func TestCreateSessionRejectsEscapingRestoreArtifact(t *testing.T) {
 }
 
 func TestCreateSessionRestoresArtifactWithStorageFields(t *testing.T) {
+	originalLogOutput := log.Writer()
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	defer log.SetOutput(originalLogOutput)
+
 	content := []byte{0x50, 0x4b, 0x03, 0x04, 0xff, 0x00, 0x80}
 	sum := sha256.Sum256(content)
 	var written struct {
@@ -912,6 +918,10 @@ func TestCreateSessionRestoresArtifactWithStorageFields(t *testing.T) {
 	}
 	if written.ContentBase64 != base64.StdEncoding.EncodeToString(content) {
 		t.Fatalf("written contentBase64 = %q", written.ContentBase64)
+	}
+	if !strings.Contains(logs.String(), "恢复 sandbox 产物完成") ||
+		!strings.Contains(logs.String(), "reports/out.txt") {
+		t.Fatalf("restore logs = %s", logs.String())
 	}
 }
 

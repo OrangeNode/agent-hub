@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -758,10 +759,18 @@ func (s *apiServer) restoreArtifacts(r *http.Request, session Session, artifacts
 	if s.downloader == nil {
 		return errors.New("产物下载器未初始化")
 	}
+	log.Printf("恢复 sandbox 产物开始: conversation=%s session=%s count=%d",
+		session.ConversationID, session.ID, len(artifacts))
+	restoredPaths := make([]string, 0, len(artifacts))
+	fail := func(relativePath string, err error) error {
+		log.Printf("恢复 sandbox 产物失败: conversation=%s session=%s path=%s error=%v",
+			session.ConversationID, session.ID, relativePath, err)
+		return err
+	}
 	for _, artifact := range artifacts {
 		relativePath, err := CleanArtifactRelativePath(artifact.RelativePath)
 		if err != nil {
-			return err
+			return fail(artifact.RelativePath, err)
 		}
 		content, err := s.downloader.Download(objectstore.DownloadRequest{
 			Context: r.Context(),
@@ -769,26 +778,29 @@ func (s *apiServer) restoreArtifacts(r *http.Request, session Session, artifacts
 			Key:     artifact.downloadKey(),
 		})
 		if err != nil {
-			return fmt.Errorf("下载恢复产物失败: %w", err)
+			return fail(relativePath, fmt.Errorf("下载恢复产物失败: %w", err))
 		}
 		data, readErr := io.ReadAll(io.LimitReader(content, int64(maxArtifactBytes)+1))
 		closeErr := content.Close()
 		if readErr != nil {
-			return fmt.Errorf("读取恢复产物失败: %w", readErr)
+			return fail(relativePath, fmt.Errorf("读取恢复产物失败: %w", readErr))
 		}
 		if closeErr != nil {
-			return fmt.Errorf("关闭恢复产物失败: %w", closeErr)
+			return fail(relativePath, fmt.Errorf("关闭恢复产物失败: %w", closeErr))
 		}
 		if len(data) > maxArtifactBytes {
-			return errors.New("恢复产物超过大小上限（10MiB）")
+			return fail(relativePath, errors.New("恢复产物超过大小上限（10MiB）"))
 		}
 		if err := verifyRestoreArtifactSHA256(relativePath, artifact.Sha256, data); err != nil {
-			return err
+			return fail(relativePath, err)
 		}
 		if err := s.writeGuestFile(r, session, defaultArtifactPath+"/"+relativePath, data); err != nil {
-			return err
+			return fail(relativePath, err)
 		}
+		restoredPaths = append(restoredPaths, relativePath)
 	}
+	log.Printf("恢复 sandbox 产物完成: conversation=%s session=%s count=%d paths=%s",
+		session.ConversationID, session.ID, len(restoredPaths), strings.Join(restoredPaths, ","))
 	return nil
 }
 

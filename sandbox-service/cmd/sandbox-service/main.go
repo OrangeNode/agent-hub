@@ -29,11 +29,8 @@ func main() {
 	log.Printf("sandbox-service VM 工厂已初始化: mode=%s", cfg.VMMode)
 	warmPool := host.NewWarmPool(factory, cfg.WarmPoolSize)
 	manager := host.NewSessionManager(warmPoolFactory{pool: warmPool}, cfg.MaxActiveSessions, cfg.IdleTimeout)
-	go func() {
-		if err := warmPool.Fill(); err != nil {
-			log.Printf("sandbox warm pool 预热失败: %v", err)
-		}
-	}()
+	warmPool.StartMaintainer()
+	defer warmPool.StopMaintainer()
 	reaper := host.NewIdleReaper(manager, host.DefaultIdleReaperInterval(cfg.IdleTimeout))
 	reaper.Start()
 	defer reaper.Stop()

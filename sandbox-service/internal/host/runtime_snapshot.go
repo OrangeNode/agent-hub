@@ -38,10 +38,16 @@ type RuntimeSessionSnapshot struct {
 }
 
 type WarmPoolSnapshot struct {
-	TargetSize int          `json:"targetSize"`
-	Size       int          `json:"size"`
-	Starting   int          `json:"starting"`
-	VMs        []VMMetadata `json:"vms"`
+	TargetSize      int          `json:"targetSize"`
+	Size            int          `json:"size"`
+	Starting        int          `json:"starting"`
+	LastFillAt      *time.Time   `json:"lastFillAt,omitempty"`
+	LastSuccessAt   *time.Time   `json:"lastSuccessAt,omitempty"`
+	LastFillError   string       `json:"lastFillError,omitempty"`
+	NextRetryAt     *time.Time   `json:"nextRetryAt,omitempty"`
+	HotAcquireCount int64        `json:"hotAcquireCount"`
+	ColdStartCount  int64        `json:"coldStartCount"`
+	VMs             []VMMetadata `json:"vms"`
 }
 
 func (m *SessionManager) Snapshot(now time.Time) []RuntimeSessionSnapshot {
@@ -89,6 +95,12 @@ func (p *WarmPool) Snapshot() WarmPoolSnapshot {
 	vms := append([]VM(nil), p.pool...)
 	starting := p.starting
 	targetSize := p.targetSize
+	lastFillAt := timePointer(p.lastFillAt)
+	lastSuccessAt := timePointer(p.lastSuccessAt)
+	lastFillError := p.lastFillError
+	nextRetryAt := timePointer(p.nextRetryAt)
+	hotAcquireCount := p.hotAcquireCount
+	coldStartCount := p.coldStartCount
 	p.mu.Unlock()
 
 	metadata := make([]VMMetadata, 0, len(vms))
@@ -96,11 +108,25 @@ func (p *WarmPool) Snapshot() WarmPoolSnapshot {
 		metadata = append(metadata, metadataForVM(vm))
 	}
 	return WarmPoolSnapshot{
-		TargetSize: targetSize,
-		Size:       len(vms),
-		Starting:   starting,
-		VMs:        metadata,
+		TargetSize:      targetSize,
+		Size:            len(vms),
+		Starting:        starting,
+		LastFillAt:      lastFillAt,
+		LastSuccessAt:   lastSuccessAt,
+		LastFillError:   lastFillError,
+		NextRetryAt:     nextRetryAt,
+		HotAcquireCount: hotAcquireCount,
+		ColdStartCount:  coldStartCount,
+		VMs:             metadata,
 	}
+}
+
+func timePointer(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	copy := value
+	return &copy
 }
 
 func metadataForVM(vm VM) VMMetadata {

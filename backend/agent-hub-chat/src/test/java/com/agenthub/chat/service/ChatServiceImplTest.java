@@ -300,7 +300,7 @@ class ChatServiceImplTest {
     }
 
     @Test
-    void shouldSyncSelectedSkillZipsBeforeLlmStream() {
+    void shouldSyncSelectedSkillZipsBeforeFirstSandboxToolExecution() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
         ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
@@ -309,6 +309,7 @@ class ChatServiceImplTest {
         SandboxSessionService sandboxSessionService = mock(SandboxSessionService.class);
         SandboxClient sandboxClient = mock(SandboxClient.class);
         ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
         LlmClient llmClient = mock(LlmClient.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         ChatServiceImpl service = new ChatServiceImpl(
@@ -323,8 +324,8 @@ class ChatServiceImplTest {
                 contextBuilder(messageMapper, attachmentService, llmClient),
                 protocolType -> llmClient,
                 Runnable::run,
-                null,
-                null,
+                mock(SandboxToolService.class),
+                toolRegistry,
                 skillRuntimeService,
                 sandboxSessionService,
                 sandboxClient,
@@ -338,10 +339,19 @@ class ChatServiceImplTest {
         when(sandboxSessionService.ensureSession(7L, 100L)).thenReturn("sbx_1");
         when(objectStorageClient.presignGet("agent-hub", "skill-packages/docx.zip", Duration.ofMinutes(10)))
                 .thenReturn("https://storage.example.com/skill-packages/docx.zip");
+        when(toolRegistry.listTools(any(ToolExecutionContext.class))).thenReturn(List.of(new LlmToolDefinition(
+                "sandbox.read_file",
+                "读取文件",
+                Map.of("type", "object")
+        )));
+        when(toolRegistry.execute(any(ToolExecutionRequest.class), any(ToolExecutionContext.class)))
+                .thenReturn(ToolExecutionResult.completed("文件内容"));
+        stubToolCallingLlm(llmClient, "sandbox.read_file");
 
         service.stream(7L, 100L, 10L, null, "用 docx 帮我写", false, List.of(), List.of(), List.of(6L));
 
-        InOrder inOrder = inOrder(sandboxSessionService, objectStorageClient, sandboxClient, llmClient);
+        InOrder inOrder = inOrder(llmClient, sandboxSessionService, objectStorageClient, sandboxClient, toolRegistry);
+        inOrder.verify(llmClient).stream(any(LlmStreamRequest.class), any());
         inOrder.verify(sandboxSessionService).ensureSession(7L, 100L);
         inOrder.verify(objectStorageClient).presignGet(
                 eq("agent-hub"),
@@ -350,7 +360,7 @@ class ChatServiceImplTest {
         );
         ArgumentCaptor<SkillZipSyncRequest> requestCaptor = ArgumentCaptor.forClass(SkillZipSyncRequest.class);
         inOrder.verify(sandboxClient).syncSkillZips(eq("sbx_1"), requestCaptor.capture());
-        inOrder.verify(llmClient).stream(any(LlmStreamRequest.class), any());
+        inOrder.verify(toolRegistry).execute(any(ToolExecutionRequest.class), any(ToolExecutionContext.class));
 
         assertThat(requestCaptor.getValue().skills())
                 .singleElement()
@@ -372,6 +382,7 @@ class ChatServiceImplTest {
         SandboxSessionService sandboxSessionService = mock(SandboxSessionService.class);
         SandboxClient sandboxClient = mock(SandboxClient.class);
         ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
         LlmClient llmClient = mock(LlmClient.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         ChatServiceImpl service = new ChatServiceImpl(
@@ -386,8 +397,8 @@ class ChatServiceImplTest {
                 contextBuilder(messageMapper, attachmentService, llmClient),
                 protocolType -> llmClient,
                 Runnable::run,
-                null,
-                null,
+                mock(SandboxToolService.class),
+                toolRegistry,
                 skillRuntimeService,
                 sandboxSessionService,
                 sandboxClient,
@@ -403,12 +414,20 @@ class ChatServiceImplTest {
                 .thenReturn("legacy zip".getBytes(StandardCharsets.UTF_8));
         when(objectStorageClient.presignGet("agent-hub", "skill-packages/docx.zip", Duration.ofMinutes(10)))
                 .thenReturn("https://storage.example.com/skill-packages/docx.zip");
+        when(toolRegistry.listTools(any(ToolExecutionContext.class))).thenReturn(List.of(new LlmToolDefinition(
+                "sandbox.read_file",
+                "读取文件",
+                Map.of("type", "object")
+        )));
+        when(toolRegistry.execute(any(ToolExecutionRequest.class), any(ToolExecutionContext.class)))
+                .thenReturn(ToolExecutionResult.completed("文件内容"));
+        stubToolCallingLlm(llmClient, "sandbox.read_file");
 
         service.stream(7L, 100L, 10L, null, "用 docx 帮我写", false, List.of(), List.of(), List.of(6L));
 
         ArgumentCaptor<SkillZipSyncRequest> requestCaptor = ArgumentCaptor.forClass(SkillZipSyncRequest.class);
         verify(sandboxClient).syncSkillZips(eq("sbx_1"), requestCaptor.capture());
-        verify(llmClient).stream(any(LlmStreamRequest.class), any());
+        verify(toolRegistry).execute(any(ToolExecutionRequest.class), any(ToolExecutionContext.class));
         assertThat(requestCaptor.getValue().skills())
                 .singleElement()
                 .satisfies(skill -> assertThat(skill.zipSha256())
@@ -416,7 +435,7 @@ class ChatServiceImplTest {
     }
 
     @Test
-    void shouldFailAssistantMessageAndSkipLlmWhenSkillZipSyncFails() {
+    void shouldFailAssistantMessageWhenSkillZipSyncFailsDuringSandboxToolCall() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
         ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
@@ -425,6 +444,7 @@ class ChatServiceImplTest {
         SandboxSessionService sandboxSessionService = mock(SandboxSessionService.class);
         SandboxClient sandboxClient = mock(SandboxClient.class);
         ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
         LlmClient llmClient = mock(LlmClient.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         ChatServiceImpl service = new ChatServiceImpl(
@@ -439,8 +459,8 @@ class ChatServiceImplTest {
                 contextBuilder(messageMapper, attachmentService, llmClient),
                 protocolType -> llmClient,
                 Runnable::run,
-                null,
-                null,
+                mock(SandboxToolService.class),
+                toolRegistry,
                 skillRuntimeService,
                 sandboxSessionService,
                 sandboxClient,
@@ -457,21 +477,33 @@ class ChatServiceImplTest {
         doThrow(new BusinessException(ErrorCode.INTERNAL_ERROR, "同步 Skill 包到沙箱失败"))
                 .when(sandboxClient)
                 .syncSkillZips(eq("sbx_1"), any(SkillZipSyncRequest.class));
+        when(toolRegistry.listTools(any(ToolExecutionContext.class))).thenReturn(List.of(new LlmToolDefinition(
+                "sandbox.read_file",
+                "读取文件",
+                Map.of("type", "object")
+        )));
+        stubToolCallingLlm(llmClient, "sandbox.read_file");
 
         service.stream(7L, 100L, 10L, null, "用 docx 帮我写", false, List.of(), List.of(), List.of(6L));
 
-        verify(llmClient, never()).stream(any(), any());
+        verify(llmClient).stream(any(), any());
+        verify(toolRegistry, never()).execute(any(), any());
         verify(messageMapper).update(argThat((ChatMessage message) ->
                 "FAILED".equals(message.getStatus())
                         && message.getErrorMessage() != null
                         && message.getErrorMessage().contains("同步 Skill 包到沙箱失败")
         ), any());
-        assertThat(sender.eventTypes()).contains(SseEventType.ERROR, SseEventType.DONE);
+        assertThat(sender.eventTypes()).contains(
+                SseEventType.TOOL_CALL,
+                SseEventType.TOOL_RESULT,
+                SseEventType.ERROR,
+                SseEventType.DONE
+        );
         assertThat(sender.completed).isTrue();
     }
 
     @Test
-    void shouldFailAssistantMessageAndSkipSandboxSyncWhenSkillPackageMetadataIsMissing() {
+    void shouldFailAssistantMessageAndSkipSandboxSyncWhenSkillPackageMetadataIsMissingDuringSandboxToolCall() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
         ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
@@ -480,6 +512,7 @@ class ChatServiceImplTest {
         SandboxSessionService sandboxSessionService = mock(SandboxSessionService.class);
         SandboxClient sandboxClient = mock(SandboxClient.class);
         ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
         LlmClient llmClient = mock(LlmClient.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         ChatServiceImpl service = new ChatServiceImpl(
@@ -494,8 +527,8 @@ class ChatServiceImplTest {
                 contextBuilder(messageMapper, attachmentService, llmClient),
                 protocolType -> llmClient,
                 Runnable::run,
-                null,
-                null,
+                mock(SandboxToolService.class),
+                toolRegistry,
                 skillRuntimeService,
                 sandboxSessionService,
                 sandboxClient,
@@ -507,18 +540,31 @@ class ChatServiceImplTest {
         when(attachmentService.resolveImagesForChat(7L, 100L, List.of(), List.of(), 1500)).thenReturn(List.of());
         when(skillRuntimeService.buildRuntimeContext(null, List.of(6L)))
                 .thenReturn(skillContextWithDocxPackage(" ", "a".repeat(64)));
+        when(toolRegistry.listTools(any(ToolExecutionContext.class))).thenReturn(List.of(new LlmToolDefinition(
+                "sandbox.read_file",
+                "读取文件",
+                Map.of("type", "object")
+        )));
+        stubToolCallingLlm(llmClient, "sandbox.read_file");
 
         service.stream(7L, 100L, 10L, null, "用 docx 帮我写", false, List.of(), List.of(), List.of(6L));
 
+        verify(llmClient).stream(any(), any());
+        verify(sandboxSessionService, never()).ensureSession(any(), any());
         verify(sandboxClient, never()).syncSkillZips(any(), any());
-        verify(llmClient, never()).stream(any(), any());
+        verify(toolRegistry, never()).execute(any(), any());
         verify(messageMapper).update(argThat((ChatMessage message) ->
                 "FAILED".equals(message.getStatus())
                         && message.getErrorMessage() != null
                         && message.getErrorMessage().contains("Skill 6(docx)")
                         && message.getErrorMessage().contains("objectKey")
         ), any());
-        assertThat(sender.eventTypes()).contains(SseEventType.ERROR, SseEventType.DONE);
+        assertThat(sender.eventTypes()).contains(
+                SseEventType.TOOL_CALL,
+                SseEventType.TOOL_RESULT,
+                SseEventType.ERROR,
+                SseEventType.DONE
+        );
         assertThat(sender.completed).isTrue();
     }
 
@@ -582,7 +628,7 @@ class ChatServiceImplTest {
     }
 
     @Test
-    void shouldSyncBoundSkillZipsBeforeLlmStreamForBusinessAgent() {
+    void shouldNotCreateSandboxForBusinessAgentBoundSkillWhenLlmAnswersDirectly() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
         ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
@@ -592,6 +638,82 @@ class ChatServiceImplTest {
         SandboxSessionService sandboxSessionService = mock(SandboxSessionService.class);
         SandboxClient sandboxClient = mock(SandboxClient.class);
         ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.answer("端午放假通知正文"),
+                LlmStreamChunk.done()
+        ));
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                sender,
+                attachmentService,
+                agentService,
+                contextBuilder(messageMapper, attachmentService, llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                mock(SandboxToolService.class),
+                toolRegistry,
+                skillRuntimeService,
+                sandboxSessionService,
+                sandboxClient,
+                objectStorageClient
+        );
+        when(agentService.requireEnabledRuntimeConfig("official-writing")).thenReturn(new AgentRuntimeConfig(
+                1L,
+                "official-writing",
+                "公文写作 Agent",
+                "你是一个公文写作助手。",
+                10L
+        ));
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.insert(any(ChatConversation.class))).thenAnswer(invocation -> {
+            ChatConversation conversation = invocation.getArgument(0);
+            conversation.setId(100L);
+            return 1;
+        });
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, null, List.of(), List.of(), 1500)).thenReturn(List.of());
+        when(skillRuntimeService.buildRuntimeContext(1L, List.of())).thenReturn(skillContextWithDocxPackage());
+        when(toolRegistry.listTools(any(ToolExecutionContext.class))).thenReturn(List.of(new LlmToolDefinition(
+                "sandbox.read_file",
+                "读取文件",
+                Map.of("type", "object")
+        )));
+        doThrow(new BusinessException(ErrorCode.VM_START_FAILED, "创建沙箱会话失败"))
+                .when(sandboxSessionService)
+                .ensureSession(any(), any());
+
+        service.stream(7L, null, null, "official-writing", "帮我写一个端午放假通知，今年的",
+                false, List.of(), List.of(), List.of());
+
+        assertThat(llmClient.lastRequest).isNotNull();
+        verify(sandboxSessionService, never()).ensureSession(any(), any());
+        verify(sandboxClient, never()).syncSkillZips(any(), any());
+        ArgumentCaptor<ChatMessage> updatedMessageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper).update(updatedMessageCaptor.capture(), any());
+        assertThat(updatedMessageCaptor.getValue().getStatus()).isEqualTo("COMPLETED");
+        assertThat(updatedMessageCaptor.getValue().getContent()).isEqualTo("端午放假通知正文");
+        assertThat(sender.eventTypes()).contains(SseEventType.ANSWER_DELTA, SseEventType.MESSAGE_COMPLETED,
+                SseEventType.DONE);
+    }
+
+    @Test
+    void shouldSyncBoundSkillZipsBeforeFirstSandboxToolExecutionForBusinessAgent() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        AgentService agentService = mock(AgentService.class);
+        SkillRuntimeService skillRuntimeService = mock(SkillRuntimeService.class);
+        SandboxSessionService sandboxSessionService = mock(SandboxSessionService.class);
+        SandboxClient sandboxClient = mock(SandboxClient.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
         LlmClient llmClient = mock(LlmClient.class);
         ChatServiceImpl service = new ChatServiceImpl(
                 conversationMapper,
@@ -605,8 +727,8 @@ class ChatServiceImplTest {
                 contextBuilder(messageMapper, attachmentService, llmClient),
                 protocolType -> llmClient,
                 Runnable::run,
-                null,
-                null,
+                mock(SandboxToolService.class),
+                toolRegistry,
                 skillRuntimeService,
                 sandboxSessionService,
                 sandboxClient,
@@ -629,10 +751,19 @@ class ChatServiceImplTest {
         when(sandboxSessionService.ensureSession(7L, 100L)).thenReturn("sbx_1");
         when(objectStorageClient.presignGet("agent-hub", "skill-packages/docx.zip", Duration.ofMinutes(10)))
                 .thenReturn("https://storage.example.com/skill-packages/docx.zip");
+        when(toolRegistry.listTools(any(ToolExecutionContext.class))).thenReturn(List.of(new LlmToolDefinition(
+                "sandbox.read_file",
+                "读取文件",
+                Map.of("type", "object")
+        )));
+        when(toolRegistry.execute(any(ToolExecutionRequest.class), any(ToolExecutionContext.class)))
+                .thenReturn(ToolExecutionResult.completed("文件内容"));
+        stubToolCallingLlm(llmClient, "sandbox.read_file");
 
         service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of(), List.of(10L));
 
-        InOrder inOrder = inOrder(sandboxSessionService, objectStorageClient, sandboxClient, llmClient);
+        InOrder inOrder = inOrder(llmClient, sandboxSessionService, objectStorageClient, sandboxClient, toolRegistry);
+        inOrder.verify(llmClient).stream(any(LlmStreamRequest.class), any());
         inOrder.verify(sandboxSessionService).ensureSession(7L, 100L);
         inOrder.verify(objectStorageClient).presignGet(
                 eq("agent-hub"),
@@ -640,7 +771,7 @@ class ChatServiceImplTest {
                 eq(Duration.ofMinutes(10))
         );
         inOrder.verify(sandboxClient).syncSkillZips(eq("sbx_1"), any(SkillZipSyncRequest.class));
-        inOrder.verify(llmClient).stream(any(LlmStreamRequest.class), any());
+        inOrder.verify(toolRegistry).execute(any(ToolExecutionRequest.class), any(ToolExecutionContext.class));
         verify(skillRuntimeService).buildRuntimeContext(1L, List.of(10L));
     }
 
@@ -2037,6 +2168,24 @@ class ChatServiceImplTest {
                         zipSha256
                 ))
         );
+    }
+
+    private void stubToolCallingLlm(LlmClient llmClient, String toolName) {
+        org.mockito.Mockito.doAnswer(invocation -> {
+            java.util.function.Consumer<LlmStreamChunk> consumer = invocation.getArgument(1);
+            consumer.accept(LlmStreamChunk.toolCall(new LlmToolCall(
+                    "call_1",
+                    toolName,
+                    Map.of()
+            )));
+            consumer.accept(LlmStreamChunk.done());
+            return null;
+        }).doAnswer(invocation -> {
+            java.util.function.Consumer<LlmStreamChunk> consumer = invocation.getArgument(1);
+            consumer.accept(LlmStreamChunk.answer("完成"));
+            consumer.accept(LlmStreamChunk.done());
+            return null;
+        }).when(llmClient).stream(any(LlmStreamRequest.class), any());
     }
 
     private ChatServiceImpl service(

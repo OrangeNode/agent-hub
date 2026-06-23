@@ -114,13 +114,15 @@ public class SkillRuntimeServiceImpl implements SkillRuntimeService {
         if (!"docx".equalsIgnoreCase(defaultString(skill.getSkillKey()))) {
             return;
         }
+        builder.append("docx 使用边界：仅当用户明确要求生成 Word、docx、下载或文件交付时，才使用 docx 工作流；")
+                .append("普通起草、润色或改写请求优先直接在聊天中给出正文，不要为了纯文本回答调用 sandbox。\n");
         builder.append("docx skill 工作流：必须先调用 skill.read 读取完整说明；")
                 .append("C# 中间源码请用 sandbox.write_workspace_file 写入 /tmp/docx-work/Program.cs；")
                 .append("运行 /workspace/skills/docx/scripts 下的脚本或 python-docx 时，")
                 .append("最终 .docx 必须生成到 /workspace/artifacts；")
                 .append("不要把 .cs/.py/.md 中间文件写入 /workspace/artifacts，")
                 .append("只有最终 .docx 才是交付文件。\n");
-        builder.append("docx fast path: for simple Chinese official notices/red-head documents without a supplied template, ")
+        builder.append("docx fast path: when a Word/docx deliverable is explicitly requested and no template is supplied, ")
                 .append("prefer python-docx first. Write /workspace/work/docx_gen.py with sandbox.write_workspace_file, ")
                 .append("execute `python3 /workspace/work/docx_gen.py` with timeout_seconds=120, and save the final .docx under ")
                 .append("/workspace/artifacts. When setting CJK fonts, use run._element.get_or_add_rPr() plus ")

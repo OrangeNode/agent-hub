@@ -69,6 +69,8 @@ class SkillRuntimeServiceTest {
         assertThat(context.prompt()).contains("/workspace/skills/docx");
         assertThat(context.prompt())
                 .contains("sandbox.write_workspace_file")
+                .contains("仅当用户明确要求生成 Word、docx、下载或文件交付时，才使用 docx 工作流")
+                .contains("普通起草、润色或改写请求优先直接在聊天中给出正文，不要为了纯文本回答调用 sandbox")
                 .contains("docx fast path")
                 .contains("/workspace/work/docx_gen.py")
                 .contains("timeout_seconds=120")
@@ -77,6 +79,8 @@ class SkillRuntimeServiceTest {
                 .contains("timeout_seconds to 300")
                 .contains("/workspace/artifacts")
                 .contains(".docx");
+        assertThat(context.prompt())
+                .doesNotContain("for simple Chinese official notices/red-head documents without a supplied template");
     }
 
     @Test

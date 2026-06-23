@@ -819,6 +819,7 @@ public class ChatServiceImpl implements ChatService {
         ProcessEventRecorder processRecorder = new ProcessEventRecorder();
         List<Long> skillIds = skillContext == null ? List.of() : skillContext.skillIds();
         AtomicBoolean finished = new AtomicBoolean(false);
+        AtomicBoolean skillZipsSyncedToSandbox = new AtomicBoolean(false);
         String errorSource = ERROR_SOURCE_SERVER;
         ToolExecutionContext toolContext = new ToolExecutionContext(
                 userId,
@@ -844,7 +845,6 @@ public class ChatServiceImpl implements ChatService {
         List<LlmToolDefinition> availableTools = List.of();
         List<LlmMessage> loopMessages = new ArrayList<>(messages);
         try {
-            syncSkillsToSandbox(userId, conversationId, skillContext);
             errorSource = ERROR_SOURCE_TOOL;
             availableTools = listTools(toolContext);
             errorSource = ERROR_SOURCE_LLM;
@@ -884,7 +884,8 @@ public class ChatServiceImpl implements ChatService {
                         return;
                     }
                     String result = executeToolCall(emitter, toolCall, processRecorder, toolContext,
-                            assistantMessage, content, reasoningContent, finished);
+                            assistantMessage, content, reasoningContent, finished, userId, conversationId,
+                            skillContext, skillZipsSyncedToSandbox);
                     if (finished.get()) {
                         return;
                     }
@@ -929,6 +930,31 @@ public class ChatServiceImpl implements ChatService {
                 ))
                 .toList();
         sandboxClient.syncSkillZips(sandboxSessionId, new SkillZipSyncRequest(skills));
+    }
+
+    private void syncSkillsToSandboxIfNeeded(
+            Long userId,
+            Long conversationId,
+            String toolName,
+            SkillRuntimeContext skillContext,
+            AtomicBoolean skillZipsSyncedToSandbox
+    ) {
+        if (!isSandboxTool(toolName) || skillContext == null || skillContext.packages().isEmpty()) {
+            return;
+        }
+        if (!skillZipsSyncedToSandbox.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            syncSkillsToSandbox(userId, conversationId, skillContext);
+        } catch (RuntimeException exception) {
+            skillZipsSyncedToSandbox.set(false);
+            throw exception;
+        }
+    }
+
+    private boolean isSandboxTool(String toolName) {
+        return toolName != null && toolName.startsWith("sandbox.");
     }
 
     private void requireSyncableSkillPackage(SkillRuntimePackage skill) {
@@ -1101,10 +1127,16 @@ public class ChatServiceImpl implements ChatService {
             ChatMessage assistantMessage,
             StringBuilder content,
             StringBuilder reasoningContent,
-            AtomicBoolean finished
+            AtomicBoolean finished,
+            Long userId,
+            Long conversationId,
+            SkillRuntimeContext skillContext,
+            AtomicBoolean skillZipsSyncedToSandbox
     ) {
         ToolExecutionResult result;
         try {
+            syncSkillsToSandboxIfNeeded(userId, conversationId, toolCall.name(), skillContext,
+                    skillZipsSyncedToSandbox);
             result = toolRegistry.execute(
                     new ToolExecutionRequest(toolCall.id(), toolCall.name(), toolCall.arguments()),
                     toolContext

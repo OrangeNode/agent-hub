@@ -1915,6 +1915,7 @@ class ChatServiceImplTest {
         assertThat(llmClient.lastRequest.messages().getFirst().content())
                 .contains("/workspace/input", "/workspace/artifacts", "/tmp", "相对路径",
                         "sandbox.write_file", "下载", "sandbox.exec")
+                .contains("不要在最终回复中把 /workspace/artifacts", "全部文件", "下载按钮")
                 .doesNotContain("调用 write_file", "- exec 可以");
     }
 

@@ -114,6 +114,7 @@ public class ChatServiceImpl implements ChatService {
             - 需要交付给用户的输出文件必须写入 /workspace/artifacts，例如 /workspace/artifacts/作文.txt。
             - /tmp 仅用于构建、编译、缓存等临时工作目录，例如 /tmp/docx-work；最终交付文件不要留在 /tmp。
             - 用户要求下载代码、input、output 或其他文件时，优先调用 sandbox.write_file 逐个写入 /workspace/artifacts，文件名要清晰可识别。
+            - 不要在最终回复中把 /workspace/artifacts/...、/workspace/input/... 或其他沙箱内部路径写成 Markdown 下载链接或 URL；系统会根据产物记录展示“全部文件”卡片和下载按钮，你只需说明文件已生成、可在文件卡片中预览或下载。
             - sandbox.exec 可以用于复杂任务编排、脚本执行、重定向、管道和 here-doc；所有需要用户下载的最终文件仍应写入 /workspace/artifacts。
             - 如果工具参数使用相对路径，服务端会按工具类型统一归一到 /workspace/input 或 /workspace/artifacts；不要尝试使用 ..、/etc、/root 等越界路径。
             """;

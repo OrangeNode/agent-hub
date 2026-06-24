@@ -16,4 +16,25 @@ describe('助手消息 Markdown 渲染', () => {
     expect(html).not.toContain('<script>')
     expect(html).not.toContain('javascript:')
   })
+  it('should not render sandbox workspace paths as clickable download links', () => {
+    const html = renderAssistantMarkdown(
+      '您可以点击以下链接下载该文件：\n\n[下载 codex_full_chat_test.txt](/workspace/artifacts/codex_full_chat_test.txt)'
+    )
+
+    expect(html).not.toContain('<a ')
+    expect(html).not.toContain('href="/workspace/artifacts/codex_full_chat_test.txt"')
+    expect(html).toContain('下载 codex_full_chat_test.txt')
+    expect(html).toContain('请使用下方文件卡片下载')
+  })
+
+  it('should not render local workspace URLs as clickable download links', () => {
+    const html = renderAssistantMarkdown(
+      '[下载 codex_full_chat_test.txt](http://127.0.0.1:5174/workspace/artifacts/codex_full_chat_test.txt)'
+    )
+
+    expect(html).not.toContain('<a ')
+    expect(html).not.toContain('127.0.0.1:5174/workspace/artifacts')
+    expect(html).toContain('下载 codex_full_chat_test.txt')
+    expect(html).toContain('请使用下方文件卡片下载')
+  })
 })

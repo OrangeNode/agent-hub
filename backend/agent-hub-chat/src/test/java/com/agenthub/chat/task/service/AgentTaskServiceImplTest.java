@@ -227,6 +227,30 @@ class AgentTaskServiceImplTest {
     }
 
     @Test
+    void shouldRejectCompletedWhenRunRevisionChanged() {
+        when(runMapper.selectById(100L)).thenReturn(run(100L, "RUNNING", 3, 2));
+        when(runMapper.update(any(AgentTaskRun.class), any(Wrapper.class))).thenReturn(0);
+
+        assertThatThrownBy(() -> service.markCompleted(100L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("任务计划已变更，请刷新后重试")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+    }
+
+    @Test
+    void shouldRejectFailedWhenRunRevisionChanged() {
+        when(runMapper.selectById(100L)).thenReturn(run(100L, "RUNNING", 3, 2));
+        when(runMapper.update(any(AgentTaskRun.class), any(Wrapper.class))).thenReturn(0);
+
+        assertThatThrownBy(() -> service.markFailed(100L, "执行失败"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("任务计划已变更，请刷新后重试")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+    }
+
+    @Test
     void shouldMarkStepRunningCompletedFailedCompletedAndStopped() {
         AgentTaskRun runningRun = run(100L, "RUNNING", 1, 2);
         AgentTaskStep first = step(1, "分析需求", "PENDING");

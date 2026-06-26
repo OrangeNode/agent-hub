@@ -150,7 +150,7 @@ public class AgentTaskServiceImpl implements AgentTaskService {
         update.setErrorMessage(errorMessage);
         update.setUpdatedAt(now);
         update.setCompletedAt(now);
-        updateActiveRun(run.getId(), update);
+        updateActiveRun(run, update);
         return snapshot(taskRunId);
     }
 
@@ -164,7 +164,7 @@ public class AgentTaskServiceImpl implements AgentTaskService {
         update.setCurrentStepIndex(safeInt(run.getTotalSteps(), 0));
         update.setUpdatedAt(now);
         update.setCompletedAt(now);
-        updateActiveRun(run.getId(), update);
+        updateActiveRun(run, update);
         return snapshot(taskRunId);
     }
 

@@ -193,6 +193,8 @@
           </div>
         </div>
 
+        <TaskProgressPanel v-if="activeTaskProgress" :progress="activeTaskProgress" />
+
         <div class="landing-composer" :class="{ 'is-multiline': isMultiline }">
           <n-dropdown
             trigger="click"
@@ -410,6 +412,8 @@
         </div>
 
         <footer class="conversation-composer">
+          <TaskProgressPanel v-if="activeTaskProgress" :progress="activeTaskProgress" />
+
           <div
             v-if="composerImageCount"
             class="pending-image-list"
@@ -971,6 +975,7 @@ import {
   deleteConversation,
   downloadAllArtifacts,
   downloadArtifact,
+  fetchActiveTaskProgress,
   fetchAvailableAgents,
   fetchAvailableModels,
   fetchAvailableSkills,
@@ -990,6 +995,7 @@ import type {
   ChatArtifactRecord,
   ChatAttachmentRecord,
   ChatMessageRecord,
+  ChatTaskProgressRecord,
   ConversationRecord
 } from '../api/chat'
 import { useAuthStore } from '../stores/auth'
@@ -1003,6 +1009,7 @@ import {
 import { buildReasoningStatusText } from './reasoning-timer.helpers'
 import { validateImageCount, validateImageFile } from './chat-attachments.helpers'
 import { updatePendingImageByLocalId } from './chat-pending-images.helpers'
+import { normalizeTaskProgress } from './chat-task-progress.helpers'
 import {
   appendReasoningEvent,
   applyToolCallEvent,
@@ -1020,6 +1027,7 @@ import {
 } from './chat-agent.helpers'
 import type { ConversationItem } from './chat-agent.helpers'
 import ThinkingModeSelect from './ThinkingModeSelect.vue'
+import TaskProgressPanel from './TaskProgressPanel.vue'
 
 type ChatRole = 'user' | 'assistant'
 type ThinkingMode = 'instant' | 'thinking'
@@ -1091,6 +1099,7 @@ const deleteConfirmOpen = ref(false)
 const deletingConversation = ref(false)
 const sidebarCollapsed = ref(false)
 const activeConversationId = ref<number | null>(null)
+const activeTaskProgress = ref<ChatTaskProgressRecord | null>(null)
 const activeAgentName = ref('通用 Agent')
 const activeAgentKey = ref<string | null>(null)
 const thinkingMode = ref<ThinkingMode>('instant')
@@ -1342,6 +1351,28 @@ function mapArtifact(item: ChatArtifactRecord): ChatArtifactItem {
   }
 }
 
+function applyTaskProgress(progress: ChatTaskProgressRecord | null | undefined) {
+  activeTaskProgress.value = progress ? normalizeTaskProgress(progress) : null
+}
+
+async function restoreActiveTaskProgress(conversationId: number | null) {
+  if (!conversationId || conversationId < 1) {
+    activeTaskProgress.value = null
+    return
+  }
+
+  try {
+    const progress = await fetchActiveTaskProgress(conversationId)
+    if (activeConversationId.value === conversationId) {
+      applyTaskProgress(progress)
+    }
+  } catch {
+    if (activeConversationId.value === conversationId) {
+      activeTaskProgress.value = null
+    }
+  }
+}
+
 async function loadConversations(options: { reset?: boolean } = {}) {
   if (conversationsLoading.value) {
     return
@@ -1360,6 +1391,7 @@ async function loadConversations(options: { reset?: boolean } = {}) {
     conversationHasMore.value = conversations.value.filter((conversation) => conversation.id > 0).length < data.total
     if (activeConversationId.value) {
       syncActiveAgentFromConversation()
+      await restoreActiveTaskProgress(activeConversationId.value)
     }
 
     if (!activeConversationId.value && conversations.value.length) {
@@ -1367,6 +1399,7 @@ async function loadConversations(options: { reset?: boolean } = {}) {
       syncActiveAgentFromConversation(conversations.value[0])
       await loadMessages(conversations.value[0].id)
       await loadArtifacts(conversations.value[0].id)
+      await restoreActiveTaskProgress(conversations.value[0].id)
     }
   } catch (error) {
     message.error(error instanceof Error ? error.message : '加载会话失败')
@@ -1503,6 +1536,7 @@ function createConversation(options: NewConversationResetOptions = {}) {
   }, options)
 
   activeConversationId.value = nextState.activeConversationId
+  activeTaskProgress.value = null
   activeAgentKey.value = nextState.activeAgentKey
   activeAgentName.value = nextState.activeAgentName
   selectedSkillIds.value = nextState.selectedSkillIds
@@ -1522,6 +1556,7 @@ function createConversation(options: NewConversationResetOptions = {}) {
 
 async function switchConversation(conversationId: number) {
   activeConversationId.value = conversationId
+  activeTaskProgress.value = null
   openConversationMenuId.value = null
   prompt.value = ''
   clearPendingImages()
@@ -1531,6 +1566,7 @@ async function switchConversation(conversationId: number) {
   syncActiveAgentFromConversation()
   await loadMessages(conversationId)
   await loadArtifacts(conversationId)
+  await restoreActiveTaskProgress(conversationId)
 }
 
 function selectThinkingMode(mode: ThinkingMode) {
@@ -1629,6 +1665,7 @@ async function confirmDeleteConversation() {
     delete messageMap.value[conversationId]
     delete artifactMap.value[conversationId]
     if (activeConversationId.value === conversationId) {
+      activeTaskProgress.value = null
       clearSelectedReuseAttachments()
       clearPendingImages()
       selectedArtifactId.value = null
@@ -1639,7 +1676,9 @@ async function confirmDeleteConversation() {
         syncActiveAgentFromConversation()
         await loadMessages(activeConversationId.value)
         await loadArtifacts(activeConversationId.value)
+        await restoreActiveTaskProgress(activeConversationId.value)
       } else {
+        activeTaskProgress.value = null
         syncActiveAgentFromConversation(null)
       }
     }
@@ -2255,6 +2294,7 @@ function handleSend() {
   }
 
   closeStream()
+  activeTaskProgress.value = null
 
   if (!activeConversationId.value) {
     const nextId = -Date.now()
@@ -2405,6 +2445,13 @@ function handleSend() {
           applyToolResultEvent(ensureProcessEvents(assistantMessage), data)
         }
       },
+      onTaskProgressStarted: applyTaskProgress,
+      onTaskProgressUpdated: applyTaskProgress,
+      onTaskStepStarted: applyTaskProgress,
+      onTaskStepCompleted: applyTaskProgress,
+      onTaskStepFailed: applyTaskProgress,
+      onTaskPlanRevised: applyTaskProgress,
+      onTaskProgressCompleted: applyTaskProgress,
       onMessageCompleted: (data) => {
         const assistantMessage = findAssistantMessage(data.messageId ?? currentAssistantMessageId)
         if (applyMessageCompletedIfStreaming(assistantMessage, data.status)) {

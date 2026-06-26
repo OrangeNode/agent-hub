@@ -110,13 +110,13 @@ public class AgentTaskServiceImpl implements AgentTaskService {
         stepUpdate.setStatus("RUNNING");
         stepUpdate.setStartedAt(now);
         stepUpdate.setErrorMessage(null);
-        updateStep(taskRunId, stepIndex, step, stepUpdate);
 
         AgentTaskRun update = new AgentTaskRun();
         update.setStatus("RUNNING");
         update.setCurrentStepIndex(stepIndex);
         update.setUpdatedAt(now);
         updateActiveRun(run, update);
+        updateStep(taskRunId, stepIndex, step, stepUpdate);
         return snapshot(taskRunId);
     }
 
@@ -130,13 +130,13 @@ public class AgentTaskServiceImpl implements AgentTaskService {
         stepUpdate.setStatus("COMPLETED");
         stepUpdate.setCompletedAt(now);
         stepUpdate.setErrorMessage(null);
-        updateStep(taskRunId, stepIndex, step, stepUpdate);
 
         AgentTaskRun update = new AgentTaskRun();
         update.setStatus("RUNNING");
         update.setCurrentStepIndex(stepIndex);
         update.setUpdatedAt(now);
         updateActiveRun(run, update);
+        updateStep(taskRunId, stepIndex, step, stepUpdate);
         return snapshot(taskRunId);
     }
 

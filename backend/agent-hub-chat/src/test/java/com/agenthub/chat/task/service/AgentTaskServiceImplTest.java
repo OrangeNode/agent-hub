@@ -26,6 +26,7 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 
 class AgentTaskServiceImplTest {
 
@@ -209,7 +210,24 @@ class AgentTaskServiceImplTest {
                 .hasMessage("任务计划已变更，请刷新后重试")
                 .extracting("errorCode")
                 .isEqualTo(ErrorCode.BAD_REQUEST);
-        verify(runMapper, never()).update(any(AgentTaskRun.class), any(Wrapper.class));
+        InOrder inOrder = org.mockito.Mockito.inOrder(runMapper, stepMapper);
+        inOrder.verify(runMapper).update(any(AgentTaskRun.class), any(Wrapper.class));
+        inOrder.verify(stepMapper).update(any(AgentTaskStep.class), any(Wrapper.class));
+    }
+
+    @Test
+    void shouldUpdateRunBeforeStepWhenMarkingStepRunning() {
+        AgentTaskStep first = step(1, "分析需求", "PENDING");
+        when(runMapper.selectById(100L)).thenReturn(run(100L, "RUNNING", 3, 2), run(100L, "RUNNING", 3, 2));
+        when(stepMapper.selectOne(any())).thenReturn(first);
+        when(stepMapper.selectList(any())).thenReturn(List.of(first));
+
+        service.markStepRunning(100L, 1);
+
+        InOrder inOrder = org.mockito.Mockito.inOrder(stepMapper, runMapper);
+        inOrder.verify(stepMapper).selectOne(any(Wrapper.class));
+        inOrder.verify(runMapper).update(any(AgentTaskRun.class), any(Wrapper.class));
+        inOrder.verify(stepMapper).update(any(AgentTaskStep.class), any(Wrapper.class));
     }
 
     @Test
@@ -284,6 +302,9 @@ class AgentTaskServiceImplTest {
         assertThat(failed.errorMessage()).isEqualTo("执行失败");
         assertThat(completed.status()).isEqualTo("COMPLETED");
         verify(runMapper, org.mockito.Mockito.atLeast(5)).update(any(AgentTaskRun.class), any(Wrapper.class));
+        InOrder inOrder = org.mockito.Mockito.inOrder(runMapper, stepMapper);
+        inOrder.verify(runMapper).update(any(AgentTaskRun.class), any(Wrapper.class));
+        inOrder.verify(stepMapper).update(any(AgentTaskStep.class), any(Wrapper.class));
     }
 
     @Test

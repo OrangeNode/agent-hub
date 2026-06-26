@@ -4,6 +4,7 @@ import com.agenthub.ai.llm.LlmClient;
 import com.agenthub.ai.llm.LlmMessage;
 import com.agenthub.ai.llm.LlmStreamChunkType;
 import com.agenthub.ai.llm.LlmStreamRequest;
+import com.agenthub.ai.model.dto.AiModelRuntimeConfig;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
@@ -16,17 +17,11 @@ public class AgentTaskPlanner {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final List<String> FALLBACK_STEPS = List.of("分析需求", "准备上下文", "执行任务", "校验结果", "整理回复");
 
-    private final LlmClient llmClient;
-
-    public AgentTaskPlanner(LlmClient llmClient) {
-        this.llmClient = llmClient;
-    }
-
-    public AgentTaskPlan plan(String prompt) {
+    public AgentTaskPlan plan(LlmClient client, AiModelRuntimeConfig runtimeConfig, String prompt) {
         String normalizedPrompt = normalizePrompt(prompt);
         StringBuilder content = new StringBuilder();
         try {
-            llmClient.stream(request(normalizedPrompt), chunk -> {
+            client.stream(request(runtimeConfig, normalizedPrompt), chunk -> {
                 if (chunk.type() == LlmStreamChunkType.ANSWER_DELTA && chunk.content() != null) {
                     content.append(chunk.content());
                 }
@@ -37,12 +32,12 @@ public class AgentTaskPlanner {
         }
     }
 
-    private LlmStreamRequest request(String prompt) {
+    private LlmStreamRequest request(AiModelRuntimeConfig runtimeConfig, String prompt) {
         return new LlmStreamRequest(
-                null,
-                null,
-                null,
-                null,
+                runtimeConfig == null ? null : runtimeConfig.baseUrl(),
+                runtimeConfig == null ? null : runtimeConfig.apiKeyCipher(),
+                runtimeConfig == null ? null : runtimeConfig.apiVersion(),
+                runtimeConfig == null ? null : runtimeConfig.modelCode(),
                 List.of(
                         new LlmMessage("system", """
                                 你是任务规划器。请只输出 JSON，不要输出 Markdown。
@@ -51,7 +46,7 @@ public class AgentTaskPlanner {
                                 """),
                         new LlmMessage("user", prompt)
                 ),
-                800,
+                runtimeConfig == null ? 800 : runtimeConfig.maxOutputTokens(),
                 false
         );
     }

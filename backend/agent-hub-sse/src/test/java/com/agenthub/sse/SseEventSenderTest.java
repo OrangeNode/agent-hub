@@ -3,6 +3,7 @@ package com.agenthub.sse;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -42,6 +43,69 @@ class SseEventSenderTest {
     @Test
     void eventTypeNamesIncludeChatProtocolMeta() {
         assertThat(SseEventType.META.eventName()).isEqualTo("meta");
+    }
+
+    @Test
+    void eventTypeNamesIncludeTaskProgressProtocol() {
+        assertThat(SseEventType.TASK_PROGRESS_STARTED.eventName()).isEqualTo("task_progress_started");
+        assertThat(SseEventType.TASK_PROGRESS_UPDATED.eventName()).isEqualTo("task_progress_updated");
+        assertThat(SseEventType.TASK_STEP_STARTED.eventName()).isEqualTo("task_step_started");
+        assertThat(SseEventType.TASK_STEP_COMPLETED.eventName()).isEqualTo("task_step_completed");
+        assertThat(SseEventType.TASK_STEP_FAILED.eventName()).isEqualTo("task_step_failed");
+        assertThat(SseEventType.TASK_PLAN_REVISED.eventName()).isEqualTo("task_plan_revised");
+        assertThat(SseEventType.TASK_PROGRESS_COMPLETED.eventName()).isEqualTo("task_progress_completed");
+    }
+
+    @Test
+    void taskProgressDataCarriesTaskProgressFieldsAndNormalizesSteps() {
+        SseEventData.TaskStep step = new SseEventData.TaskStep(
+                1,
+                "分析需求",
+                "RUNNING",
+                null
+        );
+        SseEventData.TaskProgress progress = new SseEventData.TaskProgress(
+                123L,
+                "PLAN_EXECUTE",
+                "RUNNING",
+                "生成报告",
+                "根据附件生成报告",
+                1,
+                2,
+                3,
+                null,
+                List.of(step)
+        );
+
+        assertThat(progress.taskRunId()).isEqualTo(123L);
+        assertThat(progress.mode()).isEqualTo("PLAN_EXECUTE");
+        assertThat(progress.status()).isEqualTo("RUNNING");
+        assertThat(progress.title()).isEqualTo("生成报告");
+        assertThat(progress.planSummary()).isEqualTo("根据附件生成报告");
+        assertThat(progress.currentStepIndex()).isEqualTo(1);
+        assertThat(progress.totalSteps()).isEqualTo(2);
+        assertThat(progress.revision()).isEqualTo(3);
+        assertThat(progress.errorMessage()).isNull();
+        assertThat(progress.steps()).containsExactly(step);
+        assertThat(step.stepIndex()).isEqualTo(1);
+        assertThat(step.name()).isEqualTo("分析需求");
+        assertThat(step.status()).isEqualTo("RUNNING");
+        assertThat(step.errorMessage()).isNull();
+
+        SseEventData.TaskProgress emptyStepsProgress = new SseEventData.TaskProgress(
+                124L,
+                "PLAN_EXECUTE",
+                "PLANNING",
+                "生成总结",
+                null,
+                0,
+                0,
+                1,
+                null,
+                null
+        );
+
+        assertThat(emptyStepsProgress.steps()).isEmpty();
     }
 
     @Test

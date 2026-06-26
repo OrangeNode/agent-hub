@@ -1,5 +1,6 @@
 package com.agenthub.sse;
 
+import java.util.List;
 import java.util.Map;
 
 public sealed interface SseEventData permits SseEventData.Conversation,
@@ -10,6 +11,7 @@ public sealed interface SseEventData permits SseEventData.Conversation,
         SseEventData.ToolOutput,
         SseEventData.ToolResult,
         SseEventData.MessageCompleted,
+        SseEventData.TaskProgress,
         SseEventData.Error,
         SseEventData.Done {
 
@@ -36,6 +38,25 @@ public sealed interface SseEventData permits SseEventData.Conversation,
     }
 
     record MessageCompleted(Long messageId, String status) implements SseEventData {
+    }
+
+    record TaskProgress(Long taskRunId,
+                        String mode,
+                        String status,
+                        String title,
+                        String planSummary,
+                        Integer currentStepIndex,
+                        Integer totalSteps,
+                        Integer revision,
+                        String errorMessage,
+                        List<TaskStep> steps) implements SseEventData {
+
+        public TaskProgress {
+            steps = steps == null ? List.of() : List.copyOf(steps);
+        }
+    }
+
+    record TaskStep(Integer stepIndex, String name, String status, String errorMessage) {
     }
 
     record Error(String code,

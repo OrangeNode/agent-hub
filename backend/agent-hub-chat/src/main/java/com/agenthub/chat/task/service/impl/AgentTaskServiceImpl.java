@@ -183,9 +183,21 @@ public class AgentTaskServiceImpl implements AgentTaskService {
         update.setUpdatedAt(now);
         update.setCompletedAt(now);
         if (activeRuns != null) {
-            activeRuns.forEach(run -> markIncompleteSteps(run.getId(), "STOPPED", null, now));
+            activeRuns.stream()
+                    .map(AgentTaskRun::getId)
+                    .filter(taskRunId -> stopActiveRun(taskRunId, userId, assistantMessageId, update) > 0)
+                    .forEach(taskRunId -> markIncompleteSteps(taskRunId, "STOPPED", null, now));
         }
-        runMapper.update(update, new UpdateWrapper<AgentTaskRun>()
+    }
+
+    private int stopActiveRun(
+            Long taskRunId,
+            Long userId,
+            Long assistantMessageId,
+            AgentTaskRun update
+    ) {
+        return runMapper.update(update, new UpdateWrapper<AgentTaskRun>()
+                .eq("id", taskRunId)
                 .eq("user_id", userId)
                 .eq("assistant_message_id", assistantMessageId)
                 .in("status", ACTIVE_STATUSES));

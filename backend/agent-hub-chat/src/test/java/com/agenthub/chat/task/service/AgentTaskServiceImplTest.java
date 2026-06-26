@@ -322,6 +322,16 @@ class AgentTaskServiceImplTest {
     }
 
     @Test
+    void shouldNotMarkStepsStoppedWhenStopRunCasFails() {
+        when(runMapper.selectList(any())).thenReturn(List.of(run(100L, "RUNNING", 1, 2)));
+        when(runMapper.update(any(AgentTaskRun.class), any(Wrapper.class))).thenReturn(0);
+
+        service.stopByAssistantMessageId(7L, 30L);
+
+        verify(stepMapper, never()).update(any(AgentTaskStep.class), any(Wrapper.class));
+    }
+
+    @Test
     void shouldMarkStepRunningCompletedFailedCompletedAndStopped() {
         AgentTaskRun runningRun = run(100L, "RUNNING", 1, 2);
         AgentTaskStep first = step(1, "分析需求", "PENDING");
@@ -342,6 +352,7 @@ class AgentTaskServiceImplTest {
         );
         when(stepMapper.selectOne(any())).thenReturn(first, first);
         when(stepMapper.selectList(any())).thenReturn(List.of(first, second));
+        when(runMapper.selectList(any())).thenReturn(List.of(runningRun));
 
         TaskProgressItem running = service.markStepRunning(100L, 1);
         TaskProgressItem completedStep = service.markStepCompleted(100L, 1);

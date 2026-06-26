@@ -535,7 +535,7 @@ public class ChatServiceImpl implements ChatService {
     private static class TaskRunContext {
 
         private final TaskProgressItem initialProgress;
-        private boolean disabled;
+        private boolean progressDisabled;
 
         private TaskRunContext(TaskProgressItem initialProgress) {
             this.initialProgress = initialProgress;
@@ -549,12 +549,12 @@ public class ChatServiceImpl implements ChatService {
             return initialProgress == null ? null : initialProgress.taskRunId();
         }
 
-        private boolean disabled() {
-            return disabled;
+        private boolean progressDisabled() {
+            return progressDisabled;
         }
 
-        private void disable() {
-            this.disabled = true;
+        private void disableProgress() {
+            this.progressDisabled = true;
         }
     }
 
@@ -1056,7 +1056,7 @@ public class ChatServiceImpl implements ChatService {
             String prompt,
             TaskRunContext taskRunContext
     ) {
-        if (taskRunContext == null || taskRunContext.disabled() || taskRunContext.taskRunId() == null
+        if (taskRunContext == null || taskRunContext.progressDisabled() || taskRunContext.taskRunId() == null
                 || taskService == null) {
             return;
         }
@@ -1072,7 +1072,7 @@ public class ChatServiceImpl implements ChatService {
             sendTaskProgress(emitter, SseEventType.TASK_PROGRESS_UPDATED, latest);
         } catch (RuntimeException exception) {
             // 任务进度展示失败不应影响聊天主链路。
-            taskRunContext.disable();
+            taskRunContext.disableProgress();
         }
     }
 
@@ -1094,7 +1094,7 @@ public class ChatServiceImpl implements ChatService {
             ChatMessage assistantMessage,
             TaskRunContext taskRunContext
     ) {
-        if (taskRunContext == null || taskRunContext.disabled() || taskRunContext.taskRunId() == null
+        if (taskRunContext == null || taskRunContext.taskRunId() == null
                 || taskService == null) {
             return;
         }
@@ -1116,7 +1116,6 @@ public class ChatServiceImpl implements ChatService {
             }
         } catch (RuntimeException exception) {
             // 已发送原始聊天错误事件时，不让任务状态同步错误覆盖原始流结束流程。
-            taskRunContext.disable();
         }
     }
 

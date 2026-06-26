@@ -106,16 +106,17 @@ public class AgentTaskServiceImpl implements AgentTaskService {
         AgentTaskRun run = requireActiveRun(requireRun(taskRunId));
         AgentTaskStep step = selectStep(taskRunId, stepIndex);
         OffsetDateTime now = OffsetDateTime.now();
+        AgentTaskStep stepUpdate = new AgentTaskStep();
+        stepUpdate.setStatus("RUNNING");
+        stepUpdate.setStartedAt(now);
+        stepUpdate.setErrorMessage(null);
+        updateStep(taskRunId, stepIndex, step, stepUpdate);
+
         AgentTaskRun update = new AgentTaskRun();
         update.setStatus("RUNNING");
         update.setCurrentStepIndex(stepIndex);
         update.setUpdatedAt(now);
-        updateActiveRun(run.getId(), update);
-
-        step.setStatus("RUNNING");
-        step.setStartedAt(now);
-        step.setErrorMessage(null);
-        stepMapper.updateById(step);
+        updateActiveRun(run, update);
         return snapshot(taskRunId);
     }
 
@@ -125,16 +126,17 @@ public class AgentTaskServiceImpl implements AgentTaskService {
         AgentTaskRun run = requireActiveRun(requireRun(taskRunId));
         AgentTaskStep step = selectStep(taskRunId, stepIndex);
         OffsetDateTime now = OffsetDateTime.now();
+        AgentTaskStep stepUpdate = new AgentTaskStep();
+        stepUpdate.setStatus("COMPLETED");
+        stepUpdate.setCompletedAt(now);
+        stepUpdate.setErrorMessage(null);
+        updateStep(taskRunId, stepIndex, step, stepUpdate);
+
         AgentTaskRun update = new AgentTaskRun();
         update.setStatus("RUNNING");
         update.setCurrentStepIndex(stepIndex);
         update.setUpdatedAt(now);
-        updateActiveRun(run.getId(), update);
-
-        step.setStatus("COMPLETED");
-        step.setCompletedAt(now);
-        step.setErrorMessage(null);
-        stepMapper.updateById(step);
+        updateActiveRun(run, update);
         return snapshot(taskRunId);
     }
 
@@ -221,6 +223,26 @@ public class AgentTaskServiceImpl implements AgentTaskService {
                 .in("status", ACTIVE_STATUSES));
         if (affectedRows == 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "任务已结束，不能继续更新");
+        }
+    }
+
+    private void updateActiveRun(AgentTaskRun run, AgentTaskRun update) {
+        int affectedRows = runMapper.update(update, new UpdateWrapper<AgentTaskRun>()
+                .eq("id", run.getId())
+                .eq("revision", safeInt(run.getRevision(), 1))
+                .in("status", ACTIVE_STATUSES));
+        if (affectedRows == 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "任务计划已变更，请刷新后重试");
+        }
+    }
+
+    private void updateStep(Long taskRunId, Integer stepIndex, AgentTaskStep step, AgentTaskStep update) {
+        int affectedRows = stepMapper.update(update, new UpdateWrapper<AgentTaskStep>()
+                .eq("id", step.getId())
+                .eq("task_run_id", taskRunId)
+                .eq("step_index", stepIndex));
+        if (affectedRows == 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "任务计划已变更，请刷新后重试");
         }
     }
 

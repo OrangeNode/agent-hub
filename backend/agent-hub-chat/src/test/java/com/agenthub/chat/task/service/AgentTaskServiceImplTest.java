@@ -39,6 +39,7 @@ class AgentTaskServiceImplTest {
         stepMapper = mock(AgentTaskStepMapper.class);
         service = new AgentTaskServiceImpl(runMapper, stepMapper);
         when(runMapper.update(any(AgentTaskRun.class), any(Wrapper.class))).thenReturn(1);
+        when(stepMapper.update(any(AgentTaskStep.class), any(Wrapper.class))).thenReturn(1);
         doAnswer(invocation -> {
             AgentTaskRun run = invocation.getArgument(0);
             run.setId(100L);
@@ -195,6 +196,34 @@ class AgentTaskServiceImplTest {
                 .hasMessage("任务步骤不存在")
                 .extracting("errorCode")
                 .isEqualTo(ErrorCode.NOT_FOUND);
+    }
+
+    @Test
+    void shouldRejectStepRunningWhenStepUpdateLostRaceAndNotUpdateRun() {
+        when(runMapper.selectById(100L)).thenReturn(run(100L, "RUNNING", 3, 2));
+        when(stepMapper.selectOne(any())).thenReturn(step(1, "分析需求", "PENDING"));
+        when(stepMapper.update(any(AgentTaskStep.class), any(Wrapper.class))).thenReturn(0);
+
+        assertThatThrownBy(() -> service.markStepRunning(100L, 1))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("任务计划已变更，请刷新后重试")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(runMapper, never()).update(any(AgentTaskRun.class), any(Wrapper.class));
+    }
+
+    @Test
+    void shouldRejectStepCompletedWhenRunRevisionChanged() {
+        when(runMapper.selectById(100L)).thenReturn(run(100L, "RUNNING", 3, 2));
+        when(stepMapper.selectOne(any())).thenReturn(step(1, "分析需求", "RUNNING"));
+        when(stepMapper.update(any(AgentTaskStep.class), any(Wrapper.class))).thenReturn(1);
+        when(runMapper.update(any(AgentTaskRun.class), any(Wrapper.class))).thenReturn(0);
+
+        assertThatThrownBy(() -> service.markStepCompleted(100L, 1))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("任务计划已变更，请刷新后重试")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
     }
 
     @Test

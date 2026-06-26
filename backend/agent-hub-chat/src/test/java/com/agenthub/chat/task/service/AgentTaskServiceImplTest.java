@@ -1,0 +1,183 @@
+package com.agenthub.chat.task.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import com.agenthub.chat.task.dto.TaskProgressItem;
+import com.agenthub.chat.task.entity.AgentTaskRun;
+import com.agenthub.chat.task.entity.AgentTaskStep;
+import com.agenthub.chat.task.mapper.AgentTaskRunMapper;
+import com.agenthub.chat.task.mapper.AgentTaskStepMapper;
+import com.agenthub.chat.task.runtime.AgentTaskPlan;
+import com.agenthub.chat.task.runtime.RunMode;
+import com.agenthub.chat.task.service.impl.AgentTaskServiceImpl;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import java.util.ArrayList;
+import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+
+class AgentTaskServiceImplTest {
+
+    private AgentTaskRunMapper runMapper;
+    private AgentTaskStepMapper stepMapper;
+    private AgentTaskService service;
+
+    @BeforeEach
+    void setUp() {
+        runMapper = mock(AgentTaskRunMapper.class);
+        stepMapper = mock(AgentTaskStepMapper.class);
+        service = new AgentTaskServiceImpl(runMapper, stepMapper);
+        doAnswer(invocation -> {
+            AgentTaskRun run = invocation.getArgument(0);
+            run.setId(100L);
+            return 1;
+        }).when(runMapper).insert(any(AgentTaskRun.class));
+        doAnswer(invocation -> {
+            AgentTaskStep step = invocation.getArgument(0);
+            step.setId((long) step.getStepIndex());
+            return 1;
+        }).when(stepMapper).insert(any(AgentTaskStep.class));
+    }
+
+    @Test
+    void shouldCreateRunAndPendingSteps() {
+        TaskProgressItem progress = service.createRun(
+                7L,
+                20L,
+                30L,
+                RunMode.PLAN_EXECUTE,
+                "生成报告",
+                "分析并生成报告",
+                List.of("分析需求", "生成报告")
+        );
+
+        ArgumentCaptor<AgentTaskRun> runCaptor = ArgumentCaptor.forClass(AgentTaskRun.class);
+        verify(runMapper).insert(runCaptor.capture());
+        AgentTaskRun insertedRun = runCaptor.getValue();
+        assertThat(insertedRun.getUserId()).isEqualTo(7L);
+        assertThat(insertedRun.getConversationId()).isEqualTo(20L);
+        assertThat(insertedRun.getAssistantMessageId()).isEqualTo(30L);
+        assertThat(insertedRun.getMode()).isEqualTo("PLAN_EXECUTE");
+        assertThat(insertedRun.getStatus()).isEqualTo("PLANNING");
+        assertThat(insertedRun.getCurrentStepIndex()).isZero();
+        assertThat(insertedRun.getTotalSteps()).isEqualTo(2);
+        assertThat(insertedRun.getRevision()).isEqualTo(1);
+
+        ArgumentCaptor<AgentTaskStep> stepCaptor = ArgumentCaptor.forClass(AgentTaskStep.class);
+        verify(stepMapper, org.mockito.Mockito.times(2)).insert(stepCaptor.capture());
+        assertThat(stepCaptor.getAllValues()).extracting(AgentTaskStep::getName)
+                .containsExactly("分析需求", "生成报告");
+        assertThat(stepCaptor.getAllValues()).extracting(AgentTaskStep::getStatus)
+                .containsExactly("PENDING", "PENDING");
+        assertThat(progress.status()).isEqualTo("PLANNING");
+        assertThat(progress.steps()).hasSize(2);
+    }
+
+    @Test
+    void shouldReplacePlanDeleteOldStepsInsertNewStepsAndIncrementRevision() {
+        AgentTaskRun existing = run(100L, "PLANNING", 1, 2);
+        when(runMapper.selectById(100L)).thenReturn(existing);
+        when(stepMapper.selectList(any())).thenReturn(steps("旧步骤"));
+
+        TaskProgressItem progress = service.replacePlan(
+                100L,
+                new AgentTaskPlan("新任务", "新计划", List.of("第一步", "第二步", "第三步"))
+        );
+
+        verify(stepMapper).delete(any(Wrapper.class));
+        ArgumentCaptor<AgentTaskRun> runCaptor = ArgumentCaptor.forClass(AgentTaskRun.class);
+        verify(runMapper).updateById(runCaptor.capture());
+        assertThat(runCaptor.getValue().getRevision()).isEqualTo(2);
+        assertThat(runCaptor.getValue().getTotalSteps()).isEqualTo(3);
+        assertThat(runCaptor.getValue().getTitle()).isEqualTo("新任务");
+        ArgumentCaptor<AgentTaskStep> stepCaptor = ArgumentCaptor.forClass(AgentTaskStep.class);
+        verify(stepMapper, org.mockito.Mockito.times(3)).insert(stepCaptor.capture());
+        assertThat(stepCaptor.getAllValues()).extracting(AgentTaskStep::getName)
+                .containsExactly("第一步", "第二步", "第三步");
+        assertThat(progress.revision()).isEqualTo(2);
+        assertThat(progress.steps()).extracting("name").containsExactly("第一步", "第二步", "第三步");
+    }
+
+    @Test
+    void shouldMarkStepRunningCompletedFailedCompletedAndStopped() {
+        AgentTaskRun existing = run(100L, "PLANNING", 1, 2);
+        AgentTaskStep first = step(1, "分析需求", "PENDING");
+        AgentTaskStep second = step(2, "生成报告", "PENDING");
+        when(runMapper.selectById(100L)).thenReturn(existing);
+        when(stepMapper.selectOne(any())).thenReturn(first, first);
+        when(stepMapper.selectList(any())).thenReturn(List.of(first, second));
+
+        TaskProgressItem running = service.markStepRunning(100L, 1);
+        TaskProgressItem completedStep = service.markStepCompleted(100L, 1);
+        TaskProgressItem failed = service.markFailed(100L, "执行失败");
+        TaskProgressItem completed = service.markCompleted(100L);
+        service.stopByAssistantMessageId(7L, 30L);
+
+        assertThat(running.status()).isEqualTo("RUNNING");
+        assertThat(completedStep.currentStepIndex()).isEqualTo(1);
+        assertThat(failed.status()).isEqualTo("FAILED");
+        assertThat(failed.errorMessage()).isEqualTo("执行失败");
+        assertThat(completed.status()).isEqualTo("COMPLETED");
+        verify(runMapper, org.mockito.Mockito.atLeast(4)).updateById(any(AgentTaskRun.class));
+        verify(runMapper).update(any(AgentTaskRun.class), any(Wrapper.class));
+    }
+
+    @Test
+    void shouldFindLatestActiveProgressForUserAndConversation() {
+        AgentTaskRun active = run(100L, "RUNNING", 2, 3);
+        active.setUserId(7L);
+        active.setConversationId(20L);
+        when(runMapper.selectList(any())).thenReturn(List.of(active));
+        when(stepMapper.selectList(any())).thenReturn(List.of(
+                step(1, "分析需求", "COMPLETED"),
+                step(2, "执行任务", "RUNNING")
+        ));
+
+        TaskProgressItem progress = service.findActiveProgress(7L, 20L);
+
+        assertThat(progress.taskRunId()).isEqualTo(100L);
+        assertThat(progress.status()).isEqualTo("RUNNING");
+        assertThat(progress.steps()).extracting("name").containsExactly("分析需求", "执行任务");
+        verify(runMapper).selectList(any(Wrapper.class));
+    }
+
+    private AgentTaskRun run(Long id, String status, Integer revision, Integer totalSteps) {
+        AgentTaskRun run = new AgentTaskRun();
+        run.setId(id);
+        run.setUserId(7L);
+        run.setConversationId(20L);
+        run.setAssistantMessageId(30L);
+        run.setMode("PLAN_EXECUTE");
+        run.setStatus(status);
+        run.setTitle("生成报告");
+        run.setPlanSummary("分析并生成报告");
+        run.setCurrentStepIndex(0);
+        run.setTotalSteps(totalSteps);
+        run.setRevision(revision);
+        return run;
+    }
+
+    private List<AgentTaskStep> steps(String... names) {
+        List<AgentTaskStep> steps = new ArrayList<>();
+        for (int i = 0; i < names.length; i++) {
+            steps.add(step(i + 1, names[i], "PENDING"));
+        }
+        return steps;
+    }
+
+    private AgentTaskStep step(Integer index, String name, String status) {
+        AgentTaskStep step = new AgentTaskStep();
+        step.setId(index.longValue());
+        step.setTaskRunId(100L);
+        step.setStepIndex(index);
+        step.setName(name);
+        step.setStatus(status);
+        return step;
+    }
+}

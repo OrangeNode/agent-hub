@@ -1,0 +1,9 @@
+package com.agenthub.chat.task.mapper;
+
+import com.agenthub.chat.task.entity.AgentTaskRun;
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.apache.ibatis.annotations.Mapper;
+
+@Mapper
+public interface AgentTaskRunMapper extends BaseMapper<AgentTaskRun> {
+}

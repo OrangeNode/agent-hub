@@ -919,6 +919,56 @@ export function applyStreamConversationId<T>(
   return streamConversationId
 }
 
+export interface TaskStreamGuardState {
+  currentTaskStreamToken: number | null
+  streamToken: number
+  activeConversationId: number | null
+  streamConversationIds: Array<number | null | undefined>
+}
+
+export function shouldApplyTaskProgressForStream(state: TaskStreamGuardState) {
+  if (!state.currentTaskStreamToken || state.currentTaskStreamToken !== state.streamToken || !state.activeConversationId) {
+    return false
+  }
+
+  return state.streamConversationIds.some((conversationId) => conversationId === state.activeConversationId)
+}
+
+export type TaskProgressTerminalStatus = 'FAILED' | 'STOPPED'
+
+export interface TaskProgressTerminalStepLike {
+  status: string
+  errorMessage?: string | null
+}
+
+export interface TaskProgressTerminalLike {
+  status: string
+  errorMessage?: string | null
+  steps: TaskProgressTerminalStepLike[]
+}
+
+export function markTaskProgressTerminal<T extends TaskProgressTerminalLike>(
+  progress: T | null | undefined,
+  status: TaskProgressTerminalStatus,
+  errorMessage?: string | null
+) {
+  if (!progress) {
+    return null
+  }
+
+  const terminalMessage = errorMessage ?? progress.errorMessage ?? null
+  return {
+    ...progress,
+    status,
+    errorMessage: terminalMessage,
+    steps: progress.steps.map((step) =>
+      step.status === 'RUNNING'
+        ? { ...step, status, errorMessage: terminalMessage }
+        : { ...step }
+    )
+  } as T
+}
+
 export interface NewConversationState {
   activeConversationId: number | null
   activeAgentKey: string | null
@@ -1100,6 +1150,8 @@ const deletingConversation = ref(false)
 const sidebarCollapsed = ref(false)
 const activeConversationId = ref<number | null>(null)
 const activeTaskProgress = ref<ChatTaskProgressRecord | null>(null)
+const currentTaskStreamToken = ref<number | null>(null)
+const taskStreamConversationIds = ref<number[]>([])
 const activeAgentName = ref('通用 Agent')
 const activeAgentKey = ref<string | null>(null)
 const thinkingMode = ref<ThinkingMode>('instant')
@@ -1131,6 +1183,7 @@ const conversationsLoading = ref(false)
 const conversationHasMore = ref(true)
 let reasoningTimer: ReturnType<typeof window.setInterval> | null = null
 let sentLocalPreviewUrls = new Set<string>()
+let taskStreamSequence = 0
 
 watch(prompt, (val) => {
   isMultiline.value = val.includes('\n') || val.length > 40
@@ -1355,6 +1408,61 @@ function applyTaskProgress(progress: ChatTaskProgressRecord | null | undefined) 
   activeTaskProgress.value = progress ? normalizeTaskProgress(progress) : null
 }
 
+function activateTaskStreamContext(conversationId: number) {
+  const taskStreamToken = taskStreamSequence + 1
+  taskStreamSequence = taskStreamToken
+  currentTaskStreamToken.value = taskStreamToken
+  taskStreamConversationIds.value = [conversationId]
+  return taskStreamToken
+}
+
+function deactivateTaskStreamContext() {
+  currentTaskStreamToken.value = null
+  taskStreamConversationIds.value = []
+}
+
+function registerTaskStreamConversationId(conversationId?: number | null, taskStreamToken = currentTaskStreamToken.value) {
+  if (
+    !conversationId
+    || !taskStreamToken
+    || currentTaskStreamToken.value !== taskStreamToken
+    || taskStreamConversationIds.value.includes(conversationId)
+  ) {
+    return
+  }
+
+  taskStreamConversationIds.value = [...taskStreamConversationIds.value, conversationId]
+}
+
+function isCurrentTaskStream(taskStreamToken: number | null | undefined) {
+  if (!taskStreamToken) {
+    return false
+  }
+
+  return shouldApplyTaskProgressForStream({
+    currentTaskStreamToken: currentTaskStreamToken.value,
+    streamToken: taskStreamToken,
+    activeConversationId: activeConversationId.value,
+    streamConversationIds: taskStreamConversationIds.value
+  })
+}
+
+function markTaskProgressFailedForCurrentStream(errorMessage: string, taskStreamToken = currentTaskStreamToken.value) {
+  if (!isCurrentTaskStream(taskStreamToken)) {
+    return
+  }
+
+  activeTaskProgress.value = markTaskProgressTerminal(activeTaskProgress.value, 'FAILED', errorMessage)
+}
+
+function markTaskProgressStoppedForCurrentStream(errorMessage: string, taskStreamToken = currentTaskStreamToken.value) {
+  if (!isCurrentTaskStream(taskStreamToken)) {
+    return
+  }
+
+  activeTaskProgress.value = markTaskProgressTerminal(activeTaskProgress.value, 'STOPPED', errorMessage)
+}
+
 async function restoreActiveTaskProgress(conversationId: number | null) {
   if (!conversationId || conversationId < 1) {
     activeTaskProgress.value = null
@@ -1391,7 +1499,6 @@ async function loadConversations(options: { reset?: boolean } = {}) {
     conversationHasMore.value = conversations.value.filter((conversation) => conversation.id > 0).length < data.total
     if (activeConversationId.value) {
       syncActiveAgentFromConversation()
-      await restoreActiveTaskProgress(activeConversationId.value)
     }
 
     if (!activeConversationId.value && conversations.value.length) {
@@ -1555,6 +1662,7 @@ function createConversation(options: NewConversationResetOptions = {}) {
 }
 
 async function switchConversation(conversationId: number) {
+  deactivateTaskStreamContext()
   activeConversationId.value = conversationId
   activeTaskProgress.value = null
   openConversationMenuId.value = null
@@ -1665,6 +1773,7 @@ async function confirmDeleteConversation() {
     delete messageMap.value[conversationId]
     delete artifactMap.value[conversationId]
     if (activeConversationId.value === conversationId) {
+      deactivateTaskStreamContext()
       activeTaskProgress.value = null
       clearSelectedReuseAttachments()
       clearPendingImages()
@@ -2208,6 +2317,7 @@ function closeStream() {
   streamControllerRef.value?.abort()
   streamControllerRef.value = null
   streaming.value = false
+  deactivateTaskStreamContext()
   syncReasoningTimer()
 }
 
@@ -2225,6 +2335,8 @@ function refreshAfterStopping() {
 
 function stopCurrentStream() {
   const assistantMessage = findStoppableAssistantMessage(currentMessages.value)
+  markTaskProgressStoppedForCurrentStream('已中止生成')
+  deactivateTaskStreamContext()
   if (assistantMessage && assistantMessage.id > 0) {
     markCurrentAssistantStopped()
     void requestStopGeneration(assistantMessage.id).finally(() => {
@@ -2364,11 +2476,18 @@ function handleSend() {
     currentAssistantMessageId = applyStreamAssistantMessageId(messages, currentAssistantMessageId, messageId)
   }
   const applyStreamConversationIdFromEvent = (streamConversationId?: number | null) => {
+    registerTaskStreamConversationId(streamConversationId, taskStreamToken)
     activeConversationId.value = applyStreamConversationId(
       messageMap.value,
       activeConversationId.value,
       streamConversationId
     )
+  }
+  const taskStreamToken = activateTaskStreamContext(conversationId)
+  const guardedApplyTaskProgress = (progress: ChatTaskProgressRecord) => {
+    if (isCurrentTaskStream(taskStreamToken)) {
+      applyTaskProgress(progress)
+    }
   }
 
   streamControllerRef.value = openChatStream(
@@ -2445,13 +2564,13 @@ function handleSend() {
           applyToolResultEvent(ensureProcessEvents(assistantMessage), data)
         }
       },
-      onTaskProgressStarted: applyTaskProgress,
-      onTaskProgressUpdated: applyTaskProgress,
-      onTaskStepStarted: applyTaskProgress,
-      onTaskStepCompleted: applyTaskProgress,
-      onTaskStepFailed: applyTaskProgress,
-      onTaskPlanRevised: applyTaskProgress,
-      onTaskProgressCompleted: applyTaskProgress,
+      onTaskProgressStarted: guardedApplyTaskProgress,
+      onTaskProgressUpdated: guardedApplyTaskProgress,
+      onTaskStepStarted: guardedApplyTaskProgress,
+      onTaskStepCompleted: guardedApplyTaskProgress,
+      onTaskStepFailed: guardedApplyTaskProgress,
+      onTaskPlanRevised: guardedApplyTaskProgress,
+      onTaskProgressCompleted: guardedApplyTaskProgress,
       onMessageCompleted: (data) => {
         const assistantMessage = findAssistantMessage(data.messageId ?? currentAssistantMessageId)
         if (applyMessageCompletedIfStreaming(assistantMessage, data.status)) {
@@ -2463,6 +2582,7 @@ function handleSend() {
         if (shouldApplyStreamingEvent(assistantMessage)) {
           markAssistantFailed(assistantMessage, data.message ?? '流式响应失败')
         }
+        markTaskProgressFailedForCurrentStream(data.message ?? '流式响应失败', taskStreamToken)
         message.error(data.message ?? '\u6d41\u5f0f\u54cd\u5e94\u5931\u8d25')
         closeStream()
         void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
@@ -2477,6 +2597,7 @@ function handleSend() {
       },
       onTransportError: () => {
         markCurrentAssistantStopped('SSE 连接已断开，正在同步状态')
+        markTaskProgressStoppedForCurrentStream('SSE 连接已断开，正在同步状态', taskStreamToken)
         closeStream()
         void refreshActiveConversationMessages().finally(revokeSentPreviewUrls)
         void refreshActiveArtifacts()

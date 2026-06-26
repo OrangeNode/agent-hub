@@ -42,6 +42,37 @@ export interface ChatToolTraceRecord {
   result: string
 }
 
+export type ChatTaskStatus = 'PLANNING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'STOPPED' | string
+
+export type ChatTaskStepStatus =
+  | 'PENDING'
+  | 'RUNNING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'STOPPED'
+  | 'SKIPPED'
+  | string
+
+export interface ChatTaskStepRecord {
+  stepIndex: number
+  name: string
+  status: ChatTaskStepStatus
+  errorMessage?: string | null
+}
+
+export interface ChatTaskProgressRecord {
+  taskRunId: string
+  mode: string
+  status: ChatTaskStatus
+  title: string
+  planSummary?: string | null
+  currentStepIndex: number
+  totalSteps: number
+  revision: number
+  errorMessage?: string | null
+  steps: ChatTaskStepRecord[]
+}
+
 export type ChatProcessEventRecord =
   | { type: 'reasoning'; content: string }
   | { type: 'tool'; tool: ChatToolTraceRecord }
@@ -171,6 +202,13 @@ export interface ChatStreamHandlers {
   onToolCall?: (data: { toolCallId: string; name: string }) => void
   onToolOutput?: (data: { toolCallId: string; stream: string; content: string }) => void
   onToolResult?: (data: { toolCallId: string; name: string; status: string; content: string }) => void
+  onTaskProgressStarted?: (data: ChatTaskProgressRecord) => void
+  onTaskProgressUpdated?: (data: ChatTaskProgressRecord) => void
+  onTaskStepStarted?: (data: ChatTaskProgressRecord) => void
+  onTaskStepCompleted?: (data: ChatTaskProgressRecord) => void
+  onTaskStepFailed?: (data: ChatTaskProgressRecord) => void
+  onTaskPlanRevised?: (data: ChatTaskProgressRecord) => void
+  onTaskProgressCompleted?: (data: ChatTaskProgressRecord) => void
   onMessageCompleted?: (data: { messageId: number; status: string }) => void
   onError?: (data: ChatStreamErrorRecord) => void
   onDone?: () => void
@@ -349,6 +387,27 @@ function dispatchSseEvent(event: ParsedSseEvent, handlers: ChatStreamHandlers) {
     case 'tool_result':
       dispatchJson(event.data, handlers.onToolResult)
       break
+    case 'task_progress_started':
+      dispatchJson(event.data, handlers.onTaskProgressStarted)
+      break
+    case 'task_progress_updated':
+      dispatchJson(event.data, handlers.onTaskProgressUpdated)
+      break
+    case 'task_step_started':
+      dispatchJson(event.data, handlers.onTaskStepStarted)
+      break
+    case 'task_step_completed':
+      dispatchJson(event.data, handlers.onTaskStepCompleted)
+      break
+    case 'task_step_failed':
+      dispatchJson(event.data, handlers.onTaskStepFailed)
+      break
+    case 'task_plan_revised':
+      dispatchJson(event.data, handlers.onTaskPlanRevised)
+      break
+    case 'task_progress_completed':
+      dispatchJson(event.data, handlers.onTaskProgressCompleted)
+      break
     case 'message_completed':
       dispatchJson(event.data, handlers.onMessageCompleted)
       break
@@ -385,6 +444,13 @@ export async function fetchConversations(params: FetchConversationsParams = {}) 
 
 export async function fetchConversationMessages(conversationId: number) {
   const response = await http.get<ApiResponse<ChatMessageRecord[]>>(`/chat/conversations/${conversationId}/messages`)
+  return response.data.data
+}
+
+export async function fetchActiveTaskProgress(conversationId: number) {
+  const response = await http.get<ApiResponse<ChatTaskProgressRecord | null>>(
+    `/chat/conversations/${conversationId}/tasks/active`
+  )
   return response.data.data
 }
 

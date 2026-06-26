@@ -150,4 +150,66 @@ describe('聊天流工具事件', () => {
       }
     ])
   })
+
+  it('应该分发任务进度开始和完成事件', async () => {
+    const events: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      body: sseBody(
+        'event: task_progress_started\ndata: {"taskRunId":"task-1","mode":"AUTO","status":"PLANNING","title":"生成报告","planSummary":"先检索后写作","currentStepIndex":0,"totalSteps":2,"revision":1,"steps":[{"stepIndex":1,"name":"检索资料","status":"PENDING"},{"stepIndex":2,"name":"撰写报告","status":"PENDING"}]}\n\n',
+        'event: task_progress_completed\ndata: {"taskRunId":"task-1","mode":"AUTO","status":"COMPLETED","title":"生成报告","planSummary":"先检索后写作","currentStepIndex":2,"totalSteps":2,"revision":3,"steps":[{"stepIndex":1,"name":"检索资料","status":"COMPLETED"},{"stepIndex":2,"name":"撰写报告","status":"COMPLETED"}]}\n\n',
+        'event: done\ndata: {}\n\n'
+      )
+    }))
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error('等待任务进度事件超时')), 1000)
+      const finish = (callback: () => void) => {
+        window.clearTimeout(timeout)
+        callback()
+      }
+      openChatStream(
+        { prompt: '生成报告', token: 'token' },
+        {
+          onTaskProgressStarted: (data) => events.push({ type: 'started', ...data }),
+          onTaskProgressCompleted: (data) => events.push({ type: 'completed', ...data }),
+          onDone: () => finish(resolve),
+          onTransportError: (error) => finish(() => reject(error))
+        }
+      )
+    })
+
+    expect(events).toEqual([
+      {
+        type: 'started',
+        taskRunId: 'task-1',
+        mode: 'AUTO',
+        status: 'PLANNING',
+        title: '生成报告',
+        planSummary: '先检索后写作',
+        currentStepIndex: 0,
+        totalSteps: 2,
+        revision: 1,
+        steps: [
+          { stepIndex: 1, name: '检索资料', status: 'PENDING' },
+          { stepIndex: 2, name: '撰写报告', status: 'PENDING' }
+        ]
+      },
+      {
+        type: 'completed',
+        taskRunId: 'task-1',
+        mode: 'AUTO',
+        status: 'COMPLETED',
+        title: '生成报告',
+        planSummary: '先检索后写作',
+        currentStepIndex: 2,
+        totalSteps: 2,
+        revision: 3,
+        steps: [
+          { stepIndex: 1, name: '检索资料', status: 'COMPLETED' },
+          { stepIndex: 2, name: '撰写报告', status: 'COMPLETED' }
+        ]
+      }
+    ])
+  })
 })

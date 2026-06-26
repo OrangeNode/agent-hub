@@ -23,6 +23,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
         "com.agenthub.tool.binding.mapper",
         "com.agenthub.chat.conversation.mapper",
         "com.agenthub.chat.message.mapper",
+        "com.agenthub.chat.task.mapper",
         "com.agenthub.storage.attachment.mapper",
         "com.agenthub.chat.summary.mapper"
 })

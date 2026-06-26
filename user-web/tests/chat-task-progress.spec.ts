@@ -15,7 +15,7 @@ vi.mock('../src/api/http', () => ({
 
 function progressOf(overrides: Partial<ChatTaskProgressRecord>): ChatTaskProgressRecord {
   return {
-    taskRunId: 'task-1',
+    taskRunId: 123,
     mode: 'AUTO',
     status: 'RUNNING',
     title: '生成报告',
@@ -52,7 +52,7 @@ describe('聊天任务进度辅助函数', () => {
 
   it('应该规范化默认值并按步骤序号排序', () => {
     const normalized = normalizeTaskProgress({
-      taskRunId: 'task-1',
+      taskRunId: 123,
       mode: '',
       status: '',
       title: '',
@@ -68,7 +68,7 @@ describe('聊天任务进度辅助函数', () => {
     } as unknown as ChatTaskProgressRecord)
 
     expect(normalized).toMatchObject({
-      taskRunId: 'task-1',
+      taskRunId: 123,
       mode: '',
       status: 'PLANNING',
       title: '任务进度',
@@ -94,6 +94,32 @@ describe('聊天任务进度辅助函数', () => {
         errorMessage: ''
       }
     ])
+  })
+
+  it('应该把异常数值归一化为非负进度', () => {
+    const negative = progressOf({
+      status: 'RUNNING',
+      currentStepIndex: '-1' as unknown as number,
+      totalSteps: '-3' as unknown as number
+    })
+
+    expect(normalizeTaskProgress(negative)).toMatchObject({
+      currentStepIndex: 0,
+      totalSteps: 0
+    })
+    expect(buildTaskProgressText(negative)).toBe('任务进度：正在执行 0 / 0')
+
+    const missing = normalizeTaskProgress({
+      taskRunId: 123,
+      mode: 'AUTO',
+      status: 'RUNNING',
+      title: '生成报告',
+      revision: 1,
+      steps: []
+    } as unknown as ChatTaskProgressRecord)
+
+    expect(missing.currentStepIndex).toBe(0)
+    expect(missing.totalSteps).toBe(0)
   })
 
   it('应该返回步骤状态中文文案', () => {

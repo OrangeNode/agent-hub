@@ -9,7 +9,7 @@ export interface NormalizedTaskStepRecord {
 }
 
 export interface NormalizedTaskProgress {
-  taskRunId: string
+  taskRunId: number
   mode: string
   status: ChatTaskStatus
   title: string
@@ -25,13 +25,13 @@ export function normalizeTaskProgress(progress: ChatTaskProgressRecord): Normali
   const steps = Array.isArray(progress.steps) ? progress.steps : []
 
   return {
-    taskRunId: textOf(progress.taskRunId),
+    taskRunId: numberOf(progress.taskRunId),
     mode: textOf(progress.mode),
     status: (textOf(progress.status) || 'PLANNING') as ChatTaskStatus,
     title: textOf(progress.title) || '任务进度',
     planSummary: textOf(progress.planSummary),
-    currentStepIndex: numberOf(progress.currentStepIndex),
-    totalSteps: numberOf(progress.totalSteps),
+    currentStepIndex: nonNegativeNumberOf(progress.currentStepIndex),
+    totalSteps: nonNegativeNumberOf(progress.totalSteps),
     revision: numberOf(progress.revision),
     errorMessage: textOf(progress.errorMessage),
     steps: steps
@@ -91,6 +91,10 @@ export function taskStepStatusText(status: ChatTaskStepStatus): string {
 function numberOf(value: unknown, fallback = 0): number {
   const numberValue = Number(value)
   return Number.isFinite(numberValue) ? numberValue : fallback
+}
+
+function nonNegativeNumberOf(value: unknown, fallback = 0): number {
+  return Math.max(0, numberOf(value, fallback))
 }
 
 function textOf(value: unknown): string {

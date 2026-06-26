@@ -61,7 +61,7 @@ export interface ChatTaskStepRecord {
 }
 
 export interface ChatTaskProgressRecord {
-  taskRunId: string
+  taskRunId: number
   mode: string
   status: ChatTaskStatus
   title: string

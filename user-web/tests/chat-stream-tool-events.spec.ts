@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { openChatStream } from '../src/api/chat'
+import { openChatStream, type ChatStreamHandlers, type ChatTaskProgressRecord } from '../src/api/chat'
 
 function sseBody(...frames: string[]) {
   const encoder = new TextEncoder()
@@ -156,8 +156,8 @@ describe('聊天流工具事件', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
       body: sseBody(
-        'event: task_progress_started\ndata: {"taskRunId":"task-1","mode":"AUTO","status":"PLANNING","title":"生成报告","planSummary":"先检索后写作","currentStepIndex":0,"totalSteps":2,"revision":1,"steps":[{"stepIndex":1,"name":"检索资料","status":"PENDING"},{"stepIndex":2,"name":"撰写报告","status":"PENDING"}]}\n\n',
-        'event: task_progress_completed\ndata: {"taskRunId":"task-1","mode":"AUTO","status":"COMPLETED","title":"生成报告","planSummary":"先检索后写作","currentStepIndex":2,"totalSteps":2,"revision":3,"steps":[{"stepIndex":1,"name":"检索资料","status":"COMPLETED"},{"stepIndex":2,"name":"撰写报告","status":"COMPLETED"}]}\n\n',
+        'event: task_progress_started\ndata: {"taskRunId":123,"mode":"AUTO","status":"PLANNING","title":"生成报告","planSummary":"先检索后写作","currentStepIndex":0,"totalSteps":2,"revision":1,"steps":[{"stepIndex":1,"name":"检索资料","status":"PENDING"},{"stepIndex":2,"name":"撰写报告","status":"PENDING"}]}\n\n',
+        'event: task_progress_completed\ndata: {"taskRunId":123,"mode":"AUTO","status":"COMPLETED","title":"生成报告","planSummary":"先检索后写作","currentStepIndex":2,"totalSteps":2,"revision":3,"steps":[{"stepIndex":1,"name":"检索资料","status":"COMPLETED"},{"stepIndex":2,"name":"撰写报告","status":"COMPLETED"}]}\n\n',
         'event: done\ndata: {}\n\n'
       )
     }))
@@ -182,7 +182,7 @@ describe('聊天流工具事件', () => {
     expect(events).toEqual([
       {
         type: 'started',
-        taskRunId: 'task-1',
+        taskRunId: 123,
         mode: 'AUTO',
         status: 'PLANNING',
         title: '生成报告',
@@ -197,7 +197,7 @@ describe('聊天流工具事件', () => {
       },
       {
         type: 'completed',
-        taskRunId: 'task-1',
+        taskRunId: 123,
         mode: 'AUTO',
         status: 'COMPLETED',
         title: '生成报告',
@@ -209,6 +209,70 @@ describe('聊天流工具事件', () => {
           { stepIndex: 1, name: '检索资料', status: 'COMPLETED' },
           { stepIndex: 2, name: '撰写报告', status: 'COMPLETED' }
         ]
+      }
+    ])
+  })
+
+  type TaskHandlerName =
+    | 'onTaskProgressStarted'
+    | 'onTaskProgressUpdated'
+    | 'onTaskStepStarted'
+    | 'onTaskStepCompleted'
+    | 'onTaskStepFailed'
+    | 'onTaskPlanRevised'
+    | 'onTaskProgressCompleted'
+
+  it.each([
+    ['task_progress_started', 'onTaskProgressStarted'],
+    ['task_progress_updated', 'onTaskProgressUpdated'],
+    ['task_step_started', 'onTaskStepStarted'],
+    ['task_step_completed', 'onTaskStepCompleted'],
+    ['task_step_failed', 'onTaskStepFailed'],
+    ['task_plan_revised', 'onTaskPlanRevised'],
+    ['task_progress_completed', 'onTaskProgressCompleted']
+  ] as Array<[string, TaskHandlerName]>)('应该把 %s 分发到 %s', async (eventName, handlerName) => {
+    const payload: ChatTaskProgressRecord = {
+      taskRunId: 123,
+      mode: 'AUTO',
+      status: 'RUNNING',
+      title: '生成报告',
+      planSummary: '先检索后写作',
+      currentStepIndex: 1,
+      totalSteps: 2,
+      revision: 2,
+      steps: [
+        { stepIndex: 1, name: '检索资料', status: 'RUNNING' },
+        { stepIndex: 2, name: '撰写报告', status: 'PENDING' }
+      ]
+    }
+    const events: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      body: sseBody(
+        `event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`,
+        'event: done\ndata: {}\n\n'
+      )
+    }))
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error('等待任务进度事件超时')), 1000)
+      const finish = (callback: () => void) => {
+        window.clearTimeout(timeout)
+        callback()
+      }
+      const handlers: ChatStreamHandlers = {
+        onDone: () => finish(resolve),
+        onTransportError: (error) => finish(() => reject(error))
+      }
+      handlers[handlerName] = (data: ChatTaskProgressRecord) => events.push({ type: eventName, ...data })
+
+      openChatStream({ prompt: '生成报告', token: 'token' }, handlers)
+    })
+
+    expect(events).toEqual([
+      {
+        type: eventName,
+        ...payload
       }
     ])
   })

@@ -25,6 +25,15 @@ import com.agenthub.chat.message.dto.MessageProcessEvent;
 import com.agenthub.chat.message.entity.ChatMessage;
 import com.agenthub.chat.message.mapper.ChatMessageMapper;
 import com.agenthub.chat.service.ChatService;
+import com.agenthub.chat.task.dto.TaskProgressItem;
+import com.agenthub.chat.task.dto.TaskStepItem;
+import com.agenthub.chat.task.runtime.AgentRunDecision;
+import com.agenthub.chat.task.runtime.AgentRunInput;
+import com.agenthub.chat.task.runtime.AgentRunRouter;
+import com.agenthub.chat.task.runtime.AgentTaskPlan;
+import com.agenthub.chat.task.runtime.AgentTaskPlanner;
+import com.agenthub.chat.task.runtime.RunMode;
+import com.agenthub.chat.task.service.AgentTaskService;
 import com.agenthub.chat.title.ConversationTitleService;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.api.PageResult;
@@ -138,6 +147,9 @@ public class ChatServiceImpl implements ChatService {
     private final SandboxSessionService sandboxSessionService;
     private final SandboxClient sandboxClient;
     private final ObjectStorageClient objectStorageClient;
+    private final AgentTaskService taskService;
+    private final AgentRunRouter runRouter;
+    private final AgentTaskPlanner taskPlanner;
 
     @Autowired
     public ChatServiceImpl(
@@ -154,12 +166,15 @@ public class ChatServiceImpl implements ChatService {
             SkillRuntimeService skillRuntimeService,
             SandboxSessionService sandboxSessionService,
             SandboxClient sandboxClient,
-            ObjectStorageClient objectStorageClient
+            ObjectStorageClient objectStorageClient,
+            AgentTaskService taskService,
+            AgentRunRouter runRouter,
+            AgentTaskPlanner taskPlanner
     ) {
         this(conversationMapper, messageMapper, modelService, titleService, transactionTemplate, new SseEventSender(),
                 attachmentService, agentService, contextBuilder, LlmClientFactory::create, defaultStreamExecutor(),
                 sandboxToolService, toolRegistry, skillRuntimeService,
-                sandboxSessionService, sandboxClient, objectStorageClient);
+                sandboxSessionService, sandboxClient, objectStorageClient, taskService, runRouter, taskPlanner);
     }
 
     public ChatServiceImpl(
@@ -255,6 +270,34 @@ public class ChatServiceImpl implements ChatService {
             SandboxClient sandboxClient,
             ObjectStorageClient objectStorageClient
     ) {
+        this(conversationMapper, messageMapper, modelService, titleService, transactionTemplate, sseEventSender,
+                attachmentService, agentService, contextBuilder, llmClientFactory, streamExecutor,
+                sandboxToolService, toolRegistry, skillRuntimeService, sandboxSessionService, sandboxClient,
+                objectStorageClient, null, null, null);
+    }
+
+    public ChatServiceImpl(
+            ChatConversationMapper conversationMapper,
+            ChatMessageMapper messageMapper,
+            AiModelService modelService,
+            ConversationTitleService titleService,
+            TransactionTemplate transactionTemplate,
+            SseEventSender sseEventSender,
+            AttachmentService attachmentService,
+            AgentService agentService,
+            ConversationContextBuilder contextBuilder,
+            Function<String, LlmClient> llmClientFactory,
+            Executor streamExecutor,
+            SandboxToolService sandboxToolService,
+            ToolRegistry toolRegistry,
+            SkillRuntimeService skillRuntimeService,
+            SandboxSessionService sandboxSessionService,
+            SandboxClient sandboxClient,
+            ObjectStorageClient objectStorageClient,
+            AgentTaskService taskService,
+            AgentRunRouter runRouter,
+            AgentTaskPlanner taskPlanner
+    ) {
         this.conversationMapper = conversationMapper;
         this.messageMapper = messageMapper;
         this.modelService = modelService;
@@ -272,6 +315,9 @@ public class ChatServiceImpl implements ChatService {
         this.sandboxSessionService = sandboxSessionService;
         this.sandboxClient = sandboxClient;
         this.objectStorageClient = objectStorageClient;
+        this.taskService = taskService;
+        this.runRouter = runRouter;
+        this.taskPlanner = taskPlanner;
     }
 
     /**
@@ -312,6 +358,9 @@ public class ChatServiceImpl implements ChatService {
             throw new BusinessException(ErrorCode.INTERNAL_ERROR, "聊天记录准备失败");
         }
 
+        AgentRunDecision runDecision = routeRun(normalizedPrompt);
+        TaskRunContext taskRunContext = createTaskRunIfNeeded(preparedChat, normalizedPrompt, runDecision);
+
         SseEmitter emitter = new SseEmitter(SSE_TIMEOUT);
         Long assistantMessageId = preparedChat.assistantMessage().getId();
         String streamId = "chatmsg_" + assistantMessageId + "_" + System.currentTimeMillis();
@@ -327,14 +376,57 @@ public class ChatServiceImpl implements ChatService {
             streamExecutor.execute(() -> streamLlm(emitter, preparedChat.conversation().getUserId(),
                     preparedChat.conversation().getId(), runtimeConfig, preparedChat.context().messages(),
                     preparedChat.assistantMessage(), preparedChat.conversation().getAgentKey(), resolvedAgentId,
-                    thinkingEnabled, preparedChat.skillContext()));
+                    thinkingEnabled, preparedChat.skillContext(), normalizedPrompt, taskRunContext));
         } else {
             // 初始事件发送失败说明客户端已断开，直接标记助手消息停止。
             stopAssistantMessage(preparedChat.assistantMessage(), new StringBuilder(), new StringBuilder(),
                     SSE_CONNECTION_CLOSED, new ProcessEventRecorder());
+            stopTaskRunQuietly(preparedChat.conversation().getUserId(), assistantMessageId, taskRunContext);
             sseEventSender.complete(emitter);
         }
         return emitter;
+    }
+
+    private AgentRunDecision routeRun(String prompt) {
+        if (runRouter == null) {
+            return new AgentRunDecision(RunMode.DIRECT_CHAT, null, null);
+        }
+        AgentRunDecision decision = runRouter.route(new AgentRunInput(prompt));
+        if (decision == null || decision.runMode() == null) {
+            return new AgentRunDecision(RunMode.DIRECT_CHAT, null, null);
+        }
+        return decision;
+    }
+
+    private TaskRunContext createTaskRunIfNeeded(
+            PreparedChat preparedChat,
+            String prompt,
+            AgentRunDecision runDecision
+    ) {
+        if (taskService == null || runDecision == null || runDecision.runMode() != RunMode.PLAN_EXECUTE) {
+            return null;
+        }
+        TaskProgressItem progress = taskService.createRun(
+                preparedChat.conversation().getUserId(),
+                preparedChat.conversation().getId(),
+                preparedChat.assistantMessage().getId(),
+                runDecision.runMode(),
+                prompt,
+                prompt,
+                List.of("执行任务")
+        );
+        return new TaskRunContext(progress);
+    }
+
+    private void stopTaskRunQuietly(Long userId, Long assistantMessageId, TaskRunContext taskRunContext) {
+        if (taskService == null || taskRunContext == null || taskRunContext.taskRunId() == null) {
+            return;
+        }
+        try {
+            taskService.stopByAssistantMessageId(userId, assistantMessageId);
+        } catch (RuntimeException exception) {
+            // 连接已断开时只做状态兜底，不影响原有停止处理。
+        }
     }
 
     private ChatPreparation prepareChat(
@@ -425,6 +517,13 @@ public class ChatServiceImpl implements ChatService {
     ) {
     }
 
+    private record TaskRunContext(TaskProgressItem initialProgress) {
+
+        private Long taskRunId() {
+            return initialProgress == null ? null : initialProgress.taskRunId();
+        }
+    }
+
     private boolean hasIds(List<Long> ids) {
         return ids != null && ids.stream().anyMatch(id -> id != null);
     }
@@ -501,6 +600,9 @@ public class ChatServiceImpl implements ChatService {
             return;
         }
         updateStopRequestedAssistantMessage(message.getId(), userId);
+        if (taskService != null) {
+            taskService.stopByAssistantMessageId(userId, message.getId());
+        }
     }
 
     @Override
@@ -813,7 +915,9 @@ public class ChatServiceImpl implements ChatService {
             String agentKey,
             Long agentId,
             boolean thinkingEnabled,
-            SkillRuntimeContext skillContext
+            SkillRuntimeContext skillContext,
+            String prompt,
+            TaskRunContext taskRunContext
     ) {
         StringBuilder content = new StringBuilder();
         StringBuilder reasoningContent = new StringBuilder();
@@ -846,6 +950,7 @@ public class ChatServiceImpl implements ChatService {
         List<LlmToolDefinition> availableTools = List.of();
         List<LlmMessage> loopMessages = new ArrayList<>(messages);
         try {
+            startTaskProgress(emitter, runtimeConfig, prompt, taskRunContext);
             errorSource = ERROR_SOURCE_TOOL;
             availableTools = listTools(toolContext);
             errorSource = ERROR_SOURCE_LLM;
@@ -906,9 +1011,101 @@ public class ChatServiceImpl implements ChatService {
                         exception.getMessage(), errorSource, processRecorder);
             }
         } finally {
+            finishTaskProgress(emitter, assistantMessage, taskRunContext);
             send(emitter, SseEventType.DONE, new SseEventData.Done());
             sseEventSender.complete(emitter);
         }
+    }
+
+    private void startTaskProgress(
+            SseEmitter emitter,
+            AiModelRuntimeConfig runtimeConfig,
+            String prompt,
+            TaskRunContext taskRunContext
+    ) {
+        if (taskRunContext == null || taskRunContext.taskRunId() == null || taskService == null) {
+            return;
+        }
+        try {
+            sendTaskProgress(emitter, SseEventType.TASK_PROGRESS_STARTED, taskRunContext.initialProgress());
+            TaskProgressItem latest = taskRunContext.initialProgress();
+            if (taskPlanner != null) {
+                AgentTaskPlan plan = planTask(runtimeConfig, prompt);
+                latest = taskService.replacePlan(taskRunContext.taskRunId(), plan);
+                sendTaskProgress(emitter, SseEventType.TASK_PLAN_REVISED, latest);
+            }
+            latest = taskService.markStepRunning(taskRunContext.taskRunId(), 1);
+            sendTaskProgress(emitter, SseEventType.TASK_PROGRESS_UPDATED, latest);
+        } catch (RuntimeException exception) {
+            // 任务进度展示失败不应影响聊天主链路。
+        }
+    }
+
+    private AgentTaskPlan planTask(AiModelRuntimeConfig runtimeConfig, String prompt) {
+        try {
+            LlmClient plannerClient = llmClientFactory.apply(runtimeConfig.protocolType());
+            AgentTaskPlan plan = taskPlanner.plan(plannerClient, runtimeConfig, prompt);
+            if (plan != null) {
+                return plan;
+            }
+        } catch (RuntimeException exception) {
+            // Planner 只负责优化任务展示；失败时回退默认计划，避免中断聊天主流程。
+        }
+        return new AgentTaskPlan(prompt, prompt, List.of("分析需求", "执行任务", "整理回复"));
+    }
+
+    private void finishTaskProgress(
+            SseEmitter emitter,
+            ChatMessage assistantMessage,
+            TaskRunContext taskRunContext
+    ) {
+        if (taskRunContext == null || taskRunContext.taskRunId() == null || taskService == null) {
+            return;
+        }
+        try {
+            if (STATUS_COMPLETED.equals(assistantMessage.getStatus())) {
+                TaskProgressItem completed = taskService.markCompleted(taskRunContext.taskRunId());
+                sendTaskProgress(emitter, SseEventType.TASK_PROGRESS_COMPLETED, completed);
+                return;
+            }
+            if (STATUS_FAILED.equals(assistantMessage.getStatus())) {
+                TaskProgressItem failed = taskService.markFailed(taskRunContext.taskRunId(),
+                        assistantMessage.getErrorMessage());
+                sendTaskProgress(emitter, SseEventType.TASK_STEP_FAILED, failed);
+                sendTaskProgress(emitter, SseEventType.TASK_PROGRESS_UPDATED, failed);
+            }
+        } catch (RuntimeException exception) {
+            // 已发送原始聊天错误事件时，不让任务状态同步错误覆盖原始流结束流程。
+        }
+    }
+
+    private boolean sendTaskProgress(SseEmitter emitter, SseEventType eventType, TaskProgressItem progress) {
+        if (progress == null) {
+            return true;
+        }
+        return send(emitter, eventType, new SseEventData.TaskProgress(
+                progress.taskRunId(),
+                progress.mode(),
+                progress.status(),
+                progress.title(),
+                progress.planSummary(),
+                progress.currentStepIndex(),
+                progress.totalSteps(),
+                progress.revision(),
+                progress.errorMessage(),
+                progress.steps() == null ? List.of() : progress.steps().stream()
+                        .map(this::toSseTaskStep)
+                        .toList()
+        ));
+    }
+
+    private SseEventData.TaskStep toSseTaskStep(TaskStepItem step) {
+        return new SseEventData.TaskStep(
+                step.stepIndex(),
+                step.name(),
+                step.status(),
+                step.errorMessage()
+        );
     }
 
     private void syncSkillsToSandbox(Long userId, Long conversationId, SkillRuntimeContext skillContext) {
@@ -1618,6 +1815,30 @@ public class ChatServiceImpl implements ChatService {
     private MessageProcessEvent normalizeProcessEvent(MessageProcessEvent event) {
         if ("reasoning".equals(event.type())) {
             return new MessageProcessEvent("reasoning", defaultString(event.content()), null);
+        }
+        if ("task_plan_revised".equals(event.type()) && event.task() != null) {
+            MessageProcessEvent.TaskProcess task = event.task();
+            List<MessageProcessEvent.TaskStepProcess> steps = task.steps() == null ? List.of() : task.steps().stream()
+                    .filter(Objects::nonNull)
+                    .map(step -> new MessageProcessEvent.TaskStepProcess(
+                            step.stepIndex(),
+                            defaultString(step.name()),
+                            defaultString(step.status()),
+                            defaultString(step.errorMessage())
+                    ))
+                    .toList();
+            return new MessageProcessEvent("task_plan_revised", null, null, new MessageProcessEvent.TaskProcess(
+                    task.taskRunId(),
+                    defaultString(task.mode()),
+                    defaultString(task.status()),
+                    defaultString(task.title()),
+                    defaultString(task.planSummary()),
+                    task.currentStepIndex(),
+                    task.totalSteps(),
+                    task.revision(),
+                    defaultString(task.errorMessage()),
+                    steps
+            ));
         }
         if (!"tool".equals(event.type()) || event.tool() == null) {
             return null;

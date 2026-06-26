@@ -8,8 +8,14 @@ import com.agenthub.ai.llm.LlmStreamRequest;
 import java.util.List;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
+import org.springframework.stereotype.Service;
 
 class AgentTaskPlannerTest {
+
+    @Test
+    void shouldBeRegisteredAsSpringService() {
+        assertThat(AgentTaskPlanner.class).hasAnnotation(Service.class);
+    }
 
     @Test
     void shouldBuildPlanFromLlmJson() {

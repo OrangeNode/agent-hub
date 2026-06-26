@@ -8,7 +8,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
 import java.util.List;
+import org.springframework.stereotype.Service;
 
+@Service
 public class AgentTaskPlanner {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();

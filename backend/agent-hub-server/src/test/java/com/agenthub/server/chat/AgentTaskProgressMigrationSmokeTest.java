@@ -38,6 +38,62 @@ class AgentTaskProgressMigrationSmokeTest {
     }
 
     @Test
+    void shouldCreateTaskRunColumns() {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+
+        List<String> columns = jdbcTemplate.queryForList("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                    AND table_name = 'agent_task_run'
+                ORDER BY ordinal_position
+                """, String.class);
+
+        assertThat(columns).containsExactly(
+                "id",
+                "user_id",
+                "conversation_id",
+                "assistant_message_id",
+                "parent_task_run_id",
+                "mode",
+                "status",
+                "title",
+                "plan_summary",
+                "current_step_index",
+                "total_steps",
+                "revision",
+                "error_message",
+                "created_at",
+                "updated_at",
+                "completed_at"
+        );
+    }
+
+    @Test
+    void shouldCreateTaskStepColumns() {
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+
+        List<String> columns = jdbcTemplate.queryForList("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                    AND table_name = 'agent_task_step'
+                ORDER BY ordinal_position
+                """, String.class);
+
+        assertThat(columns).containsExactly(
+                "id",
+                "task_run_id",
+                "step_index",
+                "name",
+                "status",
+                "error_message",
+                "started_at",
+                "completed_at"
+        );
+    }
+
+    @Test
     void shouldCreateTaskProgressIndexes() {
         JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
 

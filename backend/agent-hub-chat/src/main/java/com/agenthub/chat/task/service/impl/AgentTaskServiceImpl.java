@@ -151,6 +151,7 @@ public class AgentTaskServiceImpl implements AgentTaskService {
         update.setUpdatedAt(now);
         update.setCompletedAt(now);
         updateActiveRun(run, update);
+        markIncompleteSteps(taskRunId, "FAILED", errorMessage, now);
         return snapshot(taskRunId);
     }
 
@@ -165,17 +166,25 @@ public class AgentTaskServiceImpl implements AgentTaskService {
         update.setUpdatedAt(now);
         update.setCompletedAt(now);
         updateActiveRun(run, update);
+        markIncompleteSteps(taskRunId, "COMPLETED", null, now);
         return snapshot(taskRunId);
     }
 
     @Override
     @Transactional
     public void stopByAssistantMessageId(Long userId, Long assistantMessageId) {
+        List<AgentTaskRun> activeRuns = runMapper.selectList(new QueryWrapper<AgentTaskRun>()
+                .eq("user_id", userId)
+                .eq("assistant_message_id", assistantMessageId)
+                .in("status", ACTIVE_STATUSES));
         AgentTaskRun update = new AgentTaskRun();
         OffsetDateTime now = OffsetDateTime.now();
         update.setStatus("STOPPED");
         update.setUpdatedAt(now);
         update.setCompletedAt(now);
+        if (activeRuns != null) {
+            activeRuns.forEach(run -> markIncompleteSteps(run.getId(), "STOPPED", null, now));
+        }
         runMapper.update(update, new UpdateWrapper<AgentTaskRun>()
                 .eq("user_id", userId)
                 .eq("assistant_message_id", assistantMessageId)
@@ -244,6 +253,16 @@ public class AgentTaskServiceImpl implements AgentTaskService {
         if (affectedRows == 0) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "任务计划已变更，请刷新后重试");
         }
+    }
+
+    private void markIncompleteSteps(Long taskRunId, String status, String errorMessage, OffsetDateTime completedAt) {
+        AgentTaskStep update = new AgentTaskStep();
+        update.setStatus(status);
+        update.setErrorMessage(errorMessage);
+        update.setCompletedAt(completedAt);
+        stepMapper.update(update, new UpdateWrapper<AgentTaskStep>()
+                .eq("task_run_id", taskRunId)
+                .notIn("status", List.of("COMPLETED", "FAILED", "STOPPED", "SKIPPED")));
     }
 
     private AgentTaskStep selectStep(Long taskRunId, Integer stepIndex) {

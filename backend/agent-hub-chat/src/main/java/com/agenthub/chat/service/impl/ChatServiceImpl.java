@@ -391,11 +391,15 @@ public class ChatServiceImpl implements ChatService {
         if (runRouter == null) {
             return new AgentRunDecision(RunMode.DIRECT_CHAT, null, null);
         }
-        AgentRunDecision decision = runRouter.route(new AgentRunInput(prompt));
-        if (decision == null || decision.runMode() == null) {
+        try {
+            AgentRunDecision decision = runRouter.route(new AgentRunInput(prompt));
+            if (decision == null || decision.runMode() == null) {
+                return new AgentRunDecision(RunMode.DIRECT_CHAT, null, null);
+            }
+            return decision;
+        } catch (RuntimeException exception) {
             return new AgentRunDecision(RunMode.DIRECT_CHAT, null, null);
         }
-        return decision;
     }
 
     private TaskRunContext createTaskRunIfNeeded(
@@ -406,20 +410,31 @@ public class ChatServiceImpl implements ChatService {
         if (taskService == null || runDecision == null || runDecision.runMode() != RunMode.PLAN_EXECUTE) {
             return null;
         }
-        TaskProgressItem progress = taskService.createRun(
-                preparedChat.conversation().getUserId(),
-                preparedChat.conversation().getId(),
-                preparedChat.assistantMessage().getId(),
-                runDecision.runMode(),
-                prompt,
-                prompt,
-                List.of("执行任务")
-        );
-        return new TaskRunContext(progress);
+        try {
+            TaskProgressItem progress = taskService.createRun(
+                    preparedChat.conversation().getUserId(),
+                    preparedChat.conversation().getId(),
+                    preparedChat.assistantMessage().getId(),
+                    runDecision.runMode(),
+                    prompt,
+                    prompt,
+                    List.of("执行任务")
+            );
+            return new TaskRunContext(progress);
+        } catch (RuntimeException exception) {
+            return null;
+        }
     }
 
     private void stopTaskRunQuietly(Long userId, Long assistantMessageId, TaskRunContext taskRunContext) {
         if (taskService == null || taskRunContext == null || taskRunContext.taskRunId() == null) {
+            return;
+        }
+        stopTaskRunQuietly(userId, assistantMessageId);
+    }
+
+    private void stopTaskRunQuietly(Long userId, Long assistantMessageId) {
+        if (taskService == null) {
             return;
         }
         try {
@@ -517,10 +532,29 @@ public class ChatServiceImpl implements ChatService {
     ) {
     }
 
-    private record TaskRunContext(TaskProgressItem initialProgress) {
+    private static class TaskRunContext {
+
+        private final TaskProgressItem initialProgress;
+        private boolean disabled;
+
+        private TaskRunContext(TaskProgressItem initialProgress) {
+            this.initialProgress = initialProgress;
+        }
+
+        private TaskProgressItem initialProgress() {
+            return initialProgress;
+        }
 
         private Long taskRunId() {
             return initialProgress == null ? null : initialProgress.taskRunId();
+        }
+
+        private boolean disabled() {
+            return disabled;
+        }
+
+        private void disable() {
+            this.disabled = true;
         }
     }
 
@@ -596,13 +630,12 @@ public class ChatServiceImpl implements ChatService {
         if (!STATUS_STREAMING.equals(message.getStatus())) {
             if (STATUS_STOPPED.equals(message.getStatus())) {
                 updateStopRequestedAssistantMessage(message.getId(), userId);
+                stopTaskRunQuietly(userId, message.getId());
             }
             return;
         }
         updateStopRequestedAssistantMessage(message.getId(), userId);
-        if (taskService != null) {
-            taskService.stopByAssistantMessageId(userId, message.getId());
-        }
+        stopTaskRunQuietly(userId, message.getId());
     }
 
     @Override
@@ -1023,7 +1056,8 @@ public class ChatServiceImpl implements ChatService {
             String prompt,
             TaskRunContext taskRunContext
     ) {
-        if (taskRunContext == null || taskRunContext.taskRunId() == null || taskService == null) {
+        if (taskRunContext == null || taskRunContext.disabled() || taskRunContext.taskRunId() == null
+                || taskService == null) {
             return;
         }
         try {
@@ -1038,6 +1072,7 @@ public class ChatServiceImpl implements ChatService {
             sendTaskProgress(emitter, SseEventType.TASK_PROGRESS_UPDATED, latest);
         } catch (RuntimeException exception) {
             // 任务进度展示失败不应影响聊天主链路。
+            taskRunContext.disable();
         }
     }
 
@@ -1059,7 +1094,8 @@ public class ChatServiceImpl implements ChatService {
             ChatMessage assistantMessage,
             TaskRunContext taskRunContext
     ) {
-        if (taskRunContext == null || taskRunContext.taskRunId() == null || taskService == null) {
+        if (taskRunContext == null || taskRunContext.disabled() || taskRunContext.taskRunId() == null
+                || taskService == null) {
             return;
         }
         try {
@@ -1073,9 +1109,14 @@ public class ChatServiceImpl implements ChatService {
                         assistantMessage.getErrorMessage());
                 sendTaskProgress(emitter, SseEventType.TASK_STEP_FAILED, failed);
                 sendTaskProgress(emitter, SseEventType.TASK_PROGRESS_UPDATED, failed);
+                return;
+            }
+            if (STATUS_STOPPED.equals(assistantMessage.getStatus())) {
+                stopTaskRunQuietly(assistantMessage.getUserId(), assistantMessage.getId());
             }
         } catch (RuntimeException exception) {
             // 已发送原始聊天错误事件时，不让任务状态同步错误覆盖原始流结束流程。
+            taskRunContext.disable();
         }
     }
 

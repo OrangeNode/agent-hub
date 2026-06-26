@@ -242,7 +242,7 @@ class ChatServiceImplTest {
                 new TaskStepItem(1, "分析材料", "RUNNING", null),
                 new TaskStepItem(2, "生成报告", "PENDING", null)
         ));
-        when(modelService.requireDefaultRuntimeConfig()).thenReturn(runtimeConfig);
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig);
         when(runRouter.route(new AgentRunInput(prompt))).thenReturn(new AgentRunDecision(
                 RunMode.PLAN_EXECUTE,
                 ToolPolicy.AUTO,
@@ -254,15 +254,11 @@ class ChatServiceImplTest {
         when(taskService.replacePlan(123L, plan)).thenReturn(revised);
         when(taskService.markStepRunning(123L, 1)).thenReturn(running);
         when(taskService.markCompleted(123L)).thenReturn(completed);
-        when(conversationMapper.insert(any(ChatConversation.class))).thenAnswer(invocation -> {
-            ChatConversation conversation = invocation.getArgument(0);
-            conversation.setId(100L);
-            return 1;
-        });
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
         when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
-        when(attachmentService.resolveImagesForChat(7L, null, List.of(), List.of(), 1500)).thenReturn(List.of());
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(), List.of(), 1500)).thenReturn(List.of());
 
-        service.stream(7L, null, null, null, prompt, false, List.of(), List.of());
+        service.stream(7L, 100L, 10L, null, prompt, false, List.of(), List.of());
 
         verify(taskService).createRun(eq(7L), eq(100L), eq(2L), eq(RunMode.PLAN_EXECUTE),
                 eq(prompt), eq(prompt), any());
@@ -324,6 +320,141 @@ class ChatServiceImplTest {
                 SseEventType.TASK_STEP_FAILED,
                 SseEventType.TASK_PROGRESS_COMPLETED
         );
+    }
+
+    @Test
+    void shouldFallbackToDirectChatWhenRunRouterFails() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.answer("继续聊天"),
+                LlmStreamChunk.done()
+        ));
+        AgentTaskService taskService = mock(AgentTaskService.class);
+        AgentRunRouter runRouter = mock(AgentRunRouter.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, sender,
+                attachmentService, llmClient, taskService, runRouter, mock(AgentTaskPlanner.class));
+        String prompt = "你好";
+        when(modelService.requireDefaultRuntimeConfig()).thenReturn(runtimeConfig());
+        when(runRouter.route(new AgentRunInput(prompt))).thenThrow(new IllegalStateException("router unavailable"));
+        when(conversationMapper.insert(any(ChatConversation.class))).thenAnswer(invocation -> {
+            ChatConversation conversation = invocation.getArgument(0);
+            conversation.setId(100L);
+            return 1;
+        });
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, null, List.of(), List.of(), 1500)).thenReturn(List.of());
+
+        service.stream(7L, null, null, null, prompt, false, List.of(), List.of());
+
+        verify(taskService, never()).createRun(any(), any(), any(), any(), any(), any(), any());
+        assertThat(sender.eventTypes()).contains(SseEventType.ANSWER_DELTA, SseEventType.MESSAGE_COMPLETED,
+                SseEventType.DONE);
+        assertThat(llmClient.lastRequest).isNotNull();
+    }
+
+    @Test
+    void shouldFallbackToChatWhenTaskRunCreationFails() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.answer("任务进度不可用，但聊天继续"),
+                LlmStreamChunk.done()
+        ));
+        AgentTaskService taskService = mock(AgentTaskService.class);
+        AgentRunRouter runRouter = mock(AgentRunRouter.class);
+        AgentTaskPlanner taskPlanner = mock(AgentTaskPlanner.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, sender,
+                attachmentService, llmClient, taskService, runRouter, taskPlanner);
+        String prompt = "请生成报告，并分析材料然后整理为可下载结果";
+        when(modelService.requireDefaultRuntimeConfig()).thenReturn(runtimeConfig());
+        when(runRouter.route(new AgentRunInput(prompt))).thenReturn(new AgentRunDecision(
+                RunMode.PLAN_EXECUTE,
+                ToolPolicy.AUTO,
+                PlanPolicy.AUTO
+        ));
+        when(taskService.createRun(any(), any(), any(), any(), any(), any(), any()))
+                .thenThrow(new IllegalStateException("task table unavailable"));
+        when(conversationMapper.insert(any(ChatConversation.class))).thenAnswer(invocation -> {
+            ChatConversation conversation = invocation.getArgument(0);
+            conversation.setId(100L);
+            return 1;
+        });
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, null, List.of(), List.of(), 1500)).thenReturn(List.of());
+
+        service.stream(7L, null, null, null, prompt, false, List.of(), List.of());
+
+        verify(taskPlanner, never()).plan(any(), any(), any());
+        assertThat(sender.eventTypes()).contains(SseEventType.ANSWER_DELTA, SseEventType.MESSAGE_COMPLETED,
+                SseEventType.DONE);
+        assertThat(sender.eventTypes()).doesNotContain(SseEventType.TASK_PROGRESS_STARTED);
+    }
+
+    @Test
+    void shouldUseIndependentPlannerCallAndStillStreamChatAnswer() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        RetryingLlmClient llmClient = new RetryingLlmClient(List.of(
+                List.of(LlmStreamChunk.answer("""
+                        {"title":"生成报告","summary":"分析材料并生成报告","steps":["分析材料","生成报告","整理回复"]}
+                        """), LlmStreamChunk.done()),
+                List.of(LlmStreamChunk.answer("聊天主回复"), LlmStreamChunk.done())
+        ));
+        AgentTaskService taskService = mock(AgentTaskService.class);
+        AgentRunRouter runRouter = mock(AgentRunRouter.class);
+        AgentTaskPlanner taskPlanner = new AgentTaskPlanner();
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, sender,
+                attachmentService, llmClient, taskService, runRouter, taskPlanner);
+        AiModelRuntimeConfig runtimeConfig = runtimeConfig();
+        String prompt = "请生成报告，并分析材料然后整理为可下载结果";
+        TaskProgressItem created = taskProgress("PLANNING", 1, 0, 1,
+                List.of(new TaskStepItem(1, "执行任务", "PENDING", null)));
+        TaskProgressItem revised = taskProgress("PLANNING", 3, 0, 2, List.of(
+                new TaskStepItem(1, "分析材料", "PENDING", null),
+                new TaskStepItem(2, "生成报告", "PENDING", null),
+                new TaskStepItem(3, "整理回复", "PENDING", null)
+        ));
+        TaskProgressItem running = taskProgress("RUNNING", 3, 1, 2, List.of(
+                new TaskStepItem(1, "分析材料", "RUNNING", null),
+                new TaskStepItem(2, "生成报告", "PENDING", null),
+                new TaskStepItem(3, "整理回复", "PENDING", null)
+        ));
+        TaskProgressItem completed = taskProgress("COMPLETED", 3, 3, 2, List.of(
+                new TaskStepItem(1, "分析材料", "COMPLETED", null),
+                new TaskStepItem(2, "生成报告", "COMPLETED", null),
+                new TaskStepItem(3, "整理回复", "COMPLETED", null)
+        ));
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig);
+        when(runRouter.route(new AgentRunInput(prompt))).thenReturn(new AgentRunDecision(
+                RunMode.PLAN_EXECUTE,
+                ToolPolicy.AUTO,
+                PlanPolicy.AUTO
+        ));
+        when(taskService.createRun(any(), any(), any(), any(), any(), any(), any())).thenReturn(created);
+        when(taskService.replacePlan(eq(123L), any(AgentTaskPlan.class))).thenReturn(revised);
+        when(taskService.markStepRunning(123L, 1)).thenReturn(running);
+        when(taskService.markCompleted(123L)).thenReturn(completed);
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(), List.of(), 1500)).thenReturn(List.of());
+
+        service.stream(7L, 100L, 10L, null, prompt, false, List.of(), List.of());
+
+        assertThat(llmClient.requests).hasSize(2);
+        assertThat(sender.eventDataOfAll(SseEventData.Delta.class))
+                .extracting(SseEventData.Delta::content)
+                .contains("聊天主回复");
+        verify(taskService).replacePlan(eq(123L), argThat(plan -> plan.steps().contains("整理回复")));
     }
 
     @Test
@@ -1160,6 +1291,29 @@ class ChatServiceImplTest {
     }
 
     @Test
+    void shouldKeepStopGenerationSuccessfulWhenTaskStopFails() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        AgentTaskService taskService = mock(AgentTaskService.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
+                mock(AttachmentService.class), new RecordingLlmClient(List.of(LlmStreamChunk.done())),
+                taskService, mock(AgentRunRouter.class), mock(AgentTaskPlanner.class));
+        ChatMessage message = message(2L, 100L, 7L, "ASSISTANT", "部分回答");
+        message.setStatus("STREAMING");
+        when(messageMapper.selectById(2L)).thenReturn(message);
+        when(messageMapper.update(any(ChatMessage.class), any())).thenReturn(1);
+        doThrow(new IllegalStateException("task stop failed"))
+                .when(taskService).stopByAssistantMessageId(7L, 2L);
+
+        service.stopGeneration(7L, 2L);
+
+        ArgumentCaptor<ChatMessage> messageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper).update(messageCaptor.capture(), any());
+        assertThat(messageCaptor.getValue().getStatus()).isEqualTo("STOPPED");
+    }
+
+    @Test
     void shouldIgnoreStoppingCompletedAssistantMessage() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
         ChatMessageMapper messageMapper = messageMapper();
@@ -1276,6 +1430,103 @@ class ChatServiceImplTest {
         assertThat(llmClient.lastRequest).isNull();
         assertThat(sender.eventTypes()).containsExactly(SseEventType.META, SseEventType.CONVERSATION);
         assertThat(sender.completed).isTrue();
+    }
+
+    @Test
+    void shouldStopTaskRunWhenSseDisconnectStopsAssistantMessage() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender(SseEventType.ANSWER_DELTA);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.answer("部分内容"),
+                LlmStreamChunk.done()
+        ));
+        AgentTaskService taskService = mock(AgentTaskService.class);
+        AgentRunRouter runRouter = mock(AgentRunRouter.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, sender,
+                attachmentService, llmClient, taskService, runRouter, null);
+        String prompt = "请生成报告，并分析材料然后整理为可下载结果";
+        TaskProgressItem created = taskProgress("PLANNING", 1, 0, 1,
+                List.of(new TaskStepItem(1, "执行任务", "PENDING", null)));
+        TaskProgressItem running = taskProgress("RUNNING", 1, 1, 1,
+                List.of(new TaskStepItem(1, "执行任务", "RUNNING", null)));
+        when(modelService.requireDefaultRuntimeConfig()).thenReturn(runtimeConfig());
+        when(runRouter.route(new AgentRunInput(prompt))).thenReturn(new AgentRunDecision(
+                RunMode.PLAN_EXECUTE,
+                ToolPolicy.AUTO,
+                PlanPolicy.AUTO
+        ));
+        when(taskService.createRun(any(), any(), any(), any(), any(), any(), any())).thenReturn(created);
+        when(taskService.markStepRunning(123L, 1)).thenReturn(running);
+        when(conversationMapper.insert(any(ChatConversation.class))).thenAnswer(invocation -> {
+            ChatConversation conversation = invocation.getArgument(0);
+            conversation.setId(100L);
+            return 1;
+        });
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, null, List.of(), List.of(), 1500)).thenReturn(List.of());
+
+        service.stream(7L, null, null, null, prompt, false, List.of(), List.of());
+
+        verify(taskService).stopByAssistantMessageId(7L, 2L);
+        assertThat(sender.eventTypes()).contains(SseEventType.DONE);
+    }
+
+    @Test
+    void shouldMarkTaskFailedWhenLlmStreamFails() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.error("模型失败")
+        ));
+        AgentTaskService taskService = mock(AgentTaskService.class);
+        AgentRunRouter runRouter = mock(AgentRunRouter.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, sender,
+                attachmentService, llmClient, taskService, runRouter, null);
+        String prompt = "请生成报告，并分析材料然后整理为可下载结果";
+        TaskProgressItem created = taskProgress("PLANNING", 1, 0, 1,
+                List.of(new TaskStepItem(1, "执行任务", "PENDING", null)));
+        TaskProgressItem running = taskProgress("RUNNING", 1, 1, 1,
+                List.of(new TaskStepItem(1, "执行任务", "RUNNING", null)));
+        TaskProgressItem failed = new TaskProgressItem(
+                123L,
+                "PLAN_EXECUTE",
+                "FAILED",
+                "生成报告",
+                "分析材料并生成报告",
+                1,
+                1,
+                1,
+                "模型失败",
+                List.of(new TaskStepItem(1, "执行任务", "FAILED", "模型失败"))
+        );
+        when(modelService.requireDefaultRuntimeConfig()).thenReturn(runtimeConfig());
+        when(runRouter.route(new AgentRunInput(prompt))).thenReturn(new AgentRunDecision(
+                RunMode.PLAN_EXECUTE,
+                ToolPolicy.AUTO,
+                PlanPolicy.AUTO
+        ));
+        when(taskService.createRun(any(), any(), any(), any(), any(), any(), any())).thenReturn(created);
+        when(taskService.markStepRunning(123L, 1)).thenReturn(running);
+        when(taskService.markFailed(123L, "模型失败")).thenReturn(failed);
+        when(conversationMapper.insert(any(ChatConversation.class))).thenAnswer(invocation -> {
+            ChatConversation conversation = invocation.getArgument(0);
+            conversation.setId(100L);
+            return 1;
+        });
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, null, List.of(), List.of(), 1500)).thenReturn(List.of());
+
+        service.stream(7L, null, null, null, prompt, false, List.of(), List.of());
+
+        verify(taskService).markFailed(123L, "模型失败");
+        assertThat(sender.eventTypes()).contains(SseEventType.ERROR, SseEventType.TASK_STEP_FAILED,
+                SseEventType.TASK_PROGRESS_UPDATED, SseEventType.DONE);
     }
 
     @Test

@@ -269,6 +269,59 @@ class AgentTaskServiceImplTest {
     }
 
     @Test
+    void shouldMarkIncompleteStepsCompletedWhenTaskCompleted() {
+        AgentTaskRun runningRun = run(100L, "RUNNING", 1, 2);
+        AgentTaskRun completedRun = run(100L, "COMPLETED", 1, 2);
+        completedRun.setCurrentStepIndex(2);
+        when(runMapper.selectById(100L)).thenReturn(runningRun, completedRun);
+        when(stepMapper.selectList(any())).thenReturn(List.of(
+                step(1, "分析需求", "COMPLETED"),
+                step(2, "生成报告", "COMPLETED")
+        ));
+
+        TaskProgressItem completed = service.markCompleted(100L);
+
+        ArgumentCaptor<AgentTaskStep> stepCaptor = ArgumentCaptor.forClass(AgentTaskStep.class);
+        verify(stepMapper).update(stepCaptor.capture(), any(Wrapper.class));
+        assertThat(stepCaptor.getValue().getStatus()).isEqualTo("COMPLETED");
+        assertThat(stepCaptor.getValue().getCompletedAt()).isNotNull();
+        assertThat(completed.steps()).extracting("status").containsExactly("COMPLETED", "COMPLETED");
+    }
+
+    @Test
+    void shouldMarkIncompleteStepsFailedWhenTaskFailed() {
+        AgentTaskRun runningRun = run(100L, "RUNNING", 1, 2);
+        AgentTaskRun failedRun = run(100L, "FAILED", 1, 2);
+        failedRun.setErrorMessage("执行失败");
+        when(runMapper.selectById(100L)).thenReturn(runningRun, failedRun);
+        when(stepMapper.selectList(any())).thenReturn(List.of(
+                step(1, "分析需求", "FAILED"),
+                step(2, "生成报告", "FAILED")
+        ));
+
+        TaskProgressItem failed = service.markFailed(100L, "执行失败");
+
+        ArgumentCaptor<AgentTaskStep> stepCaptor = ArgumentCaptor.forClass(AgentTaskStep.class);
+        verify(stepMapper).update(stepCaptor.capture(), any(Wrapper.class));
+        assertThat(stepCaptor.getValue().getStatus()).isEqualTo("FAILED");
+        assertThat(stepCaptor.getValue().getErrorMessage()).isEqualTo("执行失败");
+        assertThat(stepCaptor.getValue().getCompletedAt()).isNotNull();
+        assertThat(failed.steps()).extracting("status").containsExactly("FAILED", "FAILED");
+    }
+
+    @Test
+    void shouldMarkIncompleteStepsStoppedWhenTaskStopped() {
+        when(runMapper.selectList(any())).thenReturn(List.of(run(100L, "RUNNING", 1, 2)));
+
+        service.stopByAssistantMessageId(7L, 30L);
+
+        ArgumentCaptor<AgentTaskStep> stepCaptor = ArgumentCaptor.forClass(AgentTaskStep.class);
+        verify(stepMapper).update(stepCaptor.capture(), any(Wrapper.class));
+        assertThat(stepCaptor.getValue().getStatus()).isEqualTo("STOPPED");
+        assertThat(stepCaptor.getValue().getCompletedAt()).isNotNull();
+    }
+
+    @Test
     void shouldMarkStepRunningCompletedFailedCompletedAndStopped() {
         AgentTaskRun runningRun = run(100L, "RUNNING", 1, 2);
         AgentTaskStep first = step(1, "分析需求", "PENDING");

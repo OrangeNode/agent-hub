@@ -9,6 +9,8 @@ import com.agenthub.chat.task.mapper.AgentTaskStepMapper;
 import com.agenthub.chat.task.runtime.AgentTaskPlan;
 import com.agenthub.chat.task.runtime.RunMode;
 import com.agenthub.chat.task.service.AgentTaskService;
+import com.agenthub.common.api.ErrorCode;
+import com.agenthub.common.exception.BusinessException;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import java.time.OffsetDateTime;
@@ -19,6 +21,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AgentTaskServiceImpl implements AgentTaskService {
+
+    private static final List<String> ACTIVE_STATUSES = List.of("PLANNING", "RUNNING");
 
     private final AgentTaskRunMapper runMapper;
     private final AgentTaskStepMapper stepMapper;
@@ -39,6 +43,9 @@ public class AgentTaskServiceImpl implements AgentTaskService {
             String planSummary,
             List<String> steps
     ) {
+        if (mode == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "运行模式不能为空");
+        }
         List<String> normalizedSteps = normalizeSteps(steps);
         OffsetDateTime now = OffsetDateTime.now();
         AgentTaskRun run = new AgentTaskRun();
@@ -62,82 +69,101 @@ public class AgentTaskServiceImpl implements AgentTaskService {
     @Override
     @Transactional
     public TaskProgressItem replacePlan(Long taskRunId, AgentTaskPlan plan) {
-        AgentTaskRun run = runMapper.selectById(taskRunId);
+        if (plan == null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "任务计划不能为空");
+        }
+        AgentTaskRun run = requireRun(taskRunId);
+        requireActiveRun(run);
         List<String> steps = normalizeSteps(plan.steps());
         OffsetDateTime now = OffsetDateTime.now();
+
+        AgentTaskRun update = new AgentTaskRun();
+        update.setTitle(defaultText(plan.title(), run.getTitle()));
+        update.setPlanSummary(defaultText(plan.summary(), run.getPlanSummary()));
+        update.setCurrentStepIndex(0);
+        update.setTotalSteps(steps.size());
+        update.setStatus("PLANNING");
+        update.setUpdatedAt(now);
+        int affectedRows = runMapper.update(update, new UpdateWrapper<AgentTaskRun>()
+                .eq("id", taskRunId)
+                .eq("revision", safeInt(run.getRevision(), 1))
+                .in("status", ACTIVE_STATUSES)
+                .set("error_message", null)
+                .set("completed_at", null)
+                .setSql("revision = revision + 1"));
+        if (affectedRows == 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "任务计划已变更，请刷新后重试");
+        }
+
         stepMapper.delete(new QueryWrapper<AgentTaskStep>().eq("task_run_id", taskRunId));
-        run.setTitle(defaultText(plan.title(), run.getTitle()));
-        run.setPlanSummary(defaultText(plan.summary(), run.getPlanSummary()));
-        run.setCurrentStepIndex(0);
-        run.setTotalSteps(steps.size());
-        run.setRevision(safeInt(run.getRevision(), 1) + 1);
-        run.setStatus("PLANNING");
-        run.setErrorMessage(null);
-        run.setUpdatedAt(now);
-        run.setCompletedAt(null);
-        runMapper.updateById(run);
-        List<AgentTaskStep> insertedSteps = insertSteps(taskRunId, steps);
-        return toProgress(run, insertedSteps);
+        insertSteps(taskRunId, steps);
+        return snapshot(taskRunId);
     }
 
     @Override
     @Transactional
     public TaskProgressItem markStepRunning(Long taskRunId, Integer stepIndex) {
-        AgentTaskRun run = runMapper.selectById(taskRunId);
-        OffsetDateTime now = OffsetDateTime.now();
+        AgentTaskRun run = requireActiveRun(requireRun(taskRunId));
         AgentTaskStep step = selectStep(taskRunId, stepIndex);
+        OffsetDateTime now = OffsetDateTime.now();
+        AgentTaskRun update = new AgentTaskRun();
+        update.setStatus("RUNNING");
+        update.setCurrentStepIndex(stepIndex);
+        update.setUpdatedAt(now);
+        updateActiveRun(run.getId(), update);
+
         step.setStatus("RUNNING");
         step.setStartedAt(now);
         step.setErrorMessage(null);
         stepMapper.updateById(step);
-        run.setStatus("RUNNING");
-        run.setCurrentStepIndex(stepIndex);
-        run.setUpdatedAt(now);
-        runMapper.updateById(run);
-        return toProgress(run, listSteps(taskRunId));
+        return snapshot(taskRunId);
     }
 
     @Override
     @Transactional
     public TaskProgressItem markStepCompleted(Long taskRunId, Integer stepIndex) {
-        AgentTaskRun run = runMapper.selectById(taskRunId);
-        OffsetDateTime now = OffsetDateTime.now();
+        AgentTaskRun run = requireActiveRun(requireRun(taskRunId));
         AgentTaskStep step = selectStep(taskRunId, stepIndex);
+        OffsetDateTime now = OffsetDateTime.now();
+        AgentTaskRun update = new AgentTaskRun();
+        update.setStatus("RUNNING");
+        update.setCurrentStepIndex(stepIndex);
+        update.setUpdatedAt(now);
+        updateActiveRun(run.getId(), update);
+
         step.setStatus("COMPLETED");
         step.setCompletedAt(now);
         step.setErrorMessage(null);
         stepMapper.updateById(step);
-        run.setStatus("RUNNING");
-        run.setCurrentStepIndex(stepIndex);
-        run.setUpdatedAt(now);
-        runMapper.updateById(run);
-        return toProgress(run, listSteps(taskRunId));
+        return snapshot(taskRunId);
     }
 
     @Override
     @Transactional
     public TaskProgressItem markFailed(Long taskRunId, String errorMessage) {
-        AgentTaskRun run = runMapper.selectById(taskRunId);
+        AgentTaskRun run = requireActiveRun(requireRun(taskRunId));
         OffsetDateTime now = OffsetDateTime.now();
-        run.setStatus("FAILED");
-        run.setErrorMessage(errorMessage);
-        run.setUpdatedAt(now);
-        run.setCompletedAt(now);
-        runMapper.updateById(run);
-        return toProgress(run, listSteps(taskRunId));
+        AgentTaskRun update = new AgentTaskRun();
+        update.setStatus("FAILED");
+        update.setErrorMessage(errorMessage);
+        update.setUpdatedAt(now);
+        update.setCompletedAt(now);
+        updateActiveRun(run.getId(), update);
+        return snapshot(taskRunId);
     }
 
     @Override
     @Transactional
     public TaskProgressItem markCompleted(Long taskRunId) {
-        AgentTaskRun run = runMapper.selectById(taskRunId);
+        AgentTaskRun run = requireActiveRun(requireRun(taskRunId));
         OffsetDateTime now = OffsetDateTime.now();
-        run.setStatus("COMPLETED");
-        run.setCurrentStepIndex(safeInt(run.getTotalSteps(), 0));
-        run.setUpdatedAt(now);
-        run.setCompletedAt(now);
-        runMapper.updateById(run);
-        return toProgress(run, listSteps(taskRunId));
+        AgentTaskRun update = new AgentTaskRun();
+        update.setStatus("COMPLETED");
+        update.setCurrentStepIndex(safeInt(run.getTotalSteps(), 0));
+        update.setUpdatedAt(now);
+        update.setCompletedAt(now);
+        updateActiveRun(run.getId(), update);
+        return snapshot(taskRunId);
     }
 
     @Override
@@ -151,7 +177,7 @@ public class AgentTaskServiceImpl implements AgentTaskService {
         runMapper.update(update, new UpdateWrapper<AgentTaskRun>()
                 .eq("user_id", userId)
                 .eq("assistant_message_id", assistantMessageId)
-                .in("status", List.of("PLANNING", "RUNNING")));
+                .in("status", ACTIVE_STATUSES));
     }
 
     @Override
@@ -159,7 +185,7 @@ public class AgentTaskServiceImpl implements AgentTaskService {
         List<AgentTaskRun> runs = runMapper.selectList(new QueryWrapper<AgentTaskRun>()
                 .eq("user_id", userId)
                 .eq("conversation_id", conversationId)
-                .in("status", List.of("PLANNING", "RUNNING"))
+                .in("status", ACTIVE_STATUSES)
                 .orderByDesc("updated_at")
                 .orderByDesc("id"));
         if (runs.isEmpty()) {
@@ -169,10 +195,43 @@ public class AgentTaskServiceImpl implements AgentTaskService {
         return toProgress(run, listSteps(run.getId()));
     }
 
+    private TaskProgressItem snapshot(Long taskRunId) {
+        AgentTaskRun refreshed = requireRun(taskRunId);
+        return toProgress(refreshed, listSteps(taskRunId));
+    }
+
+    private AgentTaskRun requireRun(Long taskRunId) {
+        AgentTaskRun run = runMapper.selectById(taskRunId);
+        if (run == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "任务不存在");
+        }
+        return run;
+    }
+
+    private AgentTaskRun requireActiveRun(AgentTaskRun run) {
+        if (!ACTIVE_STATUSES.contains(run.getStatus())) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "任务已结束，不能继续更新");
+        }
+        return run;
+    }
+
+    private void updateActiveRun(Long taskRunId, AgentTaskRun update) {
+        int affectedRows = runMapper.update(update, new UpdateWrapper<AgentTaskRun>()
+                .eq("id", taskRunId)
+                .in("status", ACTIVE_STATUSES));
+        if (affectedRows == 0) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "任务已结束，不能继续更新");
+        }
+    }
+
     private AgentTaskStep selectStep(Long taskRunId, Integer stepIndex) {
-        return stepMapper.selectOne(new QueryWrapper<AgentTaskStep>()
+        AgentTaskStep step = stepMapper.selectOne(new QueryWrapper<AgentTaskStep>()
                 .eq("task_run_id", taskRunId)
                 .eq("step_index", stepIndex));
+        if (step == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND, "任务步骤不存在");
+        }
+        return step;
     }
 
     private List<AgentTaskStep> insertSteps(Long taskRunId, List<String> steps) {
@@ -199,6 +258,9 @@ public class AgentTaskServiceImpl implements AgentTaskService {
     }
 
     private TaskProgressItem toProgress(AgentTaskRun run, List<AgentTaskStep> steps) {
+        if (run == null) {
+            return null;
+        }
         return new TaskProgressItem(
                 run.getId(),
                 run.getMode(),

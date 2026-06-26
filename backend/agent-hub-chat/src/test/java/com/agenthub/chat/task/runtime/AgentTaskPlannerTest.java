@@ -42,6 +42,51 @@ class AgentTaskPlannerTest {
     }
 
     @Test
+    void shouldParseFencedJsonWithSurroundingText() {
+        RecordingLlmClient client = new RecordingLlmClient("""
+                下面是计划：
+                ```json
+                {
+                  "title": "生成调研报告",
+                  "summary": "分析资料并输出报告",
+                  "steps": ["梳理资料", "生成报告", "校验结果"]
+                }
+                ```
+                已完成。
+                """);
+        AgentTaskPlanner planner = new AgentTaskPlanner();
+
+        AgentTaskPlan plan = planner.plan(client, runtimeConfig(), "请分析资料并生成报告");
+
+        assertThat(plan.title()).isEqualTo("生成调研报告");
+        assertThat(plan.steps()).containsExactly("梳理资料", "生成报告", "校验结果");
+    }
+
+    @Test
+    void shouldTrimLongFieldsDeduplicateAndKeepAtMostSixSteps() {
+        String longTitle = "标".repeat(140);
+        String longSummary = "摘".repeat(600);
+        String longStep = "步".repeat(200);
+        RecordingLlmClient client = new RecordingLlmClient("""
+                {
+                  "title": "%s",
+                  "summary": "%s",
+                  "steps": ["%s", "%s", "第二步", "第三步", "第四步", "第五步", "第六步", "第七步"]
+                }
+                """.formatted(longTitle, longSummary, longStep, longStep));
+        AgentTaskPlanner planner = new AgentTaskPlanner();
+
+        AgentTaskPlan plan = planner.plan(client, runtimeConfig(), "请生成计划");
+
+        assertThat(plan.title()).hasSize(128);
+        assertThat(plan.summary()).hasSize(512);
+        assertThat(plan.steps()).hasSize(6);
+        assertThat(plan.steps().getFirst()).hasSize(160);
+        assertThat(plan.steps()).doesNotHaveDuplicates();
+        assertThat(plan.steps()).doesNotContain("第七步");
+    }
+
+    @Test
     void shouldFallbackToFixedChineseStepsWhenJsonCannotBeParsed() {
         RecordingLlmClient client = new RecordingLlmClient("不是 JSON");
         AgentTaskPlanner planner = new AgentTaskPlanner();
@@ -50,6 +95,18 @@ class AgentTaskPlannerTest {
 
         assertThat(plan.title()).isEqualTo("处理一个复杂任务");
         assertThat(plan.summary()).isEqualTo("处理一个复杂任务");
+        assertThat(plan.steps()).containsExactly("分析需求", "准备上下文", "执行任务", "校验结果", "整理回复");
+    }
+
+    @Test
+    void shouldFallbackWhenPlanHasLessThanThreeSteps() {
+        RecordingLlmClient client = new RecordingLlmClient("""
+                {"title": "短计划", "summary": "步骤太少", "steps": ["一步", "二步"]}
+                """);
+        AgentTaskPlanner planner = new AgentTaskPlanner();
+
+        AgentTaskPlan plan = planner.plan(client, runtimeConfig(), "处理一个复杂任务");
+
         assertThat(plan.steps()).containsExactly("分析需求", "准备上下文", "执行任务", "校验结果", "整理回复");
     }
 

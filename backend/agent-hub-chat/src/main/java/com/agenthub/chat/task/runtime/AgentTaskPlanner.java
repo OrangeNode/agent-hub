@@ -8,7 +8,9 @@ import com.agenthub.ai.model.dto.AiModelRuntimeConfig;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -16,6 +18,11 @@ public class AgentTaskPlanner {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final List<String> FALLBACK_STEPS = List.of("分析需求", "准备上下文", "执行任务", "校验结果", "整理回复");
+    private static final int MAX_TITLE_LENGTH = 128;
+    private static final int MAX_SUMMARY_LENGTH = 512;
+    private static final int MAX_STEP_LENGTH = 160;
+    private static final int MAX_STEP_COUNT = 6;
+    private static final int MIN_STEP_COUNT = 3;
 
     public AgentTaskPlan plan(LlmClient client, AiModelRuntimeConfig runtimeConfig, String prompt) {
         String normalizedPrompt = normalizePrompt(prompt);
@@ -33,6 +40,7 @@ public class AgentTaskPlanner {
     }
 
     private LlmStreamRequest request(AiModelRuntimeConfig runtimeConfig, String prompt) {
+        Integer maxOutputTokens = runtimeConfig == null ? 800 : runtimeConfig.maxOutputTokens();
         return new LlmStreamRequest(
                 runtimeConfig == null ? null : runtimeConfig.baseUrl(),
                 runtimeConfig == null ? null : runtimeConfig.apiKeyCipher(),
@@ -46,33 +54,93 @@ public class AgentTaskPlanner {
                                 """),
                         new LlmMessage("user", prompt)
                 ),
-                runtimeConfig == null ? 800 : runtimeConfig.maxOutputTokens(),
+                maxOutputTokens == null ? 800 : maxOutputTokens,
                 false
         );
     }
 
-    private AgentTaskPlan parsePlan(String json, String fallbackTitle) {
+    private AgentTaskPlan parsePlan(String rawContent, String fallbackTitle) {
         try {
-            JsonNode root = OBJECT_MAPPER.readTree(json);
+            JsonNode root = OBJECT_MAPPER.readTree(extractJsonObject(rawContent));
             String title = textOrDefault(root.path("title"), fallbackTitle);
             String summary = textOrDefault(root.path("summary"), fallbackTitle);
             List<String> steps = new ArrayList<>();
             JsonNode stepNodes = root.path("steps");
             if (stepNodes.isArray()) {
                 for (JsonNode stepNode : stepNodes) {
-                    String step = stepNode.asText("").trim();
-                    if (!step.isEmpty()) {
-                        steps.add(step);
-                    }
+                    steps.add(stepNode.asText(""));
                 }
             }
-            if (steps.isEmpty()) {
-                return fallbackPlan(fallbackTitle);
-            }
-            return new AgentTaskPlan(title, summary, List.copyOf(steps));
+            return normalizePlan(title, summary, steps, fallbackTitle);
         } catch (Exception exception) {
             return fallbackPlan(fallbackTitle);
         }
+    }
+
+    private String extractJsonObject(String content) {
+        if (content == null) {
+            throw new IllegalArgumentException("任务计划为空");
+        }
+        int start = content.indexOf('{');
+        if (start < 0) {
+            throw new IllegalArgumentException("任务计划不是 JSON");
+        }
+        boolean inString = false;
+        boolean escaping = false;
+        int depth = 0;
+        for (int i = start; i < content.length(); i++) {
+            char current = content.charAt(i);
+            if (escaping) {
+                escaping = false;
+                continue;
+            }
+            if (current == '\\' && inString) {
+                escaping = true;
+                continue;
+            }
+            if (current == '"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString) {
+                continue;
+            }
+            if (current == '{') {
+                depth++;
+            } else if (current == '}') {
+                depth--;
+                if (depth == 0) {
+                    return content.substring(start, i + 1);
+                }
+            }
+        }
+        throw new IllegalArgumentException("任务计划 JSON 不完整");
+    }
+
+    private AgentTaskPlan normalizePlan(String title, String summary, List<String> steps, String fallbackTitle) {
+        List<String> normalizedSteps = normalizeSteps(steps);
+        if (normalizedSteps.size() < MIN_STEP_COUNT) {
+            return fallbackPlan(fallbackTitle);
+        }
+        String normalizedTitle = limit(defaultText(title, fallbackTitle), MAX_TITLE_LENGTH);
+        String normalizedSummary = limit(defaultText(summary, fallbackTitle), MAX_SUMMARY_LENGTH);
+        return new AgentTaskPlan(normalizedTitle, normalizedSummary, normalizedSteps);
+    }
+
+    private List<String> normalizeSteps(List<String> steps) {
+        Set<String> uniqueSteps = new LinkedHashSet<>();
+        if (steps != null) {
+            for (String step : steps) {
+                String value = step == null ? "" : step.trim();
+                if (!value.isEmpty()) {
+                    uniqueSteps.add(limit(value, MAX_STEP_LENGTH));
+                }
+                if (uniqueSteps.size() >= MAX_STEP_COUNT) {
+                    break;
+                }
+            }
+        }
+        return List.copyOf(uniqueSteps);
     }
 
     private String textOrDefault(JsonNode node, String defaultValue) {
@@ -81,11 +149,30 @@ public class AgentTaskPlanner {
     }
 
     private AgentTaskPlan fallbackPlan(String prompt) {
-        return new AgentTaskPlan(prompt, prompt, FALLBACK_STEPS);
+        String title = limit(defaultText(prompt, "执行任务"), MAX_TITLE_LENGTH);
+        String summary = limit(defaultText(prompt, "执行任务"), MAX_SUMMARY_LENGTH);
+        return new AgentTaskPlan(title, summary, FALLBACK_STEPS);
     }
 
     private String normalizePrompt(String prompt) {
         String value = prompt == null ? "" : prompt.trim();
         return value.isEmpty() ? "执行任务" : value;
+    }
+
+    private String defaultText(String value, String fallback) {
+        if (value != null && !value.isBlank()) {
+            return value.trim();
+        }
+        if (fallback != null && !fallback.isBlank()) {
+            return fallback.trim();
+        }
+        return "执行任务";
+    }
+
+    private String limit(String value, int maxLength) {
+        if (value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength);
     }
 }

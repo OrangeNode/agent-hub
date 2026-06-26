@@ -1,9 +1,11 @@
 package com.agenthub.chat.task.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,7 +17,10 @@ import com.agenthub.chat.task.mapper.AgentTaskStepMapper;
 import com.agenthub.chat.task.runtime.AgentTaskPlan;
 import com.agenthub.chat.task.runtime.RunMode;
 import com.agenthub.chat.task.service.impl.AgentTaskServiceImpl;
+import com.agenthub.common.api.ErrorCode;
+import com.agenthub.common.exception.BusinessException;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,6 +38,7 @@ class AgentTaskServiceImplTest {
         runMapper = mock(AgentTaskRunMapper.class);
         stepMapper = mock(AgentTaskStepMapper.class);
         service = new AgentTaskServiceImpl(runMapper, stepMapper);
+        when(runMapper.update(any(AgentTaskRun.class), any(Wrapper.class))).thenReturn(1);
         doAnswer(invocation -> {
             AgentTaskRun run = invocation.getArgument(0);
             run.setId(100L);
@@ -80,22 +86,36 @@ class AgentTaskServiceImplTest {
     }
 
     @Test
-    void shouldReplacePlanDeleteOldStepsInsertNewStepsAndIncrementRevision() {
+    void shouldRejectCreateRunWhenModeIsNull() {
+        assertThatThrownBy(() -> service.createRun(7L, 20L, 30L, null, "任务", "计划", List.of("步骤")))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("运行模式不能为空")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+    }
+
+    @Test
+    void shouldReplacePlanWithRevisionAndActiveStatusCondition() {
         AgentTaskRun existing = run(100L, "PLANNING", 1, 2);
-        when(runMapper.selectById(100L)).thenReturn(existing);
-        when(stepMapper.selectList(any())).thenReturn(steps("旧步骤"));
+        AgentTaskRun updated = run(100L, "PLANNING", 2, 3);
+        updated.setTitle("新任务");
+        updated.setPlanSummary("新计划");
+        when(runMapper.selectById(100L)).thenReturn(existing, updated);
+        when(stepMapper.selectList(any())).thenReturn(steps("第一步", "第二步", "第三步"));
 
         TaskProgressItem progress = service.replacePlan(
                 100L,
                 new AgentTaskPlan("新任务", "新计划", List.of("第一步", "第二步", "第三步"))
         );
 
+        ArgumentCaptor<AgentTaskRun> updateCaptor = ArgumentCaptor.forClass(AgentTaskRun.class);
+        ArgumentCaptor<Wrapper<AgentTaskRun>> wrapperCaptor = wrapperCaptor();
+        verify(runMapper).update(updateCaptor.capture(), wrapperCaptor.capture());
+        assertThat(updateCaptor.getValue().getRevision()).isNull();
+        assertThat(wrapperCaptor.getValue().getSqlSet()).contains("revision = revision + 1");
+        assertThat(wrapperCaptor.getValue().getCustomSqlSegment())
+                .contains("id", "revision", "status");
         verify(stepMapper).delete(any(Wrapper.class));
-        ArgumentCaptor<AgentTaskRun> runCaptor = ArgumentCaptor.forClass(AgentTaskRun.class);
-        verify(runMapper).updateById(runCaptor.capture());
-        assertThat(runCaptor.getValue().getRevision()).isEqualTo(2);
-        assertThat(runCaptor.getValue().getTotalSteps()).isEqualTo(3);
-        assertThat(runCaptor.getValue().getTitle()).isEqualTo("新任务");
         ArgumentCaptor<AgentTaskStep> stepCaptor = ArgumentCaptor.forClass(AgentTaskStep.class);
         verify(stepMapper, org.mockito.Mockito.times(3)).insert(stepCaptor.capture());
         assertThat(stepCaptor.getAllValues()).extracting(AgentTaskStep::getName)
@@ -105,11 +125,97 @@ class AgentTaskServiceImplTest {
     }
 
     @Test
+    void shouldRejectReplacePlanWhenConcurrentRevisionChanged() {
+        when(runMapper.selectById(100L)).thenReturn(run(100L, "RUNNING", 3, 2));
+        when(runMapper.update(any(AgentTaskRun.class), any(Wrapper.class))).thenReturn(0);
+
+        assertThatThrownBy(() -> service.replacePlan(
+                100L,
+                new AgentTaskPlan("新任务", "新计划", List.of("第一步", "第二步"))
+        ))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("任务计划已变更，请刷新后重试")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(stepMapper, never()).delete(any(Wrapper.class));
+        verify(stepMapper, never()).insert(any(AgentTaskStep.class));
+    }
+
+    @Test
+    void shouldRejectReplacePlanWhenPlanIsNull() {
+        assertThatThrownBy(() -> service.replacePlan(100L, null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("任务计划不能为空")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+    }
+
+    @Test
+    void shouldRejectTerminalRunWhenMarkingCompleted() {
+        when(runMapper.selectById(100L)).thenReturn(run(100L, "STOPPED", 1, 2));
+
+        assertThatThrownBy(() -> service.markCompleted(100L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("任务已结束，不能继续更新")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(runMapper, never()).update(any(AgentTaskRun.class), any(Wrapper.class));
+    }
+
+    @Test
+    void shouldRejectTerminalRunWhenMarkingStepCompleted() {
+        when(runMapper.selectById(100L)).thenReturn(run(100L, "COMPLETED", 1, 2));
+
+        assertThatThrownBy(() -> service.markStepCompleted(100L, 1))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("任务已结束，不能继续更新")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(stepMapper, never()).updateById(any(AgentTaskStep.class));
+    }
+
+    @Test
+    void shouldRejectMissingTaskRun() {
+        when(runMapper.selectById(404L)).thenReturn(null);
+
+        assertThatThrownBy(() -> service.markFailed(404L, "失败"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("任务不存在")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.NOT_FOUND);
+    }
+
+    @Test
+    void shouldRejectMissingStep() {
+        when(runMapper.selectById(100L)).thenReturn(run(100L, "RUNNING", 1, 2));
+        when(stepMapper.selectOne(any())).thenReturn(null);
+
+        assertThatThrownBy(() -> service.markStepRunning(100L, 9))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("任务步骤不存在")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.NOT_FOUND);
+    }
+
+    @Test
     void shouldMarkStepRunningCompletedFailedCompletedAndStopped() {
-        AgentTaskRun existing = run(100L, "PLANNING", 1, 2);
+        AgentTaskRun runningRun = run(100L, "RUNNING", 1, 2);
         AgentTaskStep first = step(1, "分析需求", "PENDING");
         AgentTaskStep second = step(2, "生成报告", "PENDING");
-        when(runMapper.selectById(100L)).thenReturn(existing);
+        AgentTaskRun completedRun = run(100L, "COMPLETED", 1, 2);
+        completedRun.setCurrentStepIndex(2);
+        AgentTaskRun failedRun = run(100L, "FAILED", 1, 2);
+        failedRun.setErrorMessage("执行失败");
+        when(runMapper.selectById(100L)).thenReturn(
+                run(100L, "PLANNING", 1, 2),
+                runningRun,
+                runningRun,
+                runningRun,
+                runningRun,
+                failedRun,
+                runningRun,
+                completedRun
+        );
         when(stepMapper.selectOne(any())).thenReturn(first, first);
         when(stepMapper.selectList(any())).thenReturn(List.of(first, second));
 
@@ -120,12 +226,11 @@ class AgentTaskServiceImplTest {
         service.stopByAssistantMessageId(7L, 30L);
 
         assertThat(running.status()).isEqualTo("RUNNING");
-        assertThat(completedStep.currentStepIndex()).isEqualTo(1);
+        assertThat(completedStep.currentStepIndex()).isEqualTo(0);
         assertThat(failed.status()).isEqualTo("FAILED");
         assertThat(failed.errorMessage()).isEqualTo("执行失败");
         assertThat(completed.status()).isEqualTo("COMPLETED");
-        verify(runMapper, org.mockito.Mockito.atLeast(4)).updateById(any(AgentTaskRun.class));
-        verify(runMapper).update(any(AgentTaskRun.class), any(Wrapper.class));
+        verify(runMapper, org.mockito.Mockito.atLeast(5)).update(any(AgentTaskRun.class), any(Wrapper.class));
     }
 
     @Test
@@ -145,6 +250,11 @@ class AgentTaskServiceImplTest {
         assertThat(progress.status()).isEqualTo("RUNNING");
         assertThat(progress.steps()).extracting("name").containsExactly("分析需求", "执行任务");
         verify(runMapper).selectList(any(Wrapper.class));
+    }
+
+    @SuppressWarnings("unchecked")
+    private ArgumentCaptor<Wrapper<AgentTaskRun>> wrapperCaptor() {
+        return ArgumentCaptor.forClass(Wrapper.class);
     }
 
     private AgentTaskRun run(Long id, String status, Integer revision, Integer totalSteps) {

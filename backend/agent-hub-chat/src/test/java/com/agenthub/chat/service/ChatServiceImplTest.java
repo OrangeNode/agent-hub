@@ -278,6 +278,59 @@ class ChatServiceImplTest {
     }
 
     @Test
+    void shouldCompleteTaskRunWhenLlmStreamEndsWithoutDoneChunk() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.answer("已完成回答")
+        ));
+        AgentTaskService taskService = mock(AgentTaskService.class);
+        AgentRunRouter runRouter = mock(AgentRunRouter.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, sender,
+                attachmentService, llmClient, taskService, runRouter, null);
+        String prompt = "请生成报告，并分析材料然后整理为可下载结果";
+        TaskProgressItem created = taskProgress("PLANNING", 1, 0, 1,
+                List.of(new TaskStepItem(1, "执行任务", "PENDING", null)));
+        TaskProgressItem running = taskProgress("RUNNING", 1, 1, 1,
+                List.of(new TaskStepItem(1, "执行任务", "RUNNING", null)));
+        TaskProgressItem completed = taskProgress("COMPLETED", 1, 1, 1,
+                List.of(new TaskStepItem(1, "执行任务", "COMPLETED", null)));
+        when(modelService.requireDefaultRuntimeConfig()).thenReturn(runtimeConfig());
+        when(runRouter.route(new AgentRunInput(prompt))).thenReturn(new AgentRunDecision(
+                RunMode.PLAN_EXECUTE,
+                ToolPolicy.AUTO,
+                PlanPolicy.AUTO
+        ));
+        when(taskService.createRun(any(), any(), any(), any(), any(), any(), any())).thenReturn(created);
+        when(taskService.markStepRunning(123L, 1)).thenReturn(running);
+        when(taskService.markCompleted(123L)).thenReturn(completed);
+        when(conversationMapper.insert(any(ChatConversation.class))).thenAnswer(invocation -> {
+            ChatConversation conversation = invocation.getArgument(0);
+            conversation.setId(100L);
+            return 1;
+        });
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, null, List.of(), List.of(), 1500)).thenReturn(List.of());
+
+        service.stream(7L, null, null, null, prompt, false, List.of(), List.of());
+
+        ArgumentCaptor<ChatMessage> messageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper).update(messageCaptor.capture(), any());
+        assertThat(messageCaptor.getValue().getStatus()).isEqualTo("COMPLETED");
+        assertThat(messageCaptor.getValue().getContent()).isEqualTo("已完成回答");
+        verify(taskService).markCompleted(123L);
+        assertThat(sender.eventTypes()).containsSubsequence(
+                SseEventType.ANSWER_DELTA,
+                SseEventType.MESSAGE_COMPLETED,
+                SseEventType.TASK_PROGRESS_COMPLETED,
+                SseEventType.DONE
+        );
+    }
+
+    @Test
     void shouldNotCreateTaskRunOrSendTaskProgressEventsForDirectChat() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
         ChatMessageMapper messageMapper = messageMapper();
@@ -1517,6 +1570,61 @@ class ChatServiceImplTest {
 
         verify(taskService).stopByAssistantMessageId(7L, 2L);
         assertThat(sender.eventTypes()).contains(SseEventType.DONE);
+    }
+
+    @Test
+    void shouldStopTaskRunWhenSseEmitterAlreadyCompletedWithError() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender() {
+            @Override
+            public void send(SseEmitter emitter, SseEventType eventType, SseEventData data) throws IOException {
+                super.send(emitter, eventType, data);
+                if (eventType == SseEventType.ANSWER_DELTA) {
+                    throw new IllegalStateException("ResponseBodyEmitter has already completed with error");
+                }
+            }
+        };
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.answer("部分内容"),
+                LlmStreamChunk.done()
+        ));
+        AgentTaskService taskService = mock(AgentTaskService.class);
+        AgentRunRouter runRouter = mock(AgentRunRouter.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, sender,
+                attachmentService, llmClient, taskService, runRouter, null);
+        String prompt = "请生成报告，并分析材料然后整理为可下载结果";
+        TaskProgressItem created = taskProgress("PLANNING", 1, 0, 1,
+                List.of(new TaskStepItem(1, "执行任务", "PENDING", null)));
+        TaskProgressItem running = taskProgress("RUNNING", 1, 1, 1,
+                List.of(new TaskStepItem(1, "执行任务", "RUNNING", null)));
+        when(modelService.requireDefaultRuntimeConfig()).thenReturn(runtimeConfig());
+        when(runRouter.route(new AgentRunInput(prompt))).thenReturn(new AgentRunDecision(
+                RunMode.PLAN_EXECUTE,
+                ToolPolicy.AUTO,
+                PlanPolicy.AUTO
+        ));
+        when(taskService.createRun(any(), any(), any(), any(), any(), any(), any())).thenReturn(created);
+        when(taskService.markStepRunning(123L, 1)).thenReturn(running);
+        when(conversationMapper.insert(any(ChatConversation.class))).thenAnswer(invocation -> {
+            ChatConversation conversation = invocation.getArgument(0);
+            conversation.setId(100L);
+            return 1;
+        });
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, null, List.of(), List.of(), 1500)).thenReturn(List.of());
+
+        service.stream(7L, null, null, null, prompt, false, List.of(), List.of());
+
+        ArgumentCaptor<ChatMessage> messageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper).update(messageCaptor.capture(), any());
+        assertThat(messageCaptor.getValue().getStatus()).isEqualTo("STOPPED");
+        assertThat(messageCaptor.getValue().getErrorMessage()).isEqualTo("SSE 连接已断开");
+        verify(taskService).stopByAssistantMessageId(7L, 2L);
+        verify(taskService, never()).markFailed(any(), any());
+        assertThat(sender.completed).isTrue();
     }
 
     @Test

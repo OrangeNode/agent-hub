@@ -1004,7 +1004,13 @@ public class ChatServiceImpl implements ChatService {
                     }
                     outcome = retryOutcome;
                 }
-                if (finished.get() || outcome.toolCalls().isEmpty()) {
+                if (finished.get()) {
+                    return;
+                }
+                if (outcome.toolCalls().isEmpty()) {
+                    if (finished.compareAndSet(false, true)) {
+                        completeAssistantMessage(emitter, assistantMessage, content, reasoningContent, processRecorder);
+                    }
                     return;
                 }
                 errorSource = ERROR_SOURCE_TOOL;
@@ -1722,8 +1728,12 @@ public class ChatServiceImpl implements ChatService {
         try {
             sseEventSender.send(emitter, eventType, data);
             return true;
-        } catch (IOException exception) {
-            sseEventSender.completeWithError(emitter, exception);
+        } catch (IOException | IllegalStateException exception) {
+            try {
+                sseEventSender.completeWithError(emitter, exception);
+            } catch (IllegalStateException ignored) {
+                // emitter 已经进入错误终态时无需重复完成。
+            }
             return false;
         }
     }

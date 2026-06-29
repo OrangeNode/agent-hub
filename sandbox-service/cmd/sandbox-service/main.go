@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	_ "time/tzdata"
 
 	"agent-hub/sandbox-service/internal/auth"
 	"agent-hub/sandbox-service/internal/config"

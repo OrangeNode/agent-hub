@@ -27,6 +27,16 @@ class AgentRunRouterTest {
     }
 
     @Test
+    void shouldRouteDownloadableCodeDeliverableToPlanExecute() {
+        AgentRunDecision decision = router.route(new AgentRunInput(
+                "写一个 python 快速排序算法，输入数据为 input.txt，输出结果为 output.txt，最后把代码和 input、output 给我下载"));
+
+        assertThat(decision.runMode()).isEqualTo(RunMode.PLAN_EXECUTE);
+        assertThat(decision.toolPolicy()).isEqualTo(ToolPolicy.AUTO);
+        assertThat(decision.planPolicy()).isEqualTo(PlanPolicy.AUTO);
+    }
+
+    @Test
     void shouldRouteMultiStageProjectPlanToPlanExecute() {
         AgentRunDecision decision = router.route(
                 new AgentRunInput("请制定三个月产品上线计划，包含里程碑、风险和交付检查。"));

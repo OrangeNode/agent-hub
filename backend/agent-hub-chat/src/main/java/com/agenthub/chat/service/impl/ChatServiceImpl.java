@@ -32,7 +32,9 @@ import com.agenthub.chat.task.runtime.AgentRunInput;
 import com.agenthub.chat.task.runtime.AgentRunRouter;
 import com.agenthub.chat.task.runtime.AgentTaskPlan;
 import com.agenthub.chat.task.runtime.AgentTaskPlanner;
+import com.agenthub.chat.task.runtime.PlanPolicy;
 import com.agenthub.chat.task.runtime.RunMode;
+import com.agenthub.chat.task.runtime.ToolPolicy;
 import com.agenthub.chat.task.service.AgentTaskService;
 import com.agenthub.chat.title.ConversationTitleService;
 import com.agenthub.common.api.ErrorCode;
@@ -377,7 +379,7 @@ public class ChatServiceImpl implements ChatService {
             streamExecutor.execute(() -> streamLlm(emitter, preparedChat.conversation().getUserId(),
                     preparedChat.conversation().getId(), runtimeConfig, preparedChat.context().messages(),
                     preparedChat.assistantMessage(), preparedChat.conversation().getAgentKey(), resolvedAgentId,
-                    thinkingEnabled, preparedChat.skillContext(), normalizedPrompt, taskRunContext));
+                    thinkingEnabled, preparedChat.skillContext(), normalizedPrompt, taskRunContext, runDecision));
         } else {
             // 初始事件发送失败说明客户端已断开，直接标记助手消息停止。
             stopAssistantMessage(preparedChat.assistantMessage(), new StringBuilder(), new StringBuilder(),
@@ -390,16 +392,16 @@ public class ChatServiceImpl implements ChatService {
 
     private AgentRunDecision routeRun(String prompt) {
         if (runRouter == null) {
-            return new AgentRunDecision(RunMode.DIRECT_CHAT, null, null);
+            return new AgentRunDecision(RunMode.TOOL_ASSISTED, ToolPolicy.AUTO, PlanPolicy.NONE);
         }
         try {
             AgentRunDecision decision = runRouter.route(new AgentRunInput(prompt));
             if (decision == null || decision.runMode() == null) {
-                return new AgentRunDecision(RunMode.DIRECT_CHAT, null, null);
+                return new AgentRunDecision(RunMode.DIRECT_CHAT, ToolPolicy.NONE, PlanPolicy.NONE);
             }
             return decision;
         } catch (RuntimeException exception) {
-            return new AgentRunDecision(RunMode.DIRECT_CHAT, null, null);
+            return new AgentRunDecision(RunMode.DIRECT_CHAT, ToolPolicy.NONE, PlanPolicy.NONE);
         }
     }
 
@@ -957,7 +959,8 @@ public class ChatServiceImpl implements ChatService {
             boolean thinkingEnabled,
             SkillRuntimeContext skillContext,
             String prompt,
-            TaskRunContext taskRunContext
+            TaskRunContext taskRunContext,
+            AgentRunDecision runDecision
     ) {
         StringBuilder content = new StringBuilder();
         StringBuilder reasoningContent = new StringBuilder();
@@ -992,7 +995,7 @@ public class ChatServiceImpl implements ChatService {
         try {
             startTaskProgress(emitter, runtimeConfig, prompt, taskRunContext);
             errorSource = ERROR_SOURCE_TOOL;
-            availableTools = listTools(toolContext);
+            availableTools = shouldExposeTools(runDecision, skillContext) ? listTools(toolContext) : List.of();
             errorSource = ERROR_SOURCE_LLM;
             LlmClient client = llmClientFactory.apply(runtimeConfig.protocolType());
             loopMessages = withSandboxPathRules(messages, availableTools);
@@ -1066,6 +1069,13 @@ public class ChatServiceImpl implements ChatService {
             send(emitter, SseEventType.DONE, new SseEventData.Done());
             sseEventSender.complete(emitter);
         }
+    }
+
+    private boolean shouldExposeTools(AgentRunDecision runDecision, SkillRuntimeContext skillContext) {
+        if (skillContext != null && !skillContext.skillIds().isEmpty()) {
+            return true;
+        }
+        return runDecision != null && runDecision.toolPolicy() == ToolPolicy.AUTO;
     }
 
     private void startTaskProgress(

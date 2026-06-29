@@ -2230,6 +2230,151 @@ class ChatServiceImplTest {
     }
 
     @Test
+    void shouldNotExposeToolsForDirectChatRunDecision() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.answer("你好"),
+                LlmStreamChunk.done()
+        ));
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                new RecordingSseEventSender(),
+                attachmentService,
+                null,
+                contextBuilder(messageMapper, attachmentService, llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                null,
+                toolRegistry,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new AgentRunRouter(),
+                null
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(), List.of(), 1500)).thenReturn(List.of());
+
+        service.stream(7L, 100L, 10L, null, "你好，今天心情怎么样？", false, List.of(), List.of());
+
+        verify(toolRegistry, never()).listTools(any(ToolExecutionContext.class));
+        assertThat(llmClient.lastRequest.tools()).isEmpty();
+    }
+
+    @Test
+    void shouldNotExposeToolsWhenRunRouterFallsBackToDirectChat() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
+        AgentRunRouter runRouter = mock(AgentRunRouter.class);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.answer("你好"),
+                LlmStreamChunk.done()
+        ));
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                new RecordingSseEventSender(),
+                attachmentService,
+                null,
+                contextBuilder(messageMapper, attachmentService, llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                null,
+                toolRegistry,
+                null,
+                null,
+                null,
+                null,
+                null,
+                runRouter,
+                null
+        );
+        String prompt = "你好";
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(), List.of(), 1500)).thenReturn(List.of());
+        when(runRouter.route(new AgentRunInput(prompt))).thenThrow(new IllegalStateException("router unavailable"));
+        when(toolRegistry.listTools(any(ToolExecutionContext.class))).thenReturn(List.of());
+
+        service.stream(7L, 100L, 10L, null, prompt, false, List.of(), List.of());
+
+        verify(toolRegistry, never()).listTools(any(ToolExecutionContext.class));
+        assertThat(llmClient.lastRequest.tools()).isEmpty();
+    }
+
+    @Test
+    void shouldExposeToolsForDirectChatWhenSkillIsEnabled() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
+        SkillRuntimeService skillRuntimeService = mock(SkillRuntimeService.class);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.answer("已按 Skill 处理"),
+                LlmStreamChunk.done()
+        ));
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                new RecordingSseEventSender(),
+                attachmentService,
+                null,
+                contextBuilder(messageMapper, attachmentService, llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                null,
+                toolRegistry,
+                skillRuntimeService,
+                null,
+                null,
+                null,
+                null,
+                new AgentRunRouter(),
+                null
+        );
+        LlmToolDefinition skillReadTool = new LlmToolDefinition(
+                "skill.read",
+                "读取 Skill 完整说明",
+                Map.of("type", "object")
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(), List.of(), 1500)).thenReturn(List.of());
+        when(skillRuntimeService.buildRuntimeContext(null, List.of(6L)))
+                .thenReturn(new SkillRuntimeContext("已选择以下 Skill。", List.of(6L)));
+        when(toolRegistry.listTools(any(ToolExecutionContext.class))).thenReturn(List.of(skillReadTool));
+
+        service.stream(7L, 100L, 10L, null, "帮我处理一下", false, List.of(), List.of(), List.of(6L));
+
+        verify(toolRegistry).listTools(any(ToolExecutionContext.class));
+        assertThat(llmClient.lastRequest.tools()).containsExactly(skillReadTool);
+    }
+
+    @Test
     void shouldRecordFailedToolResultWhenRegistryExecutionThrows() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
         ChatMessageMapper messageMapper = messageMapper();

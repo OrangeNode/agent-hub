@@ -7,6 +7,9 @@ public class AgentRunRouter {
 
     public AgentRunDecision route(AgentRunInput input) {
         String prompt = input == null || input.prompt() == null ? "" : input.prompt().trim().toLowerCase();
+        if (isFileDeliverableTask(prompt)) {
+            return new AgentRunDecision(RunMode.PLAN_EXECUTE, ToolPolicy.AUTO, PlanPolicy.AUTO);
+        }
         if (isComplexTask(prompt)) {
             return new AgentRunDecision(RunMode.PLAN_EXECUTE, ToolPolicy.AUTO, PlanPolicy.AUTO);
         }
@@ -27,6 +30,11 @@ public class AgentRunRouter {
     private boolean isMultiStageProjectPlan(String prompt) {
         return containsAny(prompt, "计划", "方案", "规划", "路线图", "实施", "上线")
                 && containsAny(prompt, "包含", "里程碑", "风险", "交付", "阶段", "三个月", "完整", "多步", "拆解");
+    }
+
+    private boolean isFileDeliverableTask(String prompt) {
+        return containsAny(prompt, "下载", "可下载", "导出")
+                && containsAny(prompt, "代码", "文件", "input", "output", "csv", "xlsx", "docx", "ppt", "pdf");
     }
 
     private boolean isLightToolQuery(String prompt) {

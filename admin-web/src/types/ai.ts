@@ -7,6 +7,8 @@ export interface AiProviderRecord {
   baseUrl: string
   authType: string
   apiVersion?: string | null
+  extraHeaders?: string | null
+  extraBody?: string | null
   hasApiKey: boolean
   enabled: boolean
   sort: number

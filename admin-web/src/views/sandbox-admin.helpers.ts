@@ -1,4 +1,5 @@
 import type { PageResult, SandboxOperation } from '../types/sandbox-admin'
+import { formatBeijingDateTime } from '../utils/beijing-time'
 
 export type TagType = 'default' | 'error' | 'primary' | 'info' | 'success' | 'warning'
 
@@ -114,16 +115,8 @@ export function formatDurationMs(milliseconds?: number | null): string {
 }
 
 export function formatDateTime(value?: string | null): string {
-  if (!value) {
-    return '--'
-  }
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
-  }
-
-  return date.toLocaleString('zh-CN', { hour12: false })
+  const formatted = formatBeijingDateTime(value)
+  return formatted === '-' ? '--' : formatted
 }
 
 export function requiresStrongConfirm(action: SandboxOperation): boolean {

@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: jdbc:postgresql://172.16.112.183:5432/agent_hub
+    url: jdbc:postgresql://172.16.112.183:5432/agent_hub?options=-c%20TimeZone%3DAsia%2FShanghai
     username: agent_hub
     password: agent_hub_123456
   data:

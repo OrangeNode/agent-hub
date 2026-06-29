@@ -1,3 +1,5 @@
+import { formatBeijingDateTime } from '../utils/beijing-time'
+
 export type OperationTagType = 'default' | 'error' | 'primary' | 'info' | 'success' | 'warning'
 
 export function buildOperationStatusTagType(status?: string | null): OperationTagType {
@@ -57,14 +59,6 @@ export function formatOperationDuration(milliseconds?: number | null): string {
 }
 
 export function formatOperationDateTime(value?: string | null): string {
-  if (!value) {
-    return '--'
-  }
-
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
-  }
-
-  return date.toLocaleString('zh-CN', { hour12: false })
+  const formatted = formatBeijingDateTime(value)
+  return formatted === '-' ? '--' : formatted
 }

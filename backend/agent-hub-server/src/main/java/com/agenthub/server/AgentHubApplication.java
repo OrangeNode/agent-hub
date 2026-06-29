@@ -1,5 +1,6 @@
 package com.agenthub.server;
 
+import com.agenthub.common.time.AgentHubTimeZone;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -30,6 +31,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 public class AgentHubApplication {
 
     public static void main(String[] args) {
+        AgentHubTimeZone.applyDefault();
         SpringApplication.run(AgentHubApplication.class, args);
     }
 }

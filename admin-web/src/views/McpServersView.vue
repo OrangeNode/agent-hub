@@ -143,6 +143,7 @@ import {
   updateMcpToolEnabled
 } from '../api/mcp'
 import type { McpServerFormPayload, McpServerRecord, McpToolRecord } from '../types/mcp'
+import { formatBeijingDateTime } from '../utils/beijing-time'
 
 const message = useMessage()
 const loading = ref(false)
@@ -482,10 +483,7 @@ function syncStatusTagType(status?: string | null) {
 }
 
 function formatDate(value?: string | null) {
-  if (!value) {
-    return '-'
-  }
-  return new Date(value).toLocaleString('zh-CN')
+  return formatBeijingDateTime(value)
 }
 
 onMounted(() => {

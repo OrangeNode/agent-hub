@@ -1,8 +1,10 @@
 spring:
   application:
     name: agent-hub-server
+  jackson:
+    time-zone: Asia/Shanghai
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/agent_hub}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/agent_hub?options=-c%20TimeZone%3DAsia%2FShanghai}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     password: ${SPRING_DATASOURCE_PASSWORD:postgres}
   flyway:

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.agenthub.system.operationlog.support.OperationLogSanitizer;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.List;
@@ -111,6 +112,18 @@ class OperationLogSanitizerTest {
 
         assertThat(json).isNotEqualTo("\"<unserializable>\"");
         assertThat(json).contains("2026").contains("10:15:30");
+    }
+
+    @Test
+    void shouldSerializeInstantAsBeijingTime() {
+        OperationLogSanitizer sanitizer = new OperationLogSanitizer();
+
+        String json = sanitizer.toSanitizedJson(Map.of(
+                "createdAt", Instant.parse("2026-06-11T02:15:30Z")
+        ), 4000, new String[0]);
+
+        assertThat(json).contains("2026-06-11T10:15:30+08:00");
+        assertThat(json).doesNotContain("2026-06-11T02:15:30Z");
     }
 
     @Test

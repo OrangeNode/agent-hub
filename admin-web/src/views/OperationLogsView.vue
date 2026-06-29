@@ -107,6 +107,7 @@ import {
 import { SearchOutlined } from '@vicons/antd'
 import { fetchOperationLogs } from '../api/operation-log'
 import type { OperationLogItem, OperationLogQuery } from '../types/operation-log'
+import { toBeijingIsoString } from '../utils/beijing-time'
 import {
   buildOperationStatusTagType,
   formatJsonPreview,
@@ -183,8 +184,8 @@ const columns: DataTableColumns<OperationLogItem> = [
 
 function buildQuery(): OperationLogQuery {
   return {
-    startAt: createdRange.value?.[0] ? new Date(createdRange.value[0]).toISOString() : null,
-    endAt: createdRange.value?.[1] ? new Date(createdRange.value[1]).toISOString() : null,
+    startAt: createdRange.value?.[0] ? toBeijingIsoString(createdRange.value[0]) : null,
+    endAt: createdRange.value?.[1] ? toBeijingIsoString(createdRange.value[1]) : null,
     username: filters.username,
     module: filters.module,
     action: filters.action,

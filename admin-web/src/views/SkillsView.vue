@@ -153,6 +153,7 @@ import {
   uploadSkillArchive
 } from '../api/skill'
 import type { SkillFileContent, SkillFileRecord, SkillImportPreview, SkillRecord } from '../types/skill'
+import { formatBeijingDateTime } from '../utils/beijing-time'
 import { isMarkdownPath, renderMarkdownPreview } from '../utils/markdown-preview'
 
 type SkillTreeOption = TreeOption & {
@@ -481,7 +482,7 @@ async function loadData() {
 }
 
 function formatDateTime(value?: string | null) {
-  return value ? value.replace('T', ' ').slice(0, 19) : '-'
+  return formatBeijingDateTime(value)
 }
 
 function formatBytes(value: number) {

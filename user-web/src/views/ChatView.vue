@@ -1140,6 +1140,7 @@ import {
   resolveAgentSelectionForConversation
 } from './chat-agent.helpers'
 import type { ConversationItem } from './chat-agent.helpers'
+import { toBeijingIsoString } from '../utils/beijing-time'
 import ThinkingModeSelect from './ThinkingModeSelect.vue'
 import TaskProgressPanel from './TaskProgressPanel.vue'
 
@@ -2516,7 +2517,7 @@ function handleSend() {
     conversations.value.unshift({
       id: nextId,
       title: '新聊天',
-      updatedAt: new Date().toISOString(),
+      updatedAt: toBeijingIsoString(Date.now()),
       agentKey: activeAgentKey.value
     })
     messageMap.value[nextId] = []
@@ -2621,7 +2622,7 @@ function handleSend() {
           {
             id: data.conversationId,
             title: data.title,
-            updatedAt: new Date().toISOString(),
+            updatedAt: toBeijingIsoString(Date.now()),
             agentKey: activeAgentKey.value
           },
           ...conversations.value.filter((item) =>

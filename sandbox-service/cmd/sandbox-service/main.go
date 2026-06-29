@@ -15,6 +15,9 @@ import (
 )
 
 func main() {
+	if err := configureBeijingTimeZone(); err != nil {
+		log.Fatal(err)
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
@@ -103,6 +106,15 @@ func newVMFactory(cfg config.Config) (host.VMFactory, error) {
 
 func defaultObjectStoreRoot() string {
 	return strings.TrimSpace(os.Getenv("SANDBOX_OBJECT_LOCAL_DIR"))
+}
+
+func configureBeijingTimeZone() error {
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return err
+	}
+	time.Local = location
+	return nil
 }
 
 type warmPoolFactory struct {

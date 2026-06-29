@@ -1,5 +1,6 @@
 package com.agenthub.system.operationlog.support;
 
+import com.agenthub.common.time.AgentHubTimeZone;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -187,7 +188,7 @@ public class OperationLogSanitizer {
             @Override
             public void serialize(TemporalAccessor value, JsonGenerator gen, SerializerProvider serializers)
                     throws IOException {
-                gen.writeString(value.toString());
+                gen.writeString(formatTemporal(value));
             }
         };
 
@@ -199,5 +200,18 @@ public class OperationLogSanitizer {
         module.addSerializer(OffsetDateTime.class, serializer);
         module.addSerializer(ZonedDateTime.class, serializer);
         return module;
+    }
+
+    private String formatTemporal(TemporalAccessor value) {
+        if (value instanceof Instant instant) {
+            return OffsetDateTime.ofInstant(instant, AgentHubTimeZone.BEIJING_ZONE).toString();
+        }
+        if (value instanceof OffsetDateTime offsetDateTime) {
+            return offsetDateTime.atZoneSameInstant(AgentHubTimeZone.BEIJING_ZONE).toOffsetDateTime().toString();
+        }
+        if (value instanceof ZonedDateTime zonedDateTime) {
+            return zonedDateTime.withZoneSameInstant(AgentHubTimeZone.BEIJING_ZONE).toOffsetDateTime().toString();
+        }
+        return value.toString();
     }
 }

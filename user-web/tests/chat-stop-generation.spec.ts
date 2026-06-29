@@ -5,6 +5,7 @@ import {
   applyStreamAssistantMessageId,
   assistantDisplayContent,
   findStoppableAssistantMessage,
+  resolveConversationSwitchStopAction,
   resolveSendButtonDisabled
 } from '../src/views/ChatView.vue'
 import chatApiSource from '../src/api/chat.ts?raw'
@@ -105,6 +106,45 @@ describe('聊天生成中止', () => {
     expect(closeAfterRequestIndex).toBeGreaterThan(requestStopIndex)
     expect(localStopIndex).toBeGreaterThan(closeAfterRequestIndex)
     expect(localCloseIndex).toBeGreaterThan(localStopIndex)
+  })
+
+  it('切换会话时应在离开当前会话前终止当前流', () => {
+    const switchConversation = functionBlock('switchConversation')
+    const stopBeforeSwitch = functionBlock('stopCurrentStreamBeforeLeavingConversation')
+    const stopIndex = switchConversation.indexOf('stopCurrentStreamBeforeLeavingConversation()')
+    const switchIndex = switchConversation.indexOf('activeConversationId.value = conversationId')
+
+    expect(stopIndex).toBeGreaterThanOrEqual(0)
+    expect(switchIndex).toBeGreaterThan(stopIndex)
+    expect(stopBeforeSwitch).toContain('resolveConversationSwitchStopAction({')
+    expect(stopBeforeSwitch).toContain('markCurrentAssistantStopped')
+    expect(stopBeforeSwitch).toContain('closeStream()')
+    expect(stopBeforeSwitch).toContain('requestStopGeneration(stopAction.messageId)')
+    expect(stopBeforeSwitch).not.toContain('refreshAfterStopping()')
+  })
+
+  it('切换会话终止当前流时只对真实消息请求后端停止', () => {
+    expect(resolveConversationSwitchStopAction({
+      streaming: true,
+      assistantMessageId: 200
+    })).toEqual({
+      shouldStop: true,
+      messageId: 200
+    })
+    expect(resolveConversationSwitchStopAction({
+      streaming: true,
+      assistantMessageId: -1
+    })).toEqual({
+      shouldStop: true,
+      messageId: null
+    })
+    expect(resolveConversationSwitchStopAction({
+      streaming: false,
+      assistantMessageId: 200
+    })).toEqual({
+      shouldStop: false,
+      messageId: null
+    })
   })
 
   it('meta 事件应提前把临时助手消息替换为真实消息 ID', () => {

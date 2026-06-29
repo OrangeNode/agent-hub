@@ -25,4 +25,10 @@ public class ChatTaskController {
         LoginUser loginUser = (LoginUser) authentication.getPrincipal();
         return ApiResponse.success(taskService.findActiveProgress(loginUser.userId(), conversationId));
     }
+
+    @GetMapping("/conversations/{conversationId}/tasks/latest")
+    public ApiResponse<TaskProgressItem> latestTask(Authentication authentication, @PathVariable Long conversationId) {
+        LoginUser loginUser = (LoginUser) authentication.getPrincipal();
+        return ApiResponse.success(taskService.findLatestProgress(loginUser.userId(), conversationId));
+    }
 }

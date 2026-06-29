@@ -218,6 +218,20 @@ public class AgentTaskServiceImpl implements AgentTaskService {
         return toProgress(run, listSteps(run.getId()));
     }
 
+    @Override
+    public TaskProgressItem findLatestProgress(Long userId, Long conversationId) {
+        List<AgentTaskRun> runs = runMapper.selectList(new QueryWrapper<AgentTaskRun>()
+                .eq("user_id", userId)
+                .eq("conversation_id", conversationId)
+                .orderByDesc("updated_at")
+                .orderByDesc("id"));
+        if (runs.isEmpty()) {
+            return null;
+        }
+        AgentTaskRun run = runs.getFirst();
+        return toProgress(run, listSteps(run.getId()));
+    }
+
     private TaskProgressItem snapshot(Long taskRunId) {
         AgentTaskRun refreshed = requireRun(taskRunId);
         return toProgress(refreshed, listSteps(taskRunId));

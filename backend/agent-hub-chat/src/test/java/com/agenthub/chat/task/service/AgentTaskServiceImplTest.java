@@ -390,6 +390,29 @@ class AgentTaskServiceImplTest {
         verify(runMapper).selectList(any(Wrapper.class));
     }
 
+    @Test
+    void shouldFindLatestProgressIncludingTerminalStatusForUserAndConversation() {
+        AgentTaskRun completed = run(101L, "COMPLETED", 4, 2);
+        completed.setCurrentStepIndex(2);
+        when(runMapper.selectList(any())).thenReturn(List.of(completed));
+        when(stepMapper.selectList(any())).thenReturn(List.of(
+                step(1, "collect context", "COMPLETED"),
+                step(2, "write answer", "COMPLETED")
+        ));
+
+        TaskProgressItem progress = service.findLatestProgress(7L, 20L);
+
+        assertThat(progress.taskRunId()).isEqualTo(101L);
+        assertThat(progress.status()).isEqualTo("COMPLETED");
+        assertThat(progress.currentStepIndex()).isEqualTo(2);
+        assertThat(progress.steps()).extracting("status").containsExactly("COMPLETED", "COMPLETED");
+        ArgumentCaptor<Wrapper<AgentTaskRun>> wrapperCaptor = wrapperCaptor();
+        verify(runMapper).selectList(wrapperCaptor.capture());
+        assertThat(wrapperCaptor.getValue().getCustomSqlSegment())
+                .contains("user_id", "conversation_id")
+                .doesNotContain("status");
+    }
+
     @SuppressWarnings("unchecked")
     private ArgumentCaptor<Wrapper<AgentTaskRun>> wrapperCaptor() {
         return ArgumentCaptor.forClass(Wrapper.class);

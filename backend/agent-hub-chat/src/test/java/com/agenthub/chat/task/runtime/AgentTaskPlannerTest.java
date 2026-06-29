@@ -87,15 +87,58 @@ class AgentTaskPlannerTest {
     }
 
     @Test
-    void shouldFallbackToFixedChineseStepsWhenJsonCannotBeParsed() {
+    void shouldFallbackToPromptAwareStepsWhenJsonCannotBeParsed() {
         RecordingLlmClient client = new RecordingLlmClient("不是 JSON");
         AgentTaskPlanner planner = new AgentTaskPlanner();
 
-        AgentTaskPlan plan = planner.plan(client, runtimeConfig(), "处理一个复杂任务");
+        AgentTaskPlan plan = planner.plan(client, runtimeConfig(), "请生成报告，并分析数据，然后整理成完整计划。");
 
-        assertThat(plan.title()).isEqualTo("处理一个复杂任务");
-        assertThat(plan.summary()).isEqualTo("处理一个复杂任务");
-        assertThat(plan.steps()).containsExactly("分析需求", "准备上下文", "执行任务", "校验结果", "整理回复");
+        assertThat(plan.title()).isEqualTo("请生成报告，并分析数据，然后整理成完整计划。");
+        assertThat(plan.summary()).isEqualTo("请生成报告，并分析数据，然后整理成完整计划。");
+        assertThat(plan.steps()).containsExactly(
+                "明确报告目标和数据范围",
+                "分析数据并提炼结论",
+                "生成报告内容",
+                "整理完整计划",
+                "校验并完善输出"
+        );
+        assertThat(plan.steps()).doesNotContain("执行任务");
+    }
+
+    @Test
+    void shouldPreferFeatureImplementationFallbackOverReportKeywords() {
+        RecordingLlmClient client = new RecordingLlmClient("不是 JSON");
+        AgentTaskPlanner planner = new AgentTaskPlanner();
+
+        AgentTaskPlan plan = planner.plan(client, runtimeConfig(),
+                "请设计用户画像分析功能，包含需求拆解、后端接口、前端页面、数据模型、测试计划和交付步骤。");
+
+        assertThat(plan.steps()).containsExactly(
+                "梳理功能目标和业务边界",
+                "设计数据模型和接口契约",
+                "规划前端交互和权限校验",
+                "拆解实现步骤和异常处理",
+                "制定测试与交付检查"
+        );
+        assertThat(plan.steps()).doesNotContain("明确报告目标和数据范围", "执行任务");
+    }
+
+    @Test
+    void shouldUseProjectPlanningFallbackForPlanWithoutReportKeywords() {
+        RecordingLlmClient client = new RecordingLlmClient("不是 JSON");
+        AgentTaskPlanner planner = new AgentTaskPlanner();
+
+        AgentTaskPlan plan = planner.plan(client, runtimeConfig(),
+                "请制定三个月产品上线计划，包含里程碑、风险和交付检查。");
+
+        assertThat(plan.steps()).containsExactly(
+                "明确目标范围和约束条件",
+                "拆解关键阶段和执行事项",
+                "安排里程碑和责任分工",
+                "识别风险并制定应对措施",
+                "校验交付结果并整理复盘"
+        );
+        assertThat(plan.steps()).doesNotContain("明确报告目标和数据范围", "执行任务");
     }
 
     @Test
@@ -107,7 +150,7 @@ class AgentTaskPlannerTest {
 
         AgentTaskPlan plan = planner.plan(client, runtimeConfig(), "处理一个复杂任务");
 
-        assertThat(plan.steps()).containsExactly("分析需求", "准备上下文", "执行任务", "校验结果", "整理回复");
+        assertThat(plan.steps()).containsExactly("理解任务目标", "处理任务内容", "整理回复结果");
     }
 
     private AiModelRuntimeConfig runtimeConfig() {

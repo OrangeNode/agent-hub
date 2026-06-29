@@ -30,4 +30,6 @@ public interface AgentTaskService {
     void stopByAssistantMessageId(Long userId, Long assistantMessageId);
 
     TaskProgressItem findActiveProgress(Long userId, Long conversationId);
+
+    TaskProgressItem findLatestProgress(Long userId, Long conversationId);
 }

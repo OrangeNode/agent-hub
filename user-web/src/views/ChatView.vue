@@ -2,7 +2,7 @@
   <div
     class="chat-shell"
     :class="{ 'panel-open': workPanelOpen, 'preview-open': artifactPreviewOpen, 'sidebar-collapsed': sidebarCollapsed }"
-    @click="openConversationMenuId = null"
+    @click="closeFloatingMenus"
   >
     <aside class="sidebar">
       <div class="sidebar-header">
@@ -95,12 +95,53 @@
         <div v-else-if="!conversations.length" class="recent-load-state">暂无会话</div>
       </section>
 
-      <div class="sidebar-footer">
-        <div class="user-avatar">{{ userInitial }}</div>
-        <div class="user-meta">
-          <strong>{{ authStore.displayName || '用户' }}</strong>
+      <div class="sidebar-footer" @click.stop>
+        <button
+          type="button"
+          class="account-trigger"
+          :class="{ open: accountMenuOpen }"
+          aria-haspopup="menu"
+          :aria-expanded="accountMenuOpen"
+          @click="toggleAccountMenu"
+        >
+          <span class="user-avatar">{{ userInitial }}</span>
+          <span class="user-meta">
+            <span class="user-name">{{ authStore.displayName || '用户' }}</span>
+            <span class="account-plan">Agent Hub</span>
+          </span>
+          <span class="account-footer-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M7 8h10M7 12h10M7 16h10" />
+              <path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
+            </svg>
+          </span>
+        </button>
+
+        <div v-if="accountMenuOpen" class="account-menu" role="menu" @click.stop>
+          <div class="account-menu-header">
+            <span class="user-avatar">{{ userInitial }}</span>
+            <span class="user-meta">
+              <span class="user-name">{{ authStore.displayName || '用户' }}</span>
+              <span class="account-plan">Agent Hub</span>
+            </span>
+            <span class="account-menu-arrow" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="m9 6 6 6-6 6" />
+              </svg>
+            </span>
+          </div>
+          <div class="account-menu-divider" />
+          <button type="button" class="account-menu-item danger" role="menuitem" @click="handleLogout">
+            <span class="account-menu-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M10 17l5-5-5-5" />
+                <path d="M15 12H3" />
+                <path d="M21 19V5a2 2 0 0 0-2-2h-6" />
+              </svg>
+            </span>
+            <span>退出登录</span>
+          </button>
         </div>
-        <n-button quaternary size="small" @click="handleLogout">退出</n-button>
       </div>
     </aside>
 
@@ -856,6 +897,29 @@ export interface StreamAssistantMessageLike {
   id: number
 }
 
+export interface ConversationSwitchStopState {
+  streaming: boolean
+  assistantMessageId?: number | null
+}
+
+export function resolveConversationSwitchStopAction(state: ConversationSwitchStopState) {
+  if (!state.streaming) {
+    return {
+      shouldStop: false,
+      messageId: null
+    }
+  }
+
+  const messageId = state.assistantMessageId && state.assistantMessageId > 0
+    ? state.assistantMessageId
+    : null
+
+  return {
+    shouldStop: true,
+    messageId
+  }
+}
+
 export function findStoppableAssistantMessage<T extends StoppableAssistantMessageLike>(messages: T[]) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const messageItem = messages[index]
@@ -1025,7 +1089,6 @@ import {
   deleteConversation,
   downloadAllArtifacts,
   downloadArtifact,
-  fetchActiveTaskProgress,
   fetchAvailableAgents,
   fetchAvailableModels,
   fetchAvailableSkills,
@@ -1033,6 +1096,7 @@ import {
   fetchConversationArtifacts,
   fetchConversationMessages,
   fetchConversations,
+  fetchLatestTaskProgress,
   openChatStream,
   renameConversation,
   stopGeneration
@@ -1144,6 +1208,7 @@ const isMultiline = ref(false)
 const streaming = ref(false)
 const workPanelOpen = ref(false)
 const agentMenuOpen = ref(false)
+const accountMenuOpen = ref(false)
 const thinkingConfigOpen = ref(false)
 const deleteConfirmOpen = ref(false)
 const deletingConversation = ref(false)
@@ -1470,7 +1535,7 @@ async function restoreActiveTaskProgress(conversationId: number | null) {
   }
 
   try {
-    const progress = await fetchActiveTaskProgress(conversationId)
+    const progress = await fetchLatestTaskProgress(conversationId)
     if (activeConversationId.value === conversationId) {
       applyTaskProgress(progress)
     }
@@ -1624,6 +1689,7 @@ function ensureConversationMessages(conversationId: number) {
 function createConversation(options: NewConversationResetOptions = {}) {
   markCurrentAssistantStopped()
   closeStream()
+  accountMenuOpen.value = false
 
   const nextState = resolveNewConversationState({
     activeConversationId: activeConversationId.value,
@@ -1662,10 +1728,16 @@ function createConversation(options: NewConversationResetOptions = {}) {
 }
 
 async function switchConversation(conversationId: number) {
+  if (activeConversationId.value === conversationId) {
+    closeFloatingMenus()
+    return
+  }
+
+  stopCurrentStreamBeforeLeavingConversation()
   deactivateTaskStreamContext()
   activeConversationId.value = conversationId
   activeTaskProgress.value = null
-  openConversationMenuId.value = null
+  closeFloatingMenus()
   prompt.value = ''
   clearPendingImages()
   clearSelectedReuseAttachments()
@@ -1710,6 +1782,7 @@ function toggleConversationMenu(conversationId: number, event: MouseEvent) {
     return
   }
 
+  accountMenuOpen.value = false
   const trigger = event.currentTarget as HTMLElement
   const rect = trigger.getBoundingClientRect()
   const menuWidth = 118
@@ -1727,8 +1800,18 @@ function toggleConversationMenu(conversationId: number, event: MouseEvent) {
   openConversationMenuId.value = conversationId
 }
 
-async function startRenameConversation(conversation: ConversationItem) {
+function toggleAccountMenu() {
   openConversationMenuId.value = null
+  accountMenuOpen.value = !accountMenuOpen.value
+}
+
+function closeFloatingMenus() {
+  openConversationMenuId.value = null
+  accountMenuOpen.value = false
+}
+
+async function startRenameConversation(conversation: ConversationItem) {
+  closeFloatingMenus()
   const nextTitle = window.prompt('重命名会话', conversation.title)?.trim()
   if (!nextTitle || nextTitle === conversation.title) {
     return
@@ -1746,7 +1829,7 @@ async function startRenameConversation(conversation: ConversationItem) {
 }
 
 function handleDeleteConversation(conversationId: number) {
-  openConversationMenuId.value = null
+  closeFloatingMenus()
   pendingDeleteConversationId.value = conversationId
   deleteConfirmOpen.value = true
 }
@@ -2349,6 +2432,26 @@ function stopCurrentStream() {
   markCurrentAssistantStopped()
   closeStream()
   refreshAfterStopping()
+}
+
+function stopCurrentStreamBeforeLeavingConversation() {
+  const assistantMessage = findStoppableAssistantMessage(currentMessages.value)
+  const stopAction = resolveConversationSwitchStopAction({
+    streaming: streaming.value,
+    assistantMessageId: assistantMessage?.id
+  })
+
+  if (!stopAction.shouldStop) {
+    return
+  }
+
+  markTaskProgressStoppedForCurrentStream('已切换会话，已中止生成')
+  deactivateTaskStreamContext()
+  markCurrentAssistantStopped('已切换会话，已中止生成')
+  closeStream()
+  if (stopAction.messageId) {
+    void requestStopGeneration(stopAction.messageId)
+  }
 }
 
 function markCurrentAssistantStopped(errorMessage?: string) {
@@ -3017,11 +3120,42 @@ svg {
 }
 
 .sidebar-footer {
+  position: relative;
   display: flex;
   align-items: center;
+  padding: 8px 0 0;
+  border-top: 1px solid #e4e4e7;
+}
+
+.account-trigger {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 22px;
+  align-items: center;
   gap: 10px;
-  padding: 10px 8px 0;
-  border-top: 1px solid #ececf1;
+  width: 100%;
+  min-width: 0;
+  min-height: 52px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #111827;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.account-trigger:hover,
+.account-trigger.open {
+  border-color: transparent;
+  background: #ececec;
+  box-shadow: none;
+}
+
+.account-trigger:focus-visible {
+  outline: 2px solid #d1d5db;
+  outline-offset: 2px;
 }
 
 .user-avatar {
@@ -3030,23 +3164,110 @@ svg {
   height: 26px;
   place-items: center;
   border-radius: 999px;
-  background: #2563eb;
+  background: #f2a13b;
   color: #ffffff;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 500;
 }
 
 .user-meta {
+  display: grid;
+  gap: 1px;
   min-width: 0;
-  flex: 1;
 }
 
-.user-meta strong {
+.user-name {
   display: block;
   overflow: hidden;
   font-size: 14px;
+  font-weight: 400;
+  line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.account-plan {
+  display: block;
+  overflow: hidden;
+  color: #8a8a8a;
+  font-size: 12px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-footer-icon,
+.account-menu-arrow,
+.account-menu-icon {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: #6f6f6f;
+}
+
+.account-footer-icon svg,
+.account-menu-arrow svg,
+.account-menu-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.account-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid #dddddd;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.16);
+}
+
+.account-menu-header {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 22px;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 6px 8px;
+}
+
+.account-menu-divider {
+  height: 1px;
+  margin: 4px 8px;
+  background: #ececec;
+}
+
+.account-menu-item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #202123;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+}
+
+.account-menu-item:hover {
+  background: #f3f4f6;
+}
+
+.account-menu-item.danger {
+  color: #202123;
 }
 
 .expand-button {

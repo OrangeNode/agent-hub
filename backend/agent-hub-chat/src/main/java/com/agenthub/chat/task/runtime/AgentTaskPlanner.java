@@ -17,7 +17,28 @@ import org.springframework.stereotype.Service;
 public class AgentTaskPlanner {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-    private static final List<String> FALLBACK_STEPS = List.of("分析需求", "准备上下文", "执行任务", "校验结果", "整理回复");
+    private static final List<String> GENERIC_FALLBACK_STEPS = List.of("理解任务目标", "处理任务内容", "整理回复结果");
+    private static final List<String> FEATURE_IMPLEMENTATION_STEPS = List.of(
+            "梳理功能目标和业务边界",
+            "设计数据模型和接口契约",
+            "规划前端交互和权限校验",
+            "拆解实现步骤和异常处理",
+            "制定测试与交付检查"
+    );
+    private static final List<String> REPORT_ANALYSIS_PLAN_STEPS = List.of(
+            "明确报告目标和数据范围",
+            "分析数据并提炼结论",
+            "生成报告内容",
+            "整理完整计划",
+            "校验并完善输出"
+    );
+    private static final List<String> PROJECT_PLANNING_STEPS = List.of(
+            "明确目标范围和约束条件",
+            "拆解关键阶段和执行事项",
+            "安排里程碑和责任分工",
+            "识别风险并制定应对措施",
+            "校验交付结果并整理复盘"
+    );
     private static final int MAX_TITLE_LENGTH = 128;
     private static final int MAX_SUMMARY_LENGTH = 512;
     private static final int MAX_STEP_LENGTH = 160;
@@ -50,6 +71,7 @@ public class AgentTaskPlanner {
                         new LlmMessage("system", """
                                 你是任务规划器。请只输出 JSON，不要输出 Markdown。
                                 JSON 结构为 {"title":"任务标题","summary":"计划摘要","steps":["步骤一","步骤二"]}。
+                                步骤必须贴合用户的具体需求，不要使用固定模板。
                                 步骤保持简短、可执行，最多 6 步。
                                 """),
                         new LlmMessage("user", prompt)
@@ -149,14 +171,14 @@ public class AgentTaskPlanner {
     }
 
     private AgentTaskPlan fallbackPlan(String prompt) {
-        String title = limit(defaultText(prompt, "执行任务"), MAX_TITLE_LENGTH);
-        String summary = limit(defaultText(prompt, "执行任务"), MAX_SUMMARY_LENGTH);
-        return new AgentTaskPlan(title, summary, FALLBACK_STEPS);
+        String title = limit(defaultText(prompt, "处理任务"), MAX_TITLE_LENGTH);
+        String summary = limit(defaultText(prompt, "处理任务"), MAX_SUMMARY_LENGTH);
+        return new AgentTaskPlan(title, summary, fallbackSteps(prompt));
     }
 
     private String normalizePrompt(String prompt) {
         String value = prompt == null ? "" : prompt.trim();
-        return value.isEmpty() ? "执行任务" : value;
+        return value.isEmpty() ? "处理任务" : value;
     }
 
     private String defaultText(String value, String fallback) {
@@ -166,7 +188,47 @@ public class AgentTaskPlanner {
         if (fallback != null && !fallback.isBlank()) {
             return fallback.trim();
         }
-        return "执行任务";
+        return "处理任务";
+    }
+
+    private List<String> fallbackSteps(String prompt) {
+        String normalizedPrompt = prompt == null ? "" : prompt;
+        if (isFeatureImplementationPrompt(normalizedPrompt)) {
+            return FEATURE_IMPLEMENTATION_STEPS;
+        }
+        if (containsAny(normalizedPrompt, "报告", "分析", "数据")) {
+            return REPORT_ANALYSIS_PLAN_STEPS;
+        }
+        if (containsAny(normalizedPrompt, "计划", "方案", "规划", "设计")) {
+            return PROJECT_PLANNING_STEPS;
+        }
+        return GENERIC_FALLBACK_STEPS;
+    }
+
+    private boolean isFeatureImplementationPrompt(String value) {
+        return containsAny(value,
+                "功能",
+                "接口",
+                "前端",
+                "后端",
+                "实现",
+                "开发",
+                "权限",
+                "异步",
+                "测试",
+                "数据模型",
+                "页面",
+                "下载"
+        );
+    }
+
+    private boolean containsAny(String value, String... keywords) {
+        for (String keyword : keywords) {
+            if (value.contains(keyword)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String limit(String value, int maxLength) {

@@ -27,6 +27,16 @@ class AgentRunRouterTest {
     }
 
     @Test
+    void shouldRouteMultiStageProjectPlanToPlanExecute() {
+        AgentRunDecision decision = router.route(
+                new AgentRunInput("请制定三个月产品上线计划，包含里程碑、风险和交付检查。"));
+
+        assertThat(decision.runMode()).isEqualTo(RunMode.PLAN_EXECUTE);
+        assertThat(decision.toolPolicy()).isEqualTo(ToolPolicy.AUTO);
+        assertThat(decision.planPolicy()).isEqualTo(PlanPolicy.AUTO);
+    }
+
+    @Test
     void shouldRouteLightToolQueryToToolAssistedWithoutPlan() {
         AgentRunDecision decision = router.route(new AgentRunInput("帮我查一下今天北京天气"));
 

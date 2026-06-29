@@ -57,7 +57,7 @@ export function buildTaskProgressText(progress: ChatTaskProgressRecord | null | 
 
   const normalized = normalizeTaskProgress(progress)
   if (normalized.status === 'PLANNING') {
-    return '任务进度：准备中'
+    return '任务进度：正在生成任务计划...'
   }
   if (normalized.status === 'COMPLETED') {
     return `任务进度：已完成 ${normalized.totalSteps} / ${normalized.totalSteps}`
@@ -86,6 +86,18 @@ export function taskStepStatusText(status: ChatTaskStepStatus): string {
     default:
       return '等待中'
   }
+}
+
+export function taskStepDisplayStatus(
+  taskStatus: ChatTaskStatus,
+  stepStatus: ChatTaskStepStatus,
+  stepDisplayIndex: number
+): ChatTaskStepStatus {
+  if (taskStatus === 'PLANNING' && stepDisplayIndex === 0 && stepStatus === 'PENDING') {
+    return 'RUNNING'
+  }
+
+  return stepStatus
 }
 
 function numberOf(value: unknown, fallback = 0): number {

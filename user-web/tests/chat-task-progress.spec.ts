@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchActiveTaskProgress, type ChatTaskProgressRecord } from '../src/api/chat'
+import { fetchActiveTaskProgress, fetchLatestTaskProgress, type ChatTaskProgressRecord } from '../src/api/chat'
 import { http } from '../src/api/http'
 import {
   buildTaskProgressText,
   normalizeTaskProgress,
+  taskStepDisplayStatus,
   taskStepStatusText
 } from '../src/views/chat-task-progress.helpers'
 
@@ -35,7 +36,7 @@ describe('聊天任务进度辅助函数', () => {
   it('应该生成折叠状态摘要文案', () => {
     expect(buildTaskProgressText(undefined)).toBe('')
     expect(buildTaskProgressText(null)).toBe('')
-    expect(buildTaskProgressText(progressOf({ status: 'PLANNING' }))).toBe('任务进度：准备中')
+    expect(buildTaskProgressText(progressOf({ status: 'PLANNING' }))).toBe('任务进度：正在生成任务计划...')
     expect(buildTaskProgressText(progressOf({ status: 'RUNNING', currentStepIndex: 2, totalSteps: 5 }))).toBe(
       '任务进度：正在执行 2 / 5'
     )
@@ -132,6 +133,13 @@ describe('聊天任务进度辅助函数', () => {
     expect(taskStepStatusText('UNKNOWN')).toBe('等待中')
   })
 
+  it('规划中应把首个待处理步骤显示为加载中', () => {
+    expect(taskStepDisplayStatus('PLANNING', 'PENDING', 0)).toBe('RUNNING')
+    expect(taskStepDisplayStatus('PLANNING', 'PENDING', 1)).toBe('PENDING')
+    expect(taskStepDisplayStatus('PLANNING', 'COMPLETED', 0)).toBe('COMPLETED')
+    expect(taskStepDisplayStatus('RUNNING', 'PENDING', 0)).toBe('PENDING')
+  })
+
   it('应该请求当前会话的活动任务进度', async () => {
     vi.mocked(http.get).mockResolvedValue({
       data: {
@@ -144,6 +152,21 @@ describe('聊天任务进度辅助函数', () => {
     const result = await fetchActiveTaskProgress(42)
 
     expect(http.get).toHaveBeenCalledWith('/chat/conversations/42/tasks/active')
+    expect(result).toBeNull()
+  })
+
+  it('应请求当前会话的最新任务进度用于会话切换恢复', async () => {
+    vi.mocked(http.get).mockResolvedValue({
+      data: {
+        code: 200,
+        message: '成功',
+        data: null
+      }
+    })
+
+    const result = await fetchLatestTaskProgress(42)
+
+    expect(http.get).toHaveBeenCalledWith('/chat/conversations/42/tasks/latest')
     expect(result).toBeNull()
   })
 })

@@ -260,8 +260,12 @@ class ChatServiceImplTest {
 
         service.stream(7L, 100L, 10L, null, prompt, false, List.of(), List.of());
 
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<String>> initialStepsCaptor = ArgumentCaptor.forClass(List.class);
         verify(taskService).createRun(eq(7L), eq(100L), eq(2L), eq(RunMode.PLAN_EXECUTE),
-                eq(prompt), eq(prompt), any());
+                eq(prompt), eq(prompt), initialStepsCaptor.capture());
+        assertThat(initialStepsCaptor.getValue())
+                .containsExactly("正在生成任务计划");
         verify(taskPlanner).plan(llmClient, runtimeConfig, prompt);
         verify(taskService).replacePlan(123L, plan);
         verify(taskService).markStepRunning(123L, 1);

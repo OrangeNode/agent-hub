@@ -454,6 +454,13 @@ export async function fetchActiveTaskProgress(conversationId: number) {
   return response.data.data
 }
 
+export async function fetchLatestTaskProgress(conversationId: number) {
+  const response = await http.get<ApiResponse<ChatTaskProgressRecord | null>>(
+    `/chat/conversations/${conversationId}/tasks/latest`
+  )
+  return response.data.data
+}
+
 export async function fetchConversationArtifacts(conversationId: number) {
   const response = await http.get<ApiResponse<ChatArtifactRecord[]>>(`/chat/conversations/${conversationId}/artifacts`)
   return response.data.data

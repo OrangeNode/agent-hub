@@ -17,8 +17,16 @@ public class AgentRunRouter {
     }
 
     private boolean isComplexTask(String prompt) {
+        if (isMultiStageProjectPlan(prompt)) {
+            return true;
+        }
         return containsAny(prompt, "生成报告", "制作", "ppt", "可下载", "分析", "整理成", "转换", "导出")
                 && containsAny(prompt, "并", "然后", "同时", "多步", "完整", "计划", "报告", "ppt");
+    }
+
+    private boolean isMultiStageProjectPlan(String prompt) {
+        return containsAny(prompt, "计划", "方案", "规划", "路线图", "实施", "上线")
+                && containsAny(prompt, "包含", "里程碑", "风险", "交付", "阶段", "三个月", "完整", "多步", "拆解");
     }
 
     private boolean isLightToolQuery(String prompt) {

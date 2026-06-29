@@ -418,7 +418,7 @@ public class ChatServiceImpl implements ChatService {
                     runDecision.runMode(),
                     prompt,
                     prompt,
-                    List.of("执行任务")
+                    List.of("正在生成任务计划")
             );
             return new TaskRunContext(progress);
         } catch (RuntimeException exception) {

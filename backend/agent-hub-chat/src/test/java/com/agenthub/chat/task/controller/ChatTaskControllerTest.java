@@ -41,4 +41,30 @@ class ChatTaskControllerTest {
         assertThat(response.data()).isSameAs(progress);
         verify(taskService).findActiveProgress(7L, 100L);
     }
+
+    @Test
+    void shouldReturnLatestTaskProgressFromService() {
+        AgentTaskService taskService = mock(AgentTaskService.class);
+        ChatTaskController controller = new ChatTaskController(taskService);
+        Authentication authentication = mock(Authentication.class);
+        when(authentication.getPrincipal()).thenReturn(new LoginUser(7L, "alice", List.of("USER")));
+        TaskProgressItem progress = new TaskProgressItem(
+                123L,
+                "PLAN_EXECUTE",
+                "COMPLETED",
+                "task",
+                "summary",
+                2,
+                2,
+                1,
+                null,
+                List.of(new TaskStepItem(1, "collect context", "COMPLETED", null))
+        );
+        when(taskService.findLatestProgress(7L, 100L)).thenReturn(progress);
+
+        ApiResponse<TaskProgressItem> response = controller.latestTask(authentication, 100L);
+
+        assertThat(response.data()).isSameAs(progress);
+        verify(taskService).findLatestProgress(7L, 100L);
+    }
 }

@@ -25,15 +25,19 @@ describe('聊天任务进度布局', () => {
     expect(chatViewSource).toContain('applyTaskProgress')
     expect(chatViewSource).toContain('onTaskProgressStarted')
     expect(chatViewSource).toContain('onTaskProgressCompleted')
-    expect(chatViewSource).toContain('fetchActiveTaskProgress')
+    expect(chatViewSource).toContain('fetchLatestTaskProgress')
   })
 
-  it('任务进度面板应提供折叠摘要和展开列表', () => {
+  it('任务进度面板应提供折叠进度胶囊和展开时间线列表', () => {
     expect(taskProgressPanelSource).toContain('{{ summaryText }}')
-    expect(taskProgressPanelSource).toContain('任务名称')
-    expect(taskProgressPanelSource).toContain('任务进度')
+    expect(taskProgressPanelSource).toContain('task-progress-state')
+    expect(taskProgressPanelSource).toContain('task-progress-meter')
+    expect(taskProgressPanelSource).toContain('task-progress-subtitle')
+    expect(taskProgressPanelSource).toContain('task-progress-timeline')
+    expect(taskProgressPanelSource).toContain('task-progress-step')
+    expect(taskProgressPanelSource).toContain('task-progress-badge')
     expect(taskProgressPanelSource).toContain('task-progress-spinner')
-    expect(taskProgressPanelSource).toContain('task-progress-dot completed')
+    expect(taskProgressPanelSource).not.toContain('task-progress-head')
   })
 
   it('任务进度面板应放在空状态和会话输入区域上方', () => {

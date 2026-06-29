@@ -342,6 +342,7 @@ public class ChatServiceImpl implements ChatService {
         AgentRuntimeConfig agentRuntime = resolveAgentRuntime(effectiveAgentKey);
         effectiveAgentKey = agentRuntime == null ? effectiveAgentKey : agentRuntime.agentKey();
         AiModelRuntimeConfig runtimeConfig = requireRuntimeConfig(modelId, agentRuntime);
+        requireStreamingSupported(runtimeConfig);
         ChatPreparation preparation = prepareChat(
                 userId,
                 existingConversation,
@@ -771,6 +772,12 @@ public class ChatServiceImpl implements ChatService {
         return modelService.requireAvailableRuntimeConfig(modelId);
     }
 
+    private void requireStreamingSupported(AiModelRuntimeConfig runtimeConfig) {
+        if (runtimeConfig != null && !runtimeConfig.streamSupported()) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "当前模型不支持流式聊天");
+        }
+    }
+
     private AgentRuntimeConfig resolveAgentRuntime(String agentKey) {
         if (!hasText(agentKey) || agentService == null) {
             return null;
@@ -1009,7 +1016,12 @@ public class ChatServiceImpl implements ChatService {
                 }
                 if (outcome.toolCalls().isEmpty()) {
                     if (finished.compareAndSet(false, true)) {
-                        completeAssistantMessage(emitter, assistantMessage, content, reasoningContent, processRecorder);
+                        if (outcome.doneSeen()) {
+                            completeAssistantMessage(emitter, assistantMessage, content, reasoningContent, processRecorder);
+                        } else {
+                            failAssistantMessageAndSendError(emitter, assistantMessage, content, reasoningContent,
+                                    "模型流式响应未正常结束", processRecorder);
+                        }
                     }
                     return;
                 }
@@ -1257,7 +1269,10 @@ public class ChatServiceImpl implements ChatService {
         return new LlmStreamRequest(
                 runtimeConfig.baseUrl(),
                 runtimeConfig.apiKeyCipher(),
+                runtimeConfig.authType(),
                 runtimeConfig.apiVersion(),
+                runtimeConfig.extraHeaders(),
+                runtimeConfig.extraBody(),
                 runtimeConfig.modelCode(),
                 messages,
                 runtimeConfig.maxOutputTokens(),
@@ -1281,6 +1296,7 @@ public class ChatServiceImpl implements ChatService {
     ) {
         AtomicBoolean retryRequested = new AtomicBoolean(false);
         AtomicBoolean sawDelta = new AtomicBoolean(false);
+        AtomicBoolean doneSeen = new AtomicBoolean(false);
         List<LlmToolCall> toolCalls = new ArrayList<>();
         client.stream(buildRequest(runtimeConfig, messages, reasoningRequested, availableTools), chunk -> {
             if (retryRequested.get()) {
@@ -1302,7 +1318,11 @@ public class ChatServiceImpl implements ChatService {
                 return;
             }
             if (chunk.type() == LlmStreamChunkType.DONE && !toolCalls.isEmpty()) {
+                doneSeen.set(true);
                 return;
+            }
+            if (chunk.type() == LlmStreamChunkType.DONE) {
+                doneSeen.set(true);
             }
             if (isDeltaChunk(chunk)) {
                 sawDelta.set(true);
@@ -1316,7 +1336,7 @@ public class ChatServiceImpl implements ChatService {
             handleChunk(emitter, assistantMessage, content, reasoningContent, processRecorder,
                     finished, reasoningRequested, chunk);
         });
-        return new StreamAttemptOutcome(retryRequested.get(), toolCalls);
+        return new StreamAttemptOutcome(retryRequested.get(), doneSeen.get(), toolCalls);
     }
 
     private List<LlmToolDefinition> listTools(ToolExecutionContext toolContext) {
@@ -1484,7 +1504,10 @@ public class ChatServiceImpl implements ChatService {
         return new LlmStreamRequest(
                 runtimeConfig.baseUrl(),
                 runtimeConfig.apiKeyCipher(),
+                runtimeConfig.authType(),
                 runtimeConfig.apiVersion(),
+                runtimeConfig.extraHeaders(),
+                runtimeConfig.extraBody(),
                 runtimeConfig.modelCode(),
                 List.of(new LlmMessage("user", titleService.buildTitlePrompt(prompt))),
                 TITLE_MAX_OUTPUT_TOKENS,
@@ -1999,7 +2022,7 @@ public class ChatServiceImpl implements ChatService {
         }
     }
 
-    private record StreamAttemptOutcome(boolean retryRequested, List<LlmToolCall> toolCalls) {
+    private record StreamAttemptOutcome(boolean retryRequested, boolean doneSeen, List<LlmToolCall> toolCalls) {
     }
 
     private ConversationItem toConversationItem(ChatConversation conversation) {

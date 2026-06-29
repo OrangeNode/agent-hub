@@ -213,6 +213,38 @@ describe('聊天流工具事件', () => {
     ])
   })
 
+  it('非 2xx 响应应该优先展示统一错误体消息', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: () => Promise.resolve({ code: 400, message: '当前模型不支持流式聊天' }),
+      text: () => Promise.resolve('{"code":400,"message":"当前模型不支持流式聊天"}')
+    }))
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error('等待非 2xx 错误超时')), 1000)
+      const finish = (callback: () => void) => {
+        window.clearTimeout(timeout)
+        callback()
+      }
+      openChatStream(
+        { prompt: '你好', token: 'token' },
+        {
+          onDone: () => finish(() => reject(new Error('非 2xx 响应不应该触发 done'))),
+          onTransportError: (error) => finish(() => {
+            try {
+              expect(error).toBeInstanceOf(Error)
+              expect((error as Error).message).toBe('当前模型不支持流式聊天')
+              resolve()
+            } catch (assertionError) {
+              reject(assertionError)
+            }
+          })
+        }
+      )
+    })
+  })
+
   type TaskHandlerName =
     | 'onTaskProgressStarted'
     | 'onTaskProgressUpdated'

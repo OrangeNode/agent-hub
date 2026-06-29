@@ -47,14 +47,14 @@ class AiProviderConnectivityTesterTest {
     }
 
     @Test
-    void shouldStillSendBearerTokenForOpenAiCompatibleWhenAuthTypeIsApiKey() throws Exception {
+    void shouldUseApiKeyHeaderWhenAuthTypeIsApiKey() throws Exception {
         AtomicReference<String> authorization = new AtomicReference<>();
         AtomicReference<String> apiKey = new AtomicReference<>();
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/models", exchange -> {
             authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
             apiKey.set(exchange.getRequestHeaders().getFirst("api-key"));
-            if (!"Bearer sk-test".equals(authorization.get())) {
+            if (!"sk-test".equals(apiKey.get())) {
                 exchange.sendResponseHeaders(401, -1);
                 exchange.close();
                 return;
@@ -76,8 +76,36 @@ class AiProviderConnectivityTesterTest {
 
             assertThat(result.success()).isTrue();
             assertThat(result.statusCode()).isEqualTo(200);
-            assertThat(authorization.get()).isEqualTo("Bearer sk-test");
+            assertThat(authorization.get()).isNull();
             assertThat(apiKey.get()).isEqualTo("sk-test");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldApplyExtraHeadersToModelsProbe() throws Exception {
+        AtomicReference<String> customHeader = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/models", exchange -> {
+            customHeader.set(exchange.getRequestHeaders().getFirst("X-Workspace"));
+            byte[] body = "{\"data\":[]}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            AiProvider provider = provider("OPENAI_COMPATIBLE", "http://127.0.0.1:" + server.getAddress().getPort());
+            provider.setExtraHeaders("{\"X-Workspace\":\"agent-hub\"}");
+            HttpAiProviderConnectivityTester tester = new HttpAiProviderConnectivityTester(HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(2))
+                    .build());
+
+            AiProviderConnectionTestResult result = tester.test(provider);
+
+            assertThat(result.success()).isTrue();
+            assertThat(customHeader.get()).isEqualTo("agent-hub");
         } finally {
             server.stop(0);
         }

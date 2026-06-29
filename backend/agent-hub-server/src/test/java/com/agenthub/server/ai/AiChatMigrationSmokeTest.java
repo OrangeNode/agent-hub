@@ -314,4 +314,22 @@ class AiChatMigrationSmokeTest {
         }
         assertThat(contextIndexContent).contains("idx_chat_message_conversation_user_role_created_id");
     }
+
+    @Test
+    void shouldMigrateRemovedProtocolsToOpenAiCompatible() throws IOException {
+        var migrationScriptUrl = AiChatMigrationSmokeTest.class
+                .getResource("/db/migration/V19__collapse_ai_protocols_to_openai_compatible.sql");
+
+        assertThat(migrationScriptUrl).isNotNull();
+
+        String scriptContent;
+        try (var inputStream = migrationScriptUrl.openStream()) {
+            scriptContent = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
+        }
+
+        assertThat(scriptContent).contains("OPENAI_COMPATIBLE");
+        assertThat(scriptContent).contains("OPENAI_CHAT_COMPLETIONS");
+        assertThat(scriptContent).contains("OPENAI_RESPONSES");
+        assertThat(scriptContent).contains("ANTHROPIC_MESSAGES");
+    }
 }

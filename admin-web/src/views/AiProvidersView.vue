@@ -143,10 +143,7 @@ const providerTypeOptions: SelectOption[] = [
 ]
 
 const protocolOptions: SelectOption[] = [
-  { label: 'OpenAI Chat Completions', value: 'OPENAI_CHAT_COMPLETIONS' },
-  { label: 'OpenAI Responses', value: 'OPENAI_RESPONSES' },
-  { label: 'OpenAI 兼容协议', value: 'OPENAI_COMPATIBLE' },
-  { label: 'Anthropic Messages', value: 'ANTHROPIC_MESSAGES' }
+  { label: 'OpenAI 兼容协议', value: 'OPENAI_COMPATIBLE' }
 ]
 
 const authTypeOptions: SelectOption[] = [
@@ -290,8 +287,8 @@ function openEdit(provider: AiProviderRecord) {
   formValue.apiKey = ''
   formValue.authType = provider.authType
   formValue.apiVersion = provider.apiVersion ?? ''
-  formValue.extraHeaders = ''
-  formValue.extraBody = ''
+  formValue.extraHeaders = provider.extraHeaders ?? ''
+  formValue.extraBody = provider.extraBody ?? ''
   formValue.enabled = provider.enabled
   formValue.sort = provider.sort
   showModal.value = true
@@ -347,8 +344,8 @@ async function handleStatusChange(provider: AiProviderRecord, enabled: boolean) 
       apiKey: '',
       authType: provider.authType,
       apiVersion: provider.apiVersion ?? '',
-      extraHeaders: '',
-      extraBody: '',
+      extraHeaders: provider.extraHeaders ?? '',
+      extraBody: provider.extraBody ?? '',
       enabled,
       sort: provider.sort
     })

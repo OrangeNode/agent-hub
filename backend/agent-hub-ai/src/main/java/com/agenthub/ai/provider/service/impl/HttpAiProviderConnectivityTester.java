@@ -20,7 +20,6 @@ public class HttpAiProviderConnectivityTester implements AiProviderConnectivityT
 
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(15);
-    private static final String DEFAULT_ANTHROPIC_VERSION = "2023-06-01";
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final HttpClient httpClient;
@@ -73,17 +72,11 @@ public class HttpAiProviderConnectivityTester implements AiProviderConnectivityT
 
     private void applyAuthHeaders(HttpRequest.Builder builder, AiProvider provider) {
         String apiKey = decryptApiKey(provider.getApiKeyCipher());
-        if ("ANTHROPIC_MESSAGES".equals(provider.getProtocolType())) {
-            builder.header("x-api-key", apiKey);
-            builder.header("anthropic-version", hasText(provider.getApiVersion())
-                    ? provider.getApiVersion()
-                    : DEFAULT_ANTHROPIC_VERSION);
+        if ("API_KEY".equals(provider.getAuthType())) {
+            builder.header("api-key", apiKey);
             return;
         }
         builder.header("Authorization", "Bearer " + apiKey);
-        if ("API_KEY".equals(provider.getAuthType())) {
-            builder.header("api-key", apiKey);
-        }
     }
 
     private void applyExtraHeaders(HttpRequest.Builder builder, String extraHeaders) throws IOException {

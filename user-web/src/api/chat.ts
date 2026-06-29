@@ -1,5 +1,6 @@
 import type { ApiResponse } from './http'
 import { http } from './http'
+import { clearUserAuthState, redirectToUserLogin } from '../stores/auth-session'
 
 export interface ConversationRecord {
   conversationId: number
@@ -253,7 +254,12 @@ async function readChatStream(
     })
 
     if (!response.ok) {
-      throw new Error(`流式请求失败：${response.status}`)
+      const message = await readStreamErrorMessage(response)
+      if (response.status === 401) {
+        clearUserAuthState()
+        redirectToUserLogin()
+      }
+      throw new Error(message)
     }
 
     if (!response.body) {
@@ -266,6 +272,63 @@ async function readChatStream(
       handlers.onTransportError?.(error)
     }
   }
+}
+
+async function readStreamErrorMessage(response: Response): Promise<string> {
+  const fallback = `流式请求失败：${response.status}`
+  try {
+    const body = await readResponseBody(response)
+    if (body == null) {
+      return fallback
+    }
+    const extracted = extractErrorMessage(body)
+    return extracted ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
+async function readResponseBody(response: Response): Promise<unknown> {
+  const contentType = response.headers?.get('content-type') ?? ''
+  if (contentType.includes('application/json') && typeof response.json === 'function') {
+    return response.json()
+  }
+  if (typeof response.text !== 'function') {
+    return null
+  }
+  const text = await response.text()
+  if (!text.trim()) {
+    return null
+  }
+  try {
+    return JSON.parse(text)
+  } catch {
+    return text
+  }
+}
+
+function extractErrorMessage(body: unknown): string | null {
+  if (typeof body === 'string') {
+    return body.trim() || null
+  }
+  if (!body || typeof body !== 'object') {
+    return null
+  }
+  const record = body as Record<string, unknown>
+  const direct = firstText(record.message, record.msg, record.errorMessage, record.error)
+  if (direct) {
+    return direct
+  }
+  return extractErrorMessage(record.data)
+}
+
+function firstText(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim()
+    }
+  }
+  return null
 }
 
 async function readSseBody(body: ReadableStream<Uint8Array>, handlers: ChatStreamHandlers) {

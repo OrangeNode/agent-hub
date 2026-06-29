@@ -65,7 +65,10 @@ public class AgentTaskPlanner {
         return new LlmStreamRequest(
                 runtimeConfig == null ? null : runtimeConfig.baseUrl(),
                 runtimeConfig == null ? null : runtimeConfig.apiKeyCipher(),
+                runtimeConfig == null ? null : runtimeConfig.authType(),
                 runtimeConfig == null ? null : runtimeConfig.apiVersion(),
+                runtimeConfig == null ? null : runtimeConfig.extraHeaders(),
+                runtimeConfig == null ? null : runtimeConfig.extraBody(),
                 runtimeConfig == null ? null : runtimeConfig.modelCode(),
                 List.of(
                         new LlmMessage("system", """

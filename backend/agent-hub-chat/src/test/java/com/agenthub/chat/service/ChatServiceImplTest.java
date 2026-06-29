@@ -205,8 +205,29 @@ class ChatServiceImplTest {
         );
         assertThat(sender.completed).isTrue();
         assertThat(llmClient.lastRequest.messages()).hasSize(1);
+        assertThat(llmClient.lastRequest.authType()).isEqualTo("BEARER");
+        assertThat(llmClient.lastRequest.extraHeaders()).isEqualTo("{}");
+        assertThat(llmClient.lastRequest.extraBody()).isEqualTo("{}");
         assertTimedMessageContent(llmClient.lastRequest.messages().getFirst().content(), "你好，介绍一下自己");
         assertThat(llmClient.lastRequest.reasoningRequested()).isTrue();
+    }
+
+    @Test
+    void shouldRejectStreamingWhenModelDoesNotSupportStream() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService,
+                new RecordingSseEventSender(), new RecordingLlmClient(List.of()));
+        when(modelService.requireDefaultRuntimeConfig()).thenReturn(runtimeConfigWithStreamSupported(false));
+
+        assertThatThrownBy(() -> service.stream(7L, null, null, null, "你好", false, List.of(), List.of()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("当前模型不支持流式聊天")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
+        verify(conversationMapper, never()).insert(any(ChatConversation.class));
+        verify(messageMapper, never()).insert(any(ChatMessage.class));
     }
 
     @Test
@@ -282,7 +303,7 @@ class ChatServiceImplTest {
     }
 
     @Test
-    void shouldCompleteTaskRunWhenLlmStreamEndsWithoutDoneChunk() {
+    void shouldFailTaskRunWhenLlmStreamEndsWithoutDoneChunk() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
         ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
@@ -300,8 +321,8 @@ class ChatServiceImplTest {
                 List.of(new TaskStepItem(1, "执行任务", "PENDING", null)));
         TaskProgressItem running = taskProgress("RUNNING", 1, 1, 1,
                 List.of(new TaskStepItem(1, "执行任务", "RUNNING", null)));
-        TaskProgressItem completed = taskProgress("COMPLETED", 1, 1, 1,
-                List.of(new TaskStepItem(1, "执行任务", "COMPLETED", null)));
+        TaskProgressItem failed = taskProgress("FAILED", 1, 1, 1,
+                List.of(new TaskStepItem(1, "执行任务", "FAILED", "模型流式响应未正常结束")));
         when(modelService.requireDefaultRuntimeConfig()).thenReturn(runtimeConfig());
         when(runRouter.route(new AgentRunInput(prompt))).thenReturn(new AgentRunDecision(
                 RunMode.PLAN_EXECUTE,
@@ -310,7 +331,7 @@ class ChatServiceImplTest {
         ));
         when(taskService.createRun(any(), any(), any(), any(), any(), any(), any())).thenReturn(created);
         when(taskService.markStepRunning(123L, 1)).thenReturn(running);
-        when(taskService.markCompleted(123L)).thenReturn(completed);
+        when(taskService.markFailed(123L, "模型流式响应未正常结束")).thenReturn(failed);
         when(conversationMapper.insert(any(ChatConversation.class))).thenAnswer(invocation -> {
             ChatConversation conversation = invocation.getArgument(0);
             conversation.setId(100L);
@@ -323,13 +344,15 @@ class ChatServiceImplTest {
 
         ArgumentCaptor<ChatMessage> messageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
         verify(messageMapper).update(messageCaptor.capture(), any());
-        assertThat(messageCaptor.getValue().getStatus()).isEqualTo("COMPLETED");
+        assertThat(messageCaptor.getValue().getStatus()).isEqualTo("FAILED");
         assertThat(messageCaptor.getValue().getContent()).isEqualTo("已完成回答");
-        verify(taskService).markCompleted(123L);
+        assertThat(messageCaptor.getValue().getErrorMessage()).isEqualTo("模型流式响应未正常结束");
+        verify(taskService).markFailed(123L, "模型流式响应未正常结束");
+        verify(taskService, never()).markCompleted(123L);
         assertThat(sender.eventTypes()).containsSubsequence(
                 SseEventType.ANSWER_DELTA,
-                SseEventType.MESSAGE_COMPLETED,
-                SseEventType.TASK_PROGRESS_COMPLETED,
+                SseEventType.ERROR,
+                SseEventType.TASK_STEP_FAILED,
                 SseEventType.DONE
         );
     }
@@ -2944,6 +2967,33 @@ class ChatServiceImplTest {
 
     private AiModelRuntimeConfig runtimeConfig() {
         return runtimeConfig(true, null);
+    }
+
+    private AiModelRuntimeConfig runtimeConfigWithStreamSupported(boolean streamSupported) {
+        return new AiModelRuntimeConfig(
+                10L,
+                20L,
+                "openai",
+                "OpenAI",
+                "LLM",
+                "OPENAI_COMPATIBLE",
+                "https://api.example.com",
+                "sk-cipher",
+                "BEARER",
+                "v1",
+                "{}",
+                "{}",
+                "gpt-test",
+                "测试模型",
+                streamSupported,
+                true,
+                true,
+                null,
+                128000,
+                4096,
+                true,
+                true
+        );
     }
 
     private AiModelRuntimeConfig runtimeConfig(Integer contextWindow, Integer maxOutputTokens) {

@@ -9,6 +9,8 @@ public record AiProviderItem(
         String baseUrl,
         String authType,
         String apiVersion,
+        String extraHeaders,
+        String extraBody,
         boolean hasApiKey,
         boolean enabled,
         int sort

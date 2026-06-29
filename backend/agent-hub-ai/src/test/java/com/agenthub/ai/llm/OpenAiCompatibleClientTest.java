@@ -215,6 +215,41 @@ class OpenAiCompatibleClientTest {
     }
 
     @Test
+    void shouldUseApiKeyHeaderWhenAuthTypeIsApiKey() {
+        CapturingOpenAiClient capturingClient = new CapturingOpenAiClient();
+        LlmStreamRequest request = requestWithProviderOptions(
+                "http://localhost:3000/v1",
+                "API_KEY",
+                "{}",
+                "{}");
+
+        capturingClient.stream(request, ignored -> {
+        });
+
+        assertThat(capturingClient.capturedRequest.headers().firstValue("api-key")).contains("test-api-key");
+        assertThat(capturingClient.capturedRequest.headers().firstValue("Authorization")).isEmpty();
+    }
+
+    @Test
+    void shouldApplyExtraHeadersAndBodyWithoutOverridingCoreFields() throws Exception {
+        CapturingOpenAiClient capturingClient = new CapturingOpenAiClient();
+        LlmStreamRequest request = requestWithProviderOptions(
+                "http://localhost:3000/v1",
+                "BEARER",
+                "{\"X-Trace\":\"trace-1\"}",
+                "{\"temperature\":0.7,\"stream\":false,\"model\":\"override-model\"}");
+
+        capturingClient.stream(request, ignored -> {
+        });
+
+        assertThat(capturingClient.capturedRequest.headers().firstValue("X-Trace")).contains("trace-1");
+        JsonNode body = OBJECT_MAPPER.readTree(readBody(capturingClient.capturedRequest));
+        assertThat(body.path("temperature").asDouble()).isEqualTo(0.7);
+        assertThat(body.path("stream").asBoolean()).isTrue();
+        assertThat(body.path("model").asText()).isEqualTo("test-model");
+    }
+
+    @Test
     void shouldSerializeMultimodalUserMessageContentParts() throws Exception {
         CapturingOpenAiClient capturingClient = new CapturingOpenAiClient();
         LlmMessage message = LlmMessage.user(List.of(
@@ -479,6 +514,26 @@ class OpenAiCompatibleClientTest {
                 List.of(new LlmMessage("user", "你好")),
                 null,
                 false);
+    }
+
+    private LlmStreamRequest requestWithProviderOptions(
+            String baseUrl,
+            String authType,
+            String extraHeaders,
+            String extraBody
+    ) {
+        return new LlmStreamRequest(
+                baseUrl,
+                "test-api-key",
+                authType,
+                null,
+                extraHeaders,
+                extraBody,
+                "test-model",
+                List.of(new LlmMessage("user", "浣犲ソ")),
+                null,
+                false,
+                List.of());
     }
 
     private LlmStreamRequest reasoningRequest(String baseUrl) {

@@ -320,6 +320,8 @@ class ModelServiceImplTest {
                 "https://api.openai.com/v1",
                 "BEARER",
                 "v1",
+                "{}",
+                "{}",
                 true,
                 false,
                 0
@@ -406,6 +408,8 @@ class ModelServiceImplTest {
                 "https://api.openai.com/v1",
                 "BEARER",
                 "v1",
+                "{}",
+                "{}",
                 true,
                 true,
                 0

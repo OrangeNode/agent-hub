@@ -8,6 +8,7 @@ import com.agenthub.ai.provider.entity.AiProvider;
 import com.agenthub.ai.provider.mapper.AiProviderMapper;
 import com.agenthub.ai.provider.service.AiProviderConnectivityTester;
 import com.agenthub.ai.provider.service.AiProviderService;
+import com.agenthub.ai.protocol.AiProtocolTypes;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -56,6 +57,7 @@ public class AiProviderServiceImpl implements AiProviderService {
     @Override
     @Transactional
     public AiProviderItem create(CreateProviderCommand command) {
+        requireSupportedProtocol(command.protocolType());
         boolean existed = providerMapper.selectCount(new LambdaQueryWrapper<AiProvider>()
                 .eq(AiProvider::getCode, command.code())) > 0;
         if (existed) {
@@ -86,6 +88,7 @@ public class AiProviderServiceImpl implements AiProviderService {
     @Override
     @Transactional
     public AiProviderItem update(Long providerId, UpdateProviderCommand command) {
+        requireSupportedProtocol(command.protocolType());
         AiProvider existed = requireProvider(providerId);
 
         AiProvider updated = new AiProvider();
@@ -143,6 +146,8 @@ public class AiProviderServiceImpl implements AiProviderService {
                 provider.getBaseUrl(),
                 provider.getAuthType(),
                 provider.getApiVersion(),
+                provider.getExtraHeaders(),
+                provider.getExtraBody(),
                 hasText(provider.getApiKeyCipher()),
                 Boolean.TRUE.equals(provider.getEnabled()),
                 provider.getSort() == null ? 0 : provider.getSort()
@@ -170,6 +175,14 @@ public class AiProviderServiceImpl implements AiProviderService {
 
     private int defaultSort(Integer sort) {
         return sort == null ? 0 : sort;
+    }
+
+    private void requireSupportedProtocol(String protocolType) {
+        try {
+            AiProtocolTypes.requireOpenAiCompatible(protocolType);
+        } catch (IllegalArgumentException exception) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, exception.getMessage());
+        }
     }
 
     /**

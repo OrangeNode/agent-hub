@@ -302,7 +302,10 @@ public class ConversationContextBuilder {
         client.stream(new LlmStreamRequest(
                 runtimeConfig.baseUrl(),
                 runtimeConfig.apiKeyCipher(),
+                runtimeConfig.authType(),
                 runtimeConfig.apiVersion(),
+                runtimeConfig.extraHeaders(),
+                runtimeConfig.extraBody(),
                 runtimeConfig.modelCode(),
                 List.of(new LlmMessage("user", prompt.toString())),
                 runtimeConfig.maxOutputTokens(),

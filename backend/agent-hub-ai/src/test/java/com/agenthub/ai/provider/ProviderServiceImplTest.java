@@ -44,19 +44,21 @@ class ProviderServiceImplTest {
                 "openai",
                 "OpenAI",
                 "LLM",
-                "OPENAI",
+                "OPENAI_COMPATIBLE",
                 "https://api.openai.com/v1",
                 "sk-test",
                 "BEARER",
                 "v1",
-                null,
-                null,
+                "{\"X-Test\":\"1\"}",
+                "{\"temperature\":0.7}",
                 null,
                 null
         ));
 
         assertThat(item.providerId()).isEqualTo(1L);
         assertThat(item.hasApiKey()).isTrue();
+        assertThat(item.extraHeaders()).isEqualTo("{\"X-Test\":\"1\"}");
+        assertThat(item.extraBody()).isEqualTo("{\"temperature\":0.7}");
         assertThat(Arrays.stream(item.getClass().getRecordComponents()).map(RecordComponent::getName))
                 .doesNotContain("apiKey", "apiKeyCipher");
     }
@@ -71,7 +73,7 @@ class ProviderServiceImplTest {
                 "openai",
                 "OpenAI",
                 "LLM",
-                "OPENAI",
+                "OPENAI_COMPATIBLE",
                 "https://api.openai.com/v1",
                 "sk-test",
                 "BEARER",
@@ -99,7 +101,7 @@ class ProviderServiceImplTest {
         AiProviderItem item = service.update(1L, new UpdateProviderCommand(
                 "OpenAI 新名称",
                 "LLM",
-                "OPENAI",
+                "OPENAI_COMPATIBLE",
                 "https://api.openai.com/v1",
                 "   ",
                 "BEARER",
@@ -126,7 +128,7 @@ class ProviderServiceImplTest {
         AiProviderItem item = service.update(1L, new UpdateProviderCommand(
                 "OpenAI 新名称",
                 "LLM",
-                "OPENAI",
+                "OPENAI_COMPATIBLE",
                 "https://api.openai.com/v1",
                 "new-secret",
                 "BEARER",
@@ -139,6 +141,32 @@ class ProviderServiceImplTest {
 
         assertThat(providerCaptor.getValue().getApiKeyCipher()).isEqualTo("new-secret");
         assertThat(item.hasApiKey()).isTrue();
+    }
+
+    @Test
+    void shouldRejectRemovedProviderProtocol() {
+        AiProviderMapper mapper = mock(AiProviderMapper.class);
+        AiProviderServiceImpl service = service(mapper);
+        when(mapper.selectCount(any())).thenReturn(0L);
+
+        assertThatThrownBy(() -> service.create(new CreateProviderCommand(
+                "anthropic",
+                "Anthropic",
+                "LLM",
+                "ANTHROPIC_MESSAGES",
+                "https://api.anthropic.com/v1",
+                "sk-test",
+                "BEARER",
+                "v1",
+                "{}",
+                "{}",
+                true,
+                0
+        )))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("OPENAI_COMPATIBLE")
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.BAD_REQUEST);
     }
 
     @Test
@@ -204,7 +232,7 @@ class ProviderServiceImplTest {
                     "a".repeat(65),
                     "OpenAI",
                     "LLM",
-                    "OPENAI",
+                    "OPENAI_COMPATIBLE",
                     "https://api.example.com/" + "v".repeat(512),
                     "sk-test",
                     "BEARER",
@@ -227,7 +255,7 @@ class ProviderServiceImplTest {
         provider.setCode(code);
         provider.setName("OpenAI");
         provider.setProviderType("LLM");
-        provider.setProtocolType("OPENAI");
+        provider.setProtocolType("OPENAI_COMPATIBLE");
         provider.setBaseUrl("https://api.openai.com/v1");
         provider.setApiKeyCipher(apiKeyCipher);
         provider.setAuthType("BEARER");

@@ -4,6 +4,7 @@ import com.agenthub.ai.llm.LlmClient;
 import com.agenthub.ai.llm.LlmContentPart;
 import com.agenthub.ai.llm.LlmMessage;
 import com.agenthub.ai.llm.LlmStreamChunk;
+import com.agenthub.ai.llm.LlmStreamChunkType;
 import com.agenthub.ai.llm.LlmStreamRequest;
 import com.agenthub.ai.llm.tool.LlmToolCall;
 import com.agenthub.ai.llm.tool.LlmToolDefinition;
@@ -22,6 +23,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -33,6 +36,14 @@ public class OpenAiCompatibleClient implements LlmClient {
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration STREAM_REQUEST_TIMEOUT = Duration.ofSeconds(60);
     private static final int ERROR_BODY_MAX_CHARS = 1000;
+    private static final Set<String> RESERVED_BODY_KEYS = Set.of(
+            "model",
+            "messages",
+            "stream",
+            "max_tokens",
+            "tools",
+            "tool_choice"
+    );
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final HttpClient httpClient;
@@ -63,12 +74,21 @@ public class OpenAiCompatibleClient implements LlmClient {
             }
             ThinkTagSplitter thinkTagSplitter = new ThinkTagSplitter();
             ToolCallAccumulator toolCallAccumulator = new ToolCallAccumulator(toolNameMapper);
+            AtomicBoolean doneSeen = new AtomicBoolean(false);
             try (Stream<String> lines = response.body()) {
                 lines.filter(line -> line.startsWith("data:"))
                         .map(line -> line.substring("data:".length()).trim())
                         .flatMap(payload -> parseDataLine(payload, toolCallAccumulator, toolNameMapper).stream())
-                        .forEach(chunk -> emitChunk(chunk, thinkTagSplitter, chunkConsumer));
+                        .forEach(chunk -> {
+                            if (chunk.type() == LlmStreamChunkType.DONE) {
+                                doneSeen.set(true);
+                            }
+                            emitChunk(chunk, thinkTagSplitter, chunkConsumer);
+                        });
                 thinkTagSplitter.flush(chunkConsumer);
+                if (!doneSeen.get()) {
+                    chunkConsumer.accept(LlmStreamChunk.error("模型流式响应未正常结束"));
+                }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -178,13 +198,14 @@ public class OpenAiCompatibleClient implements LlmClient {
 
     private HttpRequest buildRequest(LlmStreamRequest request, LlmToolNameMapper toolNameMapper) throws IOException {
         String body = OBJECT_MAPPER.writeValueAsString(buildRequestBody(request, toolNameMapper));
-        return HttpRequest.newBuilder()
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
                 .uri(URI.create(endpoint(request.baseUrl(), "/chat/completions")))
                 .timeout(STREAM_REQUEST_TIMEOUT)
-                .header("Authorization", "Bearer " + request.apiKey())
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build();
+                .POST(HttpRequest.BodyPublishers.ofString(body));
+        applyAuthHeaders(builder, request);
+        applyExtraHeaders(builder, request.extraHeaders());
+        return builder.build();
     }
 
     /**
@@ -204,7 +225,59 @@ public class OpenAiCompatibleClient implements LlmClient {
             body.put("tools", request.tools().stream().map(tool -> toOpenAiTool(tool, toolNameMapper)).toList());
             body.put("tool_choice", "auto");
         }
+        mergeExtraBody(body, request.extraBody());
         return body;
+    }
+
+    private void applyAuthHeaders(HttpRequest.Builder builder, LlmStreamRequest request) {
+        if (!hasText(request.apiKey())) {
+            return;
+        }
+        if ("API_KEY".equals(request.authType())) {
+            builder.header("api-key", request.apiKey());
+            return;
+        }
+        builder.header("Authorization", "Bearer " + request.apiKey());
+    }
+
+    private void applyExtraHeaders(HttpRequest.Builder builder, String extraHeaders) throws IOException {
+        JsonNode root = parseJsonObject(extraHeaders);
+        if (root == null) {
+            return;
+        }
+        root.properties().forEach(entry -> {
+            if (entry.getValue().isTextual()) {
+                builder.setHeader(entry.getKey(), entry.getValue().asText());
+            }
+        });
+    }
+
+    private void mergeExtraBody(Map<String, Object> body, String extraBody) {
+        JsonNode root;
+        try {
+            root = parseJsonObject(extraBody);
+        } catch (IOException exception) {
+            throw new IllegalArgumentException("扩展请求体不是合法 JSON 对象", exception);
+        }
+        if (root == null) {
+            return;
+        }
+        root.properties().forEach(entry -> {
+            if (!RESERVED_BODY_KEYS.contains(entry.getKey())) {
+                body.put(entry.getKey(), OBJECT_MAPPER.convertValue(entry.getValue(), Object.class));
+            }
+        });
+    }
+
+    private JsonNode parseJsonObject(String value) throws IOException {
+        if (!hasText(value) || "{}".equals(value.trim())) {
+            return null;
+        }
+        JsonNode root = OBJECT_MAPPER.readTree(value);
+        if (!root.isObject()) {
+            return null;
+        }
+        return root;
     }
 
     /**
@@ -365,6 +438,10 @@ public class OpenAiCompatibleClient implements LlmClient {
 
     private String defaultString(String value) {
         return value == null ? "" : value;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private String textOrNull(JsonNode node) {

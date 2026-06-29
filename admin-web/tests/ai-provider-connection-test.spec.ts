@@ -10,6 +10,25 @@ describe('AI 供应商连通性测试', () => {
     expect(typeSource).toContain('statusCode?: number | null')
   })
 
+  it('供应商记录应该包含扩展请求配置用于编辑回填', () => {
+    expect(typeSource).toContain('extraHeaders: string')
+    expect(typeSource).toContain('extraBody: string')
+  })
+
+  it('协议选择应该只保留 OpenAI 兼容协议', () => {
+    expect(viewSource).toContain("{ label: 'OpenAI 兼容协议', value: 'OPENAI_COMPATIBLE' }")
+    expect(viewSource).not.toContain('OPENAI_CHAT_COMPLETIONS')
+    expect(viewSource).not.toContain('OPENAI_RESPONSES')
+    expect(viewSource).not.toContain('ANTHROPIC_MESSAGES')
+  })
+
+  it('编辑和状态切换供应商时应该保留扩展请求配置', () => {
+    expect(viewSource).toContain('formValue.extraHeaders = provider.extraHeaders ??')
+    expect(viewSource).toContain('formValue.extraBody = provider.extraBody ??')
+    expect(viewSource).toContain('extraHeaders: provider.extraHeaders ??')
+    expect(viewSource).toContain('extraBody: provider.extraBody ??')
+  })
+
   it('应该提供供应商连通性测试 API', () => {
     expect(apiSource).toContain('testAiProviderConnection')
     expect(apiSource).toContain('/ai/providers/${providerId}/test-connection')

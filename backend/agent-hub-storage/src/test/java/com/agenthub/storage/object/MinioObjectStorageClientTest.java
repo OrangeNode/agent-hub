@@ -1,10 +1,13 @@
 package com.agenthub.storage.object;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import com.agenthub.storage.config.StorageProperties;
+import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import java.nio.charset.StandardCharsets;
@@ -20,6 +23,21 @@ class MinioObjectStorageClientTest {
             presignClient,
             storageProperties()
     );
+
+    @Test
+    void shouldPresignPutToExplicitBucket() throws Exception {
+        when(presignClient.getPresignedObjectUrl(any(GetPresignedObjectUrlArgs.class)))
+                .thenReturn("https://storage.example.com/skill.zip");
+
+        String url = client.presignPut("agent-hub-skill-packages", "skill-packages/demo.zip",
+                "application/zip", java.time.Duration.ofMinutes(10));
+
+        ArgumentCaptor<GetPresignedObjectUrlArgs> captor = ArgumentCaptor.forClass(GetPresignedObjectUrlArgs.class);
+        verify(presignClient).getPresignedObjectUrl(captor.capture());
+        assertThat(url).isEqualTo("https://storage.example.com/skill.zip");
+        assertThat(captor.getValue().bucket()).isEqualTo("agent-hub-skill-packages");
+        assertThat(captor.getValue().object()).isEqualTo("skill-packages/demo.zip");
+    }
 
     @Test
     void shouldDefaultContentTypeWhenNullContentType() throws Exception {

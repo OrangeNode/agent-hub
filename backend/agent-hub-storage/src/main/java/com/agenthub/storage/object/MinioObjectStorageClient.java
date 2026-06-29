@@ -34,10 +34,15 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
 
     @Override
     public String presignPut(String objectKey, String contentType, Duration ttl) {
+        return presignPut(properties.getBucket(), objectKey, contentType, ttl);
+    }
+
+    @Override
+    public String presignPut(String bucket, String objectKey, String contentType, Duration ttl) {
         try {
             return presignClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(Method.PUT)
-                    .bucket(properties.getBucket())
+                    .bucket(resolveBucket(bucket))
                     .object(objectKey)
                     .expiry((int) ttl.toSeconds())
                     .extraHeaders(Map.of("Content-Type", contentType))
@@ -68,9 +73,14 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
 
     @Override
     public ObjectMetadata stat(String objectKey) {
+        return stat(properties.getBucket(), objectKey);
+    }
+
+    @Override
+    public ObjectMetadata stat(String bucket, String objectKey) {
         try {
             StatObjectResponse response = internalClient.statObject(StatObjectArgs.builder()
-                    .bucket(properties.getBucket())
+                    .bucket(resolveBucket(bucket))
                     .object(objectKey)
                     .build());
             return new ObjectMetadata(response.size(), response.contentType());

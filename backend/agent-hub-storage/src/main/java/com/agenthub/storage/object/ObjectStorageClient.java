@@ -4,7 +4,11 @@ import java.time.Duration;
 
 public interface ObjectStorageClient {
 
-    String presignPut(String objectKey, String contentType, Duration ttl);
+    default String presignPut(String objectKey, String contentType, Duration ttl) {
+        return presignPut(null, objectKey, contentType, ttl);
+    }
+
+    String presignPut(String bucket, String objectKey, String contentType, Duration ttl);
 
     String presignGet(String objectKey, Duration ttl);
 
@@ -13,6 +17,10 @@ public interface ObjectStorageClient {
     }
 
     ObjectMetadata stat(String objectKey);
+
+    default ObjectMetadata stat(String bucket, String objectKey) {
+        return stat(objectKey);
+    }
 
     byte[] readFirstBytes(String objectKey, int length);
 

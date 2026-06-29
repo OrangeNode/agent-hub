@@ -142,9 +142,10 @@ public class SkillPackageServiceImpl implements SkillPackageService {
         }
         OffsetDateTime now = OffsetDateTime.now();
         String objectKey = buildObjectKey(filename, now);
+        String bucketName = storageProperties.getSkillBucket();
         SkillImport skillImport = new SkillImport();
         skillImport.setOriginalFilename(filename);
-        skillImport.setBucketName(storageProperties.getBucket());
+        skillImport.setBucketName(bucketName);
         skillImport.setObjectKey(objectKey);
         skillImport.setContentType(contentType);
         skillImport.setFileSize(command.fileSize());
@@ -155,7 +156,7 @@ public class SkillPackageServiceImpl implements SkillPackageService {
         importMapper.insert(skillImport);
 
         Duration ttl = Duration.ofMinutes(storageProperties.getPresignedUploadTtlMinutes());
-        String uploadUrl = objectStorageClient.presignPut(objectKey, contentType, ttl);
+        String uploadUrl = objectStorageClient.presignPut(bucketName, objectKey, contentType, ttl);
         return new SkillUploadUrl(
                 skillImport.getId(),
                 uploadUrl,
@@ -169,11 +170,11 @@ public class SkillPackageServiceImpl implements SkillPackageService {
     @Transactional
     public SkillImportPreview confirmImport(Long userId, Long importId) {
         SkillImport skillImport = requireImport(importId, userId);
-        ObjectMetadata metadata = objectStorageClient.stat(skillImport.getObjectKey());
+        ObjectMetadata metadata = objectStorageClient.stat(skillImport.getBucketName(), skillImport.getObjectKey());
         if (metadata.size() != skillImport.getFileSize()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "Skill 包上传失败，请重新上传");
         }
-        byte[] zipBytes = objectStorageClient.readBytes(skillImport.getObjectKey());
+        byte[] zipBytes = objectStorageClient.readBytes(skillImport.getBucketName(), skillImport.getObjectKey());
         ParsedSkillArchive archive = archiveParser.parse(zipBytes, skillImport.getOriginalFilename());
         NormalizedSkillZip normalizedZip = normalizeSkillZip(archive);
         objectStorageClient.putBytes(

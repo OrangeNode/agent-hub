@@ -64,17 +64,18 @@ class SkillPackageServiceImplTest {
 
     @Test
     void shouldCreateSkillWhenConfirmedImportHasNoDuplicateName() {
-        when(objectStorageClient.presignPut(anyString(), anyString(), any()))
+        ArgumentCaptor<SkillImport> importInsertCaptor = ArgumentCaptor.forClass(SkillImport.class);
+        when(objectStorageClient.presignPut(eq("agent-hub-skill-packages"), anyString(), anyString(), any()))
                 .thenReturn("https://upload.example.com/skill.zip");
-        when(importMapper.insert(any(SkillImport.class))).thenAnswer(invocation -> {
-            SkillImport skillImport = invocation.getArgument(0);
+        when(importMapper.insert(importInsertCaptor.capture())).thenAnswer(invocation -> {
+            SkillImport skillImport = importInsertCaptor.getValue();
             skillImport.setId(1L);
             return 1;
         });
         when(importMapper.selectById(1L)).thenReturn(importRecord(1L, "skill-packages/demo.zip"));
-        when(objectStorageClient.stat("skill-packages/demo.zip"))
+        when(objectStorageClient.stat("agent-hub-skill-packages", "skill-packages/demo.zip"))
                 .thenReturn(new ObjectMetadata(100, "application/zip"));
-        when(objectStorageClient.readBytes("skill-packages/demo.zip")).thenReturn(zip(Map.of(
+        when(objectStorageClient.readBytes("agent-hub-skill-packages", "skill-packages/demo.zip")).thenReturn(zip(Map.of(
                 "SKILL.md", """
                         ---
                         name: 公文写作
@@ -98,15 +99,16 @@ class SkillPackageServiceImplTest {
         assertThat(preview.duplicate()).isFalse();
         assertThat(preview.imported()).isTrue();
         assertThat(preview.importedSkill().skillId()).isEqualTo(10L);
+        assertThat(importInsertCaptor.getValue().getBucketName()).isEqualTo("agent-hub-skill-packages");
         assertThat(preview.importedSkill().name()).isEqualTo("公文写作");
         verify(objectStorageClient).putBytes(
-                eq("agent-hub"),
+                eq("agent-hub-skill-packages"),
                 eq("skill-packages/extracted/1/SKILL.md"),
                 eq("text/markdown"),
                 any(byte[].class)
         );
         verify(objectStorageClient).putBytes(
-                eq("agent-hub"),
+                eq("agent-hub-skill-packages"),
                 eq("skill-packages/extracted/1/scripts/render_docx.py"),
                 eq("text/x-python"),
                 any(byte[].class)
@@ -127,9 +129,9 @@ class SkillPackageServiceImplTest {
     @Test
     void shouldReturnDuplicatePreviewWithoutOverwritingExistingSkill() {
         when(importMapper.selectById(1L)).thenReturn(importRecord(1L, "skill-packages/demo.zip"));
-        when(objectStorageClient.stat("skill-packages/demo.zip"))
+        when(objectStorageClient.stat("agent-hub-skill-packages", "skill-packages/demo.zip"))
                 .thenReturn(new ObjectMetadata(100, "application/zip"));
-        when(objectStorageClient.readBytes("skill-packages/demo.zip")).thenReturn(zip(Map.of(
+        when(objectStorageClient.readBytes("agent-hub-skill-packages", "skill-packages/demo.zip")).thenReturn(zip(Map.of(
                 "SKILL.md", "---\nname: 公文写作\n---\n内容"
         )));
         SkillPackage existing = skill(8L, "公文写作", "old-key");
@@ -154,16 +156,16 @@ class SkillPackageServiceImplTest {
         SkillImport skillImport = importRecord(1L, "skill-packages/demo.zip");
         skillImport.setFileSize((long) sourceZip.length);
         when(importMapper.selectById(1L)).thenReturn(skillImport);
-        when(objectStorageClient.stat("skill-packages/demo.zip"))
+        when(objectStorageClient.stat("agent-hub-skill-packages", "skill-packages/demo.zip"))
                 .thenReturn(new ObjectMetadata(sourceZip.length, "application/zip"));
-        when(objectStorageClient.readBytes("skill-packages/demo.zip")).thenReturn(sourceZip);
+        when(objectStorageClient.readBytes("agent-hub-skill-packages", "skill-packages/demo.zip")).thenReturn(sourceZip);
         when(packageMapper.selectByName("Backslash Skill")).thenReturn(skill(8L, "Backslash Skill", "backslash-skill"));
 
         service.confirmImport(7L, 1L);
 
         ArgumentCaptor<byte[]> rewrittenZipCaptor = ArgumentCaptor.forClass(byte[].class);
         verify(objectStorageClient).putBytes(
-                eq("agent-hub"),
+                eq("agent-hub-skill-packages"),
                 eq("skill-packages/demo.zip"),
                 eq("application/zip"),
                 rewrittenZipCaptor.capture()
@@ -325,7 +327,7 @@ class SkillPackageServiceImplTest {
         skillImport.setId(importId);
         skillImport.setCreatedBy(7L);
         skillImport.setOriginalFilename("demo.zip");
-        skillImport.setBucketName("agent-hub");
+        skillImport.setBucketName("agent-hub-skill-packages");
         skillImport.setObjectKey(objectKey);
         skillImport.setContentType("application/zip");
         skillImport.setFileSize(100L);
@@ -370,7 +372,8 @@ class SkillPackageServiceImplTest {
 
     private StorageProperties storageProperties() {
         StorageProperties properties = new StorageProperties();
-        properties.setBucket("agent-hub");
+        properties.setBucket("agent-hub-chat-images");
+        properties.setSkillBucket("agent-hub-skill-packages");
         properties.setPresignedUploadTtlMinutes(10);
         return properties;
     }

@@ -10,6 +10,7 @@ public class StorageProperties {
     private String accessKey;
     private String secretKey;
     private String bucket;
+    private String skillBucket;
     private int imageExpireDays = 7;
     private int presignedUploadTtlMinutes = 10;
     private int presignedReadTtlMinutes = 10;
@@ -54,6 +55,14 @@ public class StorageProperties {
 
     public void setBucket(String bucket) {
         this.bucket = bucket;
+    }
+
+    public String getSkillBucket() {
+        return skillBucket == null || skillBucket.isBlank() ? bucket : skillBucket;
+    }
+
+    public void setSkillBucket(String skillBucket) {
+        this.skillBucket = skillBucket;
     }
 
     public int getImageExpireDays() {

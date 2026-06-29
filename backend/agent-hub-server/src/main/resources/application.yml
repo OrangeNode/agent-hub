@@ -29,6 +29,7 @@ agent-hub:
     access-key: ${AGENT_HUB_STORAGE_ACCESS_KEY:agenthub}
     secret-key: ${AGENT_HUB_STORAGE_SECRET_KEY:agenthub123}
     bucket: ${AGENT_HUB_STORAGE_BUCKET:agent-hub-chat-images}
+    skill-bucket: ${AGENT_HUB_STORAGE_SKILL_BUCKET:agent-hub-skill-packages}
     image-expire-days: ${AGENT_HUB_STORAGE_IMAGE_EXPIRE_DAYS:7}
     presigned-upload-ttl-minutes: ${AGENT_HUB_STORAGE_PRESIGNED_UPLOAD_TTL_MINUTES:10}
     presigned-read-ttl-minutes: ${AGENT_HUB_STORAGE_PRESIGNED_READ_TTL_MINUTES:10}

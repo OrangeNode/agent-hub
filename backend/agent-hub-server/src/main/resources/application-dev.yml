@@ -19,6 +19,7 @@ agent-hub:
     access-key: agenthub
     secret-key: agenthub123
     bucket: agent-hub-chat-images
+    skill-bucket: agent-hub-skill-packages
     image-expire-days: 7
     presigned-upload-ttl-minutes: 10
     presigned-read-ttl-minutes: 10

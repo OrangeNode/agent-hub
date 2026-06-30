@@ -1,7 +1,0 @@
-UPDATE ai_provider
-SET protocol_type = 'OPENAI_COMPATIBLE'
-WHERE protocol_type IN (
-    'OPENAI_CHAT_COMPLETIONS',
-    'OPENAI_RESPONSES',
-    'ANTHROPIC_MESSAGES'
-);

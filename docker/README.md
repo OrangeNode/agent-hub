@@ -21,7 +21,7 @@ docker
 │   ├── postgres.env
 │   └── redis.env
 ├── initdb
-│   └── 01-init-rbac.sql
+│   └── 01-init-schema.sql
 └── README.md
 ```
 
@@ -66,22 +66,21 @@ docker compose down
 
 当 PostgreSQL 使用全新数据卷首次启动时，会自动执行：
 
-- [01-init-rbac.sql](/D:/project/Agent-Hub/docker/initdb/01-init-rbac.sql)
+- [01-init-schema.sql](/D:/project/Agent-Hub/docker/initdb/01-init-schema.sql)
 
-该脚本会初始化：
+该脚本是当前项目的完整数据库初始化 SQL，与后端 Flyway 初始化脚本 `backend/agent-hub-server/src/main/resources/db/migration/V1__init_schema.sql` 保持同一套结构。脚本会初始化：
 
-- `sys_user`
-- `sys_role`
-- `sys_menu`
-- `sys_user_role`
-- `sys_role_menu`
+- RBAC 用户、角色、菜单、权限和默认账号
+- AI 供应商、AI 模型、聊天会话、聊天消息、图片附件和会话摘要
+- Agent 配置、Skill 库、MCP 工具注册、Agent 工具绑定和任务进度
+- 沙箱会话、命令执行、沙箱产物、操作日志和管理端菜单授权
 
 并写入默认种子数据：
 
 - 管理员账号：`admin` / `admin123`
 - 普通用户账号：`user` / `user123`
 
-如果你的 PostgreSQL 容器已经启动且数据卷已存在，这个脚本不会自动补跑；这时应通过后端 Flyway 启动迁移，或手动在库里执行同内容 SQL。
+如果你的 PostgreSQL 容器已经启动且数据卷已存在，这个脚本不会自动补跑。当前项目按“数据库可清空重建”的方式维护最终初始化 SQL；如需套用最新结构，请先备份数据，再清空或重建数据库/数据卷。
 
 ## MinIO 图片存储
 

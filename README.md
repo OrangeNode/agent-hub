@@ -120,7 +120,7 @@ http://127.0.0.1:5174
 
 ## 默认账号
 
-后端启动时会通过 Flyway 初始化默认数据；使用全新数据库或全新 Docker 数据卷时，可使用以下账号登录：
+导入完整初始化 SQL 后，可使用以下账号登录：
 
 | 角色 | 账号 | 密码 |
 | --- | --- | --- |
@@ -144,19 +144,78 @@ http://127.0.0.1:5174
 | `agent-hub-storage` | MinIO 对象存储、图片附件、预签名 URL 和清理任务。 |
 | `agent-hub-sse` | SSE 事件类型、事件数据和发送器抽象。 |
 | `agent-hub-chat` | 会话、消息、上下文、流式聊天、任务进度和聊天产物。 |
-| `agent-hub-server` | Spring Boot 启动入口、全局配置、安全装配、异常处理和 Flyway 迁移。 |
+| `agent-hub-server` | Spring Boot 启动入口、全局配置、安全装配、异常处理和数据库初始化脚本。 |
 
-## 数据库迁移
+## 数据库初始化
 
-后端启动时会自动执行 Flyway 迁移脚本：
+当前项目按“数据库可清空重建”的方式维护初始化脚本，不再保留历史 `V1`、`V2` 等增量迁移文件。部署和测试验收时不要依赖后端启动时自动执行 Flyway，应该先手动导入完整 SQL，再启动后端。
+
+后端 classpath 中保留一份完整初始化脚本，便于开发环境或测试环境复用：
 
 ```text
-backend/agent-hub-server/src/main/resources/db/migration
+backend/agent-hub-server/src/main/resources/db/migration/V1__init_schema.sql
 ```
 
-当前迁移覆盖 RBAC、AI 配置、聊天会话、图片摘要、Agent Runtime、沙箱 Tool Loop、操作日志、MCP 工具注册、Skill 库、工具绑定和任务进度等表结构。
+该脚本覆盖 RBAC、AI 配置、聊天会话、图片附件、会话摘要、Agent Runtime、沙箱 Tool Loop、操作日志、MCP 工具注册、Skill 库、工具绑定、任务进度和默认菜单/角色授权等初始化内容。
 
-`docker/initdb/01-init-rbac.sql` 只会在 PostgreSQL 全新数据卷首次启动时自动执行；已有数据卷不会重复执行 Docker 初始化脚本，应以后端 Flyway 迁移为准。
+服务器部署、清库测试和 Docker 首次建库应使用：
+
+```text
+docker/initdb/01-init-schema.sql
+```
+
+`docker/initdb/01-init-schema.sql` 只会在 PostgreSQL 全新数据卷首次启动时自动执行；已有数据卷不会重复执行 Docker 初始化脚本。如果要套用最新初始化 SQL，需要先备份数据，再清空或重建数据库/数据卷。
+
+### 清库并手动导入 SQL
+
+以下命令适用于 Linux 服务器上的测试部署。执行前请确认目标库可以被清空：
+
+```bash
+cd /path/to/Agent-Hub
+
+# 停止后端，避免 DROP DATABASE 时仍有连接占用。
+sudo systemctl stop agenthub-backend.service || true
+
+# 确保 PostgreSQL 已启动。
+cd docker
+docker compose up -d postgres
+cd ..
+
+# 清空并重建数据库。
+docker exec agent-hub-postgres psql -U agent_hub -d postgres -v ON_ERROR_STOP=1 \
+  -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'agent_hub';" \
+  -c "DROP DATABASE IF EXISTS agent_hub;" \
+  -c "CREATE DATABASE agent_hub OWNER agent_hub;"
+
+# 手动导入完整初始化 SQL。
+docker exec -i agent-hub-postgres psql -U agent_hub -d agent_hub -v ON_ERROR_STOP=1 \
+  < docker/initdb/01-init-schema.sql
+
+# 验证表结构和默认账号已导入。
+docker exec agent-hub-postgres psql -U agent_hub -d agent_hub \
+  -c "select count(*) as table_count from information_schema.tables where table_schema = 'public';" \
+  -c "select username, enabled from sys_user order by id;"
+```
+
+导入 SQL 后启动后端时建议显式关闭 Flyway，避免旧环境残留的 `flyway_schema_history` 或单文件 `V1__init_schema.sql` 与历史增量迁移记录发生冲突：
+
+```bash
+SPRING_FLYWAY_ENABLED=false
+```
+
+本项目的生产/验收部署预期是“导入 SQL 即可运行”。如果使用 systemd 管理后端，请把 `SPRING_FLYWAY_ENABLED=false` 写入后端 `EnvironmentFile`。
+
+## 服务器部署注意事项
+
+本项目已在 Ubuntu 24.04、Docker Compose、OpenJDK 21、Nginx、Firecracker 环境下完成过一次清库导入 SQL 验证。部署时重点注意：
+
+- 后端运行 JAR 只需要 Java 21 运行时；如果服务器不负责编译，可以只安装 `openjdk-21-jre-headless`。
+- 前端生产构建后的 `dist` 不建议直接由 Nginx 从用户家目录读取。很多服务器的 `/home/<user>` 权限是 `750`，`www-data` 无法穿透，会导致 Nginx 返回 `500`。推荐发布到 `/var/www/agent-hub/admin-web` 和 `/var/www/agent-hub/user-web`。
+- Nginx 需要分别为管理端和用户端配置静态目录，并把 `/api/` 代理到后端 `http://127.0.0.1:8080/api/`。SSE 接口需要关闭代理缓冲并设置较长的 `proxy_read_timeout`。
+- 后端对象存储内部地址可以使用 `AGENT_HUB_STORAGE_ENDPOINT=http://127.0.0.1:9000`；模型或浏览器需要访问预签名地址时，`AGENT_HUB_STORAGE_PUBLIC_ENDPOINT` 应配置为服务器可访问地址，例如 `http://<server-ip>:9000`。
+- 后端接入沙箱时建议使用内网地址：`AGENT_HUB_SANDBOX_BASE_URL=http://127.0.0.1:8090`，并确保 `AGENT_HUB_SANDBOX_INTERNAL_TOKEN` 与 `SANDBOX_INTERNAL_TOKEN` 一致。
+- `sandbox-service` 生产形态依赖 Linux/KVM、Firecracker、`rootfs.ext4` 和 `vmlinux`。服务需要创建 tap 设备和启动 Firecracker，建议由 systemd 以 root 运行，或使用明确的 sudo 授权策略。
+- 如果服务器缺 Maven、Node 或 Go，可以在构建机上先执行后端 JAR、前端 `dist` 和 sandbox Linux 二进制构建，再上传产物部署。
 
 ## 沙箱服务
 

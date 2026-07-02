@@ -33,6 +33,15 @@ grep -q "java -jar agent-hub-server/target/agent-hub-server-0.0.1-SNAPSHOT.jar" 
 grep -q "admin-web" "${SCRIPT_DIR}/start-all.sh"
 grep -q "user-web" "${SCRIPT_DIR}/start-all.sh"
 
+backend_env="${PROJECT_DIR}/docker/env/backend.env"
+grep -q "^AGENT_HUB_STORAGE_ENDPOINT=" "${backend_env}"
+grep -q "^AGENT_HUB_STORAGE_PUBLIC_ENDPOINT=" "${backend_env}"
+grep -q "^AGENT_HUB_STORAGE_BUCKET=" "${backend_env}"
+if grep -Eq "^AGENT_HUB_STORAGE_PUBLIC_ENDPOINT=https?://(127\\.0\\.0\\.1|localhost)(:|/|$)" "${backend_env}"; then
+  echo "AGENT_HUB_STORAGE_PUBLIC_ENDPOINT 不能配置为本机地址，沙箱隔离环境无法访问" >&2
+  exit 1
+fi
+
 password_sample="12""3123"
 if grep -R "${password_sample}" "${PROJECT_DIR}/scripts" >/dev/null 2>&1; then
   echo "脚本中不应写入服务器密码" >&2

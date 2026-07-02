@@ -27,6 +27,8 @@ grep -q "sandbox-service/scripts/start-sandbox-service.sh" "${SCRIPT_DIR}/start-
 grep -q "sandbox-service/scripts/stop-sandbox-service.sh" "${SCRIPT_DIR}/stop-all.sh"
 grep -q "run_docker_compose" "${SCRIPT_DIR}/start-all.sh"
 grep -q "run_docker_compose" "${SCRIPT_DIR}/stop-all.sh"
+grep -q "load_nvm_if_needed" "${SCRIPT_DIR}/start-all.sh"
+grep -q "java -jar agent-hub-server/target/agent-hub-server-0.0.1-SNAPSHOT.jar" "${SCRIPT_DIR}/start-all.sh"
 grep -q "admin-web" "${SCRIPT_DIR}/start-all.sh"
 grep -q "user-web" "${SCRIPT_DIR}/start-all.sh"
 

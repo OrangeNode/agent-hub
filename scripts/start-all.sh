@@ -9,6 +9,10 @@ WITH_SANDBOX=0
 SKIP_DEPS=0
 NO_INSTALL=0
 
+if [[ -n "${HOME:-}" && -d "${HOME}/.local/bin" ]]; then
+  export PATH="${HOME}/.local/bin:${PATH}"
+fi
+
 usage() {
   cat <<'USAGE'
 用法: bash scripts/start-all.sh [选项]
@@ -100,14 +104,43 @@ ensure_node_modules() {
   fi
 }
 
+load_nvm_if_needed() {
+  if command -v npm >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -n "${NVM_DIR:-}" && -s "${NVM_DIR}/nvm.sh" ]]; then
+    # shellcheck disable=SC1090
+    . "${NVM_DIR}/nvm.sh"
+  elif [[ -n "${HOME:-}" && -s "${HOME}/.nvm/nvm.sh" ]]; then
+    export NVM_DIR="${HOME}/.nvm"
+    # shellcheck disable=SC1090
+    . "${NVM_DIR}/nvm.sh"
+  else
+    return 0
+  fi
+
+  if [[ -n "${AGENT_HUB_NODE_VERSION:-}" ]]; then
+    nvm use --silent "${AGENT_HUB_NODE_VERSION}" >/dev/null
+  else
+    nvm use --silent default >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1 || true
+  fi
+}
+
 start_backend() {
   require_command mvn
+  require_command java
   prepare_backend_env
+  echo "构建后端..."
+  (
+    cd "${AGENT_HUB_PROJECT_DIR}/backend"
+    mvn -pl agent-hub-server -am -DskipTests package
+  )
   start_background_service "backend" "后端" "${AGENT_HUB_PROJECT_DIR}/backend" \
-    mvn -pl agent-hub-server -am spring-boot:run
+    java -jar agent-hub-server/target/agent-hub-server-0.0.1-SNAPSHOT.jar
 }
 
 start_admin_web() {
+  load_nvm_if_needed
   require_command npm
   ensure_node_modules "${AGENT_HUB_PROJECT_DIR}/admin-web" "管理端前端"
   start_background_service "admin-web" "管理端前端" "${AGENT_HUB_PROJECT_DIR}/admin-web" \
@@ -115,6 +148,7 @@ start_admin_web() {
 }
 
 start_user_web() {
+  load_nvm_if_needed
   require_command npm
   ensure_node_modules "${AGENT_HUB_PROJECT_DIR}/user-web" "用户端前端"
   start_background_service "user-web" "用户端前端" "${AGENT_HUB_PROJECT_DIR}/user-web" \

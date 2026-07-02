@@ -49,7 +49,7 @@ Expected: PASS。
 
 - [ ] **Step 1: 实现启动编排**
 
-实现 Docker 依赖启动、可选 sandbox 转调、后端启动、两个前端启动和 `--help`、`--with-sandbox`、`--skip-deps`、`--no-install` 参数。
+实现 Docker 依赖启动、可选 sandbox 转调、后端打包后 `java -jar` 启动、两个前端启动和 `--help`、`--with-sandbox`、`--skip-deps`、`--no-install` 参数。
 
 - [ ] **Step 2: 验证启动脚本语法**
 

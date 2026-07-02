@@ -31,6 +31,8 @@
 
 前端使用 `npm run dev -- --host 0.0.0.0`，便于 Linux 服务器从外部访问。首次运行时如果缺少 `node_modules`，启动脚本会自动执行 `npm install`；可通过 `--no-install` 跳过。
 
+启动前会检查后端、管理端和用户端端口是否已经被外部进程占用。端口被占用时脚本直接失败并输出占用信息，避免后台进程稍后因端口冲突退出但脚本误报启动成功。
+
 后端启动时读取 `docker/env/backend.env`，默认补充 `SPRING_FLYWAY_ENABLED=false`，以符合当前“导入完整 SQL 后启动”的部署约定。后端仍从 `backend` 目录执行 Maven 打包命令，打包成功后再通过 `java -jar agent-hub-server/target/agent-hub-server-0.0.1-SNAPSHOT.jar` 后台启动，避免多模块工程直接执行 `spring-boot:run` 时误跑父 POM。
 
 ## 测试策略

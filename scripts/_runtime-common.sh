@@ -61,6 +61,21 @@ require_command() {
   fi
 }
 
+port_listening() {
+  local port="$1"
+  command -v ss >/dev/null 2>&1 && ss -ltn "sport = :${port}" | grep -q ":${port}"
+}
+
+require_port_free() {
+  local port="$1"
+  local label="$2"
+  if port_listening "${port}"; then
+    echo "${label} 端口 ${port} 已被占用，请先停止占用进程后再启动" >&2
+    ss -ltnp "sport = :${port}" >&2 || true
+    exit 1
+  fi
+}
+
 load_env_file() {
   local env_file="$1"
   [[ -f "${env_file}" ]] || return 0

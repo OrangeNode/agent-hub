@@ -21,6 +21,7 @@ for script in "${required_scripts[@]}"; do
 done
 
 grep -q "logs/runtime" "${SCRIPT_DIR}/_runtime-common.sh"
+grep -q "require_port_free" "${SCRIPT_DIR}/_runtime-common.sh"
 grep -q -- "--with-sandbox" "${SCRIPT_DIR}/start-all.sh"
 grep -q -- "--with-sandbox" "${SCRIPT_DIR}/stop-all.sh"
 grep -q "sandbox-service/scripts/start-sandbox-service.sh" "${SCRIPT_DIR}/start-all.sh"

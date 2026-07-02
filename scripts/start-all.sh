@@ -130,6 +130,9 @@ start_backend() {
   require_command mvn
   require_command java
   prepare_backend_env
+  if ! service_running "backend"; then
+    require_port_free "${SERVER_PORT:-8080}" "后端"
+  fi
   echo "构建后端..."
   (
     cd "${AGENT_HUB_PROJECT_DIR}/backend"
@@ -142,6 +145,9 @@ start_backend() {
 start_admin_web() {
   load_nvm_if_needed
   require_command npm
+  if ! service_running "admin-web"; then
+    require_port_free 5173 "管理端前端"
+  fi
   ensure_node_modules "${AGENT_HUB_PROJECT_DIR}/admin-web" "管理端前端"
   start_background_service "admin-web" "管理端前端" "${AGENT_HUB_PROJECT_DIR}/admin-web" \
     npm run dev -- --host 0.0.0.0 --strictPort
@@ -150,6 +156,9 @@ start_admin_web() {
 start_user_web() {
   load_nvm_if_needed
   require_command npm
+  if ! service_running "user-web"; then
+    require_port_free 5174 "用户端前端"
+  fi
   ensure_node_modules "${AGENT_HUB_PROJECT_DIR}/user-web" "用户端前端"
   start_background_service "user-web" "用户端前端" "${AGENT_HUB_PROJECT_DIR}/user-web" \
     npm run dev -- --host 0.0.0.0 --strictPort

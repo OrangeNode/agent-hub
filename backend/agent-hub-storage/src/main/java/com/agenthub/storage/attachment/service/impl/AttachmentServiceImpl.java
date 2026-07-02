@@ -198,12 +198,12 @@ public class AttachmentServiceImpl implements AttachmentService {
         }
 
         Map<Long, ChatAttachment> resolvedAttachmentsById = new LinkedHashMap<>();
-        resolveAttachments(newAttachmentIds, attachment -> validateNewImage(userId, attachment))
+        resolveAttachments(newAttachmentIds, attachment -> validateNewAttachment(userId, attachment))
                 .forEach(attachment -> resolvedAttachmentsById.put(attachment.getId(), attachment));
         resolveAttachments(reusedAttachmentIds, attachment -> validateReusableImage(userId, conversationId, attachment))
                 .forEach(attachment -> resolvedAttachmentsById.putIfAbsent(attachment.getId(), attachment));
         List<ChatAttachment> resolvedAttachments = List.copyOf(resolvedAttachmentsById.values());
-        validateImageLimit(resolvedAttachments.size());
+        validateImageLimit((int) resolvedAttachments.stream().filter(this::isImageAttachment).count());
         return resolvedAttachments.stream()
                 .map(attachment -> toAttachmentReference(attachment, imageTokenEstimate))
                 .toList();
@@ -222,13 +222,12 @@ public class AttachmentServiceImpl implements AttachmentService {
         LambdaQueryWrapper<ChatAttachment> wrapper = new LambdaQueryWrapper<ChatAttachment>()
                 .eq(ChatAttachment::getUserId, userId)
                 .in(ChatAttachment::getMessageId, normalizedMessageIds)
-                .eq(ChatAttachment::getAttachmentType, IMAGE_TYPE)
                 .eq(ChatAttachment::getStatus, STATUS_READY)
                 .gt(ChatAttachment::getExpiresAt, OffsetDateTime.now())
                 .orderByAsc(ChatAttachment::getMessageId)
                 .orderByAsc(ChatAttachment::getId);
         return chatAttachmentMapper.selectList(wrapper).stream()
-                .filter(this::isReadyAvailableImage)
+                .filter(this::isReadyAvailableAttachment)
                 .collect(Collectors.groupingBy(
                         ChatAttachment::getMessageId,
                         LinkedHashMap::new,
@@ -251,7 +250,7 @@ public class AttachmentServiceImpl implements AttachmentService {
         List<ChatAttachment> attachments = new ArrayList<>();
         for (Long attachmentId : normalizedIds) {
             ChatAttachment attachment = attachmentsById.get(attachmentId);
-            validateBindableImage(userId, attachment);
+            validateBindableAttachment(userId, attachment);
             attachments.add(attachment);
         }
         for (ChatAttachment attachment : attachments) {
@@ -264,7 +263,6 @@ public class AttachmentServiceImpl implements AttachmentService {
                     .eq(ChatAttachment::getId, attachment.getId())
                     .eq(ChatAttachment::getUserId, userId)
                     .eq(ChatAttachment::getStatus, STATUS_READY)
-                    .eq(ChatAttachment::getAttachmentType, IMAGE_TYPE)
                     .isNull(ChatAttachment::getMessageId)
                     .gt(ChatAttachment::getExpiresAt, now);
             if (chatAttachmentMapper.update(updatedAttachment, wrapper) != 1) {
@@ -350,8 +348,8 @@ public class AttachmentServiceImpl implements AttachmentService {
         return chatAttachmentMapper.selectByIds(ids);
     }
 
-    private void validateNewImage(Long userId, ChatAttachment attachment) {
-        validateReadyImage(userId, attachment);
+    private void validateNewAttachment(Long userId, ChatAttachment attachment) {
+        validateReadyAttachment(userId, attachment);
         if (attachment.getMessageId() != null) {
             throw unavailableImageException();
         }
@@ -378,19 +376,30 @@ public class AttachmentServiceImpl implements AttachmentService {
         }
     }
 
-    private boolean isReadyAvailableImage(ChatAttachment attachment) {
+    private void validateReadyAttachment(Long userId, ChatAttachment attachment) {
+        if (!userId.equals(attachment.getUserId())
+                || !STATUS_READY.equals(attachment.getStatus())
+                || !isSupportedAttachmentType(attachment)) {
+            throw unavailableImageException();
+        }
+        if (isExpired(attachment)) {
+            throw expiredImageException();
+        }
+    }
+
+    private boolean isReadyAvailableAttachment(ChatAttachment attachment) {
         return attachment != null
                 && attachment.getMessageId() != null
                 && STATUS_READY.equals(attachment.getStatus())
-                && IMAGE_TYPE.equals(attachment.getAttachmentType())
+                && isSupportedAttachmentType(attachment)
                 && !isExpired(attachment);
     }
 
-    private void validateBindableImage(Long userId, ChatAttachment attachment) {
+    private void validateBindableAttachment(Long userId, ChatAttachment attachment) {
         if (attachment == null
                 || !userId.equals(attachment.getUserId())
                 || !STATUS_READY.equals(attachment.getStatus())
-                || !IMAGE_TYPE.equals(attachment.getAttachmentType())
+                || !isSupportedAttachmentType(attachment)
                 || attachment.getMessageId() != null) {
             throw uploadFailedException();
         }
@@ -428,14 +437,26 @@ public class AttachmentServiceImpl implements AttachmentService {
     }
 
     private AttachmentReference toAttachmentReference(ChatAttachment attachment, int imageTokenEstimate) {
-        String readUrl = toImageDataUrl(attachment);
+        String readUrl = isImageAttachment(attachment) ? toImageDataUrl(attachment) : null;
         return new AttachmentReference(
                 attachment.getId(),
                 attachment.getOriginalFilename(),
                 attachment.getContentType(),
                 readUrl,
-                imageTokenEstimate
+                isImageAttachment(attachment) ? imageTokenEstimate : 0
         );
+    }
+
+    private boolean isSupportedAttachmentType(ChatAttachment attachment) {
+        return isImageAttachment(attachment) || isFileAttachment(attachment);
+    }
+
+    private boolean isImageAttachment(ChatAttachment attachment) {
+        return attachment != null && IMAGE_TYPE.equals(attachment.getAttachmentType());
+    }
+
+    private boolean isFileAttachment(ChatAttachment attachment) {
+        return attachment != null && FILE_TYPE.equals(attachment.getAttachmentType());
     }
 
     private String toImageDataUrl(ChatAttachment attachment) {

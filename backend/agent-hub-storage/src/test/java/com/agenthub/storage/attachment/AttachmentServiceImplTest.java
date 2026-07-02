@@ -458,6 +458,30 @@ class AttachmentServiceImplTest {
     }
 
     @Test
+    void shouldListMessageFileAttachmentReferencesForLlmHistoryWithoutReadingBytes() {
+        ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
+        ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
+        AttachmentServiceImpl service = new AttachmentServiceImpl(mapper, objectStorageClient, storageProperties());
+        ChatAttachment fileAttachment = readyFileAttachment(10L, 7L);
+        fileAttachment.setConversationId(200L);
+        fileAttachment.setMessageId(300L);
+        when(mapper.selectList(any())).thenReturn(List.of(fileAttachment));
+
+        Map<Long, List<AttachmentReference>> references =
+                service.listMessageAttachmentReferences(7L, List.of(300L), 1500);
+
+        assertThat(references).containsOnlyKeys(300L);
+        assertThat(references.get(300L)).hasSize(1);
+        AttachmentReference reference = references.get(300L).getFirst();
+        assertThat(reference.attachmentId()).isEqualTo(10L);
+        assertThat(reference.filename()).isEqualTo("data.csv");
+        assertThat(reference.contentType()).isEqualTo("text/csv");
+        assertThat(reference.readUrl()).isNull();
+        assertThat(reference.tokenEstimate()).isZero();
+        verify(objectStorageClient, never()).readBytes(any());
+    }
+
+    @Test
     void shouldResolveAttachmentImportSourceForOwner() {
         ChatAttachmentMapper mapper = mock(ChatAttachmentMapper.class);
         ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);

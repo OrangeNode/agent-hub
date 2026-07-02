@@ -400,6 +400,7 @@ public class ConversationContextBuilder {
             parts.add(LlmContentPart.text(text));
         }
         attachments.stream()
+                .filter(attachment -> hasText(attachment.readUrl()))
                 .map(AttachmentReference::readUrl)
                 .map(LlmContentPart::imageUrl)
                 .forEach(parts::add);
@@ -436,6 +437,7 @@ public class ConversationContextBuilder {
             parts.add(LlmContentPart.text(text));
         }
         images.stream()
+                .filter(image -> hasText(image.readUrl()))
                 .map(AttachmentReference::readUrl)
                 .map(LlmContentPart::imageUrl)
                 .forEach(parts::add);

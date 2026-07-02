@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { validateImageCount, validateImageFile } from '../src/views/chat-attachments.helpers'
+import {
+  resolveAttachmentContentType,
+  validateChatAttachmentFile,
+  validateImageCount,
+  validateImageFile
+} from '../src/views/chat-attachments.helpers'
 import chatViewSource from '../src/views/ChatView.vue?raw'
 
 function file(name: string, type: string, size: number) {
@@ -27,10 +32,43 @@ describe('聊天图片附件校验', () => {
     expect(validateImageCount(8, 1)).toBe('单条消息最多上传 8 张图片')
     expect(validateImageCount(7, 1)).toBeNull()
   })
+
+  it('应该允许上传 Word 和 Excel 文件', () => {
+    expect(validateChatAttachmentFile(file('需求.doc', 'application/msword', 1024))).toBeNull()
+    expect(validateChatAttachmentFile(file(
+      '需求.docx',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      1024
+    ))).toBeNull()
+    expect(validateChatAttachmentFile(file('数据.xls', 'application/vnd.ms-excel', 1024))).toBeNull()
+    expect(validateChatAttachmentFile(file(
+      '数据.xlsx',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      1024
+    ))).toBeNull()
+  })
+
+  it('应该按后缀补全浏览器未识别的 Word 和 Excel MIME', () => {
+    expect(resolveAttachmentContentType(file('需求.docx', '', 1024)))
+      .toBe('application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    expect(resolveAttachmentContentType(file('数据.xlsx', '', 1024)))
+      .toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  })
+
+  it('应该拒绝不支持的普通文件', () => {
+    expect(validateChatAttachmentFile(file('a.pdf', 'application/pdf', 1024)))
+      .toBe('仅支持图片、Word、Excel 文件')
+  })
+
   it('聊天主区域应支持粘贴和拖拽图片上传', () => {
     expect(chatViewSource).toContain('@paste="handleImagePaste"')
     expect(chatViewSource).toContain('@drop.prevent="handleImageDrop"')
     expect(chatViewSource).toContain('event.clipboardData?.files')
     expect(chatViewSource).toContain('event.dataTransfer?.files')
+  })
+
+  it('文件选择器应支持 Word 和 Excel', () => {
+    expect(chatViewSource).toContain('.doc,.docx,.xls,.xlsx')
+    expect(chatViewSource).toContain('createAttachmentUploadUrl')
   })
 })

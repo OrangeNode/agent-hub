@@ -187,17 +187,32 @@
         <h1>准备好了，随时开始</h1>
 
         <div
-          v-if="composerImageCount"
+          v-if="composerAttachmentCount"
           class="pending-image-list"
-          :class="{ single: composerImageCount === 1 }"
+          :class="{ single: composerAttachmentCount === 1 }"
         >
           <div
             v-for="image in pendingImages"
             :key="image.localId"
             class="pending-image-item"
           >
-            <button type="button" class="image-preview-button" @click="imagePreviewUrl = image.previewUrl">
-              <img :src="image.previewUrl" :alt="image.file.name" />
+            <button
+              type="button"
+              class="image-preview-button"
+              :class="{ file: image.kind === 'file' }"
+              @click="image.kind === 'image' && (imagePreviewUrl = image.previewUrl)"
+            >
+              <img v-if="image.kind === 'image'" :src="image.previewUrl ?? ''" :alt="image.file.name" />
+              <template v-else>
+                <span class="pending-file-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <path d="M14 2v6h6" />
+                    <path d="M8 13h8M8 17h6" />
+                  </svg>
+                </span>
+                <span class="pending-file-name">{{ image.file.name }}</span>
+              </template>
               <span v-if="image.status === 'uploading'" class="image-progress">{{ image.progress }}%</span>
               <span v-if="image.status === 'failed'" class="image-error">上传失败</span>
             </button>
@@ -313,8 +328,8 @@
                   :key="attachment.attachmentId"
                   type="button"
                   class="message-attachment"
-                  :class="{ disabled: !canPreviewAttachment(attachment) }"
-                  :disabled="!canPreviewAttachment(attachment)"
+                  :class="{ disabled: attachment.expired, file: !canPreviewAttachment(attachment) }"
+                  :disabled="attachment.expired"
                   @click="previewMessageAttachment(attachment)"
                 >
                   <img
@@ -322,7 +337,15 @@
                     :src="attachment.previewUrl ?? ''"
                     :alt="attachment.filename || '历史图片'"
                   />
-                  <span v-else>{{ attachment.message || '图片已过期' }}</span>
+                  <template v-else>
+                    <span class="message-file-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <path d="M14 2v6h6" />
+                      </svg>
+                    </span>
+                    <span>{{ attachment.message || attachment.filename || '附件' }}</span>
+                  </template>
                 </button>
               </div>
             </div>
@@ -456,17 +479,32 @@
           <TaskProgressPanel v-if="activeTaskProgress" :progress="activeTaskProgress" />
 
           <div
-            v-if="composerImageCount"
+            v-if="composerAttachmentCount"
             class="pending-image-list"
-            :class="{ single: composerImageCount === 1 }"
+            :class="{ single: composerAttachmentCount === 1 }"
           >
             <div
               v-for="image in pendingImages"
               :key="image.localId"
               class="pending-image-item"
             >
-              <button type="button" class="image-preview-button" @click="imagePreviewUrl = image.previewUrl">
-                <img :src="image.previewUrl" :alt="image.file.name" />
+              <button
+                type="button"
+                class="image-preview-button"
+                :class="{ file: image.kind === 'file' }"
+                @click="image.kind === 'image' && (imagePreviewUrl = image.previewUrl)"
+              >
+                <img v-if="image.kind === 'image'" :src="image.previewUrl ?? ''" :alt="image.file.name" />
+                <template v-else>
+                  <span class="pending-file-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <path d="M14 2v6h6" />
+                      <path d="M8 13h8M8 17h6" />
+                    </svg>
+                  </span>
+                  <span class="pending-file-name">{{ image.file.name }}</span>
+                </template>
                 <span v-if="image.status === 'uploading'" class="image-progress">{{ image.progress }}%</span>
                 <span v-if="image.status === 'failed'" class="image-error">上传失败</span>
               </button>
@@ -568,7 +606,7 @@
       <input
         ref="imageInputRef"
         type="file"
-        accept=".jpg,.jpeg,.png,.webp,.gif,image/jpeg,image/png,image/webp,image/gif"
+        accept=".jpg,.jpeg,.png,.webp,.gif,.doc,.docx,.xls,.xlsx,image/jpeg,image/png,image/webp,image/gif,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         multiple
         hidden
         @change="handleImageSelected"
@@ -1084,7 +1122,9 @@ import { useMessage, NButton, NDropdown, NInput, NModal, NSelect } from 'naive-u
 import 'highlight.js/styles/github.css'
 
 import {
+  confirmAttachmentUpload,
   confirmImageUpload,
+  createAttachmentUploadUrl,
   createImageUploadUrl,
   deleteConversation,
   downloadAllArtifacts,
@@ -1121,7 +1161,11 @@ import {
   resolveArtifactPreviewMode
 } from './artifact-preview.helpers'
 import { buildReasoningStatusText } from './reasoning-timer.helpers'
-import { validateImageCount, validateImageFile } from './chat-attachments.helpers'
+import {
+  resolveAttachmentContentType,
+  validateChatAttachmentFile,
+  validateImageCount
+} from './chat-attachments.helpers'
 import { updatePendingImageByLocalId } from './chat-pending-images.helpers'
 import { normalizeTaskProgress } from './chat-task-progress.helpers'
 import {
@@ -1194,7 +1238,9 @@ interface AgentOption {
 interface PendingImage {
   localId: string
   file: File
-  previewUrl: string
+  kind: 'image' | 'file'
+  contentType: string
+  previewUrl: string | null
   attachmentId?: number
   progress: number
   status: 'uploading' | 'ready' | 'failed'
@@ -1290,8 +1336,8 @@ const uploadMenuOptions = computed(() => {
       key: 'upload-image',
       label: selectedModelItem.value?.imageInputSupported
         ? '上传照片和文件'
-        : '上传照片和文件（当前模型不支持图片输入）',
-      disabled: !selectedModelItem.value?.imageInputSupported
+        : '上传文件',
+      disabled: false
     },
     {
       key: 'reuse-image',
@@ -1404,8 +1450,10 @@ const selectedReuseAttachments = computed(() => {
   const selectedIds = new Set(selectedReuseAttachmentIds.value)
   return reusableHistoryAttachments.value.filter((item) => selectedIds.has(item.attachmentId))
 })
-const composerImageCount = computed(() => pendingImages.value.length + selectedReuseAttachments.value.length)
-const canSubmitContent = computed(() => Boolean(prompt.value.trim()) || composerImageCount.value > 0)
+const pendingImageCount = computed(() => pendingImages.value.filter((item) => item.kind === 'image').length)
+const composerImageCount = computed(() => pendingImageCount.value + selectedReuseAttachments.value.length)
+const composerAttachmentCount = computed(() => pendingImages.value.length + selectedReuseAttachments.value.length)
+const canSubmitContent = computed(() => Boolean(prompt.value.trim()) || composerAttachmentCount.value > 0)
 const sendButtonDisabled = computed(() =>
   resolveSendButtonDisabled({
     streaming: streaming.value,
@@ -1938,11 +1986,6 @@ function handleUploadMenuSelect(key: string | number) {
     return
   }
 
-  if (!selectedModelItem.value?.imageInputSupported) {
-    message.warning('当前模型不支持图片输入')
-    return
-  }
-
   imageInputRef.value?.click()
 }
 
@@ -1999,28 +2042,39 @@ function enqueueImageFiles(files: File[]) {
     return
   }
 
-  if (!selectedModelItem.value?.imageInputSupported) {
-    message.warning('当前模型不支持图片输入')
+  const acceptedFiles = files
+    .map((file) => ({ file, contentType: resolveAttachmentContentType(file) }))
+    .filter(({ file, contentType }) => {
+      const fileError = validateChatAttachmentFile(file)
+      if (fileError) {
+        message.warning(fileError)
+        return false
+      }
+      if (contentType.startsWith('image/') && !selectedModelItem.value?.imageInputSupported) {
+        message.warning('当前模型不支持图片输入')
+        return false
+      }
+      return true
+    })
+  if (!acceptedFiles.length) {
     return
   }
 
-  const countError = validateImageCount(composerImageCount.value, files.length)
+  const addingImageCount = acceptedFiles.filter((item) => item.contentType.startsWith('image/')).length
+  const countError = validateImageCount(composerImageCount.value, addingImageCount)
   if (countError) {
     message.warning(countError)
     return
   }
 
-  for (const file of files) {
-    const fileError = validateImageFile(file)
-    if (fileError) {
-      message.warning(fileError)
-      continue
-    }
-
+  for (const { file, contentType } of acceptedFiles) {
+    const isImage = contentType.startsWith('image/')
     const item: PendingImage = {
       localId: createLocalImageId(),
       file,
-      previewUrl: URL.createObjectURL(file),
+      kind: isImage ? 'image' : 'file',
+      contentType,
+      previewUrl: isImage ? URL.createObjectURL(file) : null,
       progress: 0,
       status: 'uploading'
     }
@@ -2054,7 +2108,7 @@ function toggleReuseAttachment(attachmentId: number) {
     return
   }
 
-  const countError = validateReuseImageCount(pendingImages.value.length, selectedReuseAttachmentIds.value.length + 1)
+  const countError = validateReuseImageCount(pendingImageCount.value, selectedReuseAttachmentIds.value.length + 1)
   if (countError) {
     message.warning(countError)
     return
@@ -2074,7 +2128,9 @@ async function uploadImage(localId: string) {
   }
 
   try {
-    const signed = await createImageUploadUrl(item.file.name, item.file.type, item.file.size)
+    const signed = item.kind === 'image'
+      ? await createImageUploadUrl(item.file.name, item.contentType, item.file.size)
+      : await createAttachmentUploadUrl(item.file.name, item.contentType, item.file.size)
     if (!updatePendingImageByLocalId(pendingImages, localId, { attachmentId: signed.attachmentId })) {
       return
     }
@@ -2084,7 +2140,11 @@ async function uploadImage(localId: string) {
     if (!pendingImages.value.some((image) => image.localId === localId)) {
       return
     }
-    await confirmImageUpload(signed.attachmentId)
+    if (item.kind === 'image') {
+      await confirmImageUpload(signed.attachmentId)
+    } else {
+      await confirmAttachmentUpload(signed.attachmentId)
+    }
     updatePendingImageByLocalId(pendingImages, localId, {
       status: 'ready',
       progress: 100
@@ -2092,7 +2152,7 @@ async function uploadImage(localId: string) {
   } catch {
     updatePendingImageByLocalId(pendingImages, localId, {
       status: 'failed',
-      error: '图片上传失败，请重试'
+      error: item.kind === 'image' ? '图片上传失败，请重试' : '文件上传失败，请重试'
     })
   }
 }
@@ -2186,6 +2246,9 @@ async function refreshActiveArtifacts() {
 }
 
 function revokePendingImageUrl(image: PendingImage) {
+  if (!image.previewUrl) {
+    return
+  }
   if (imagePreviewUrl.value === image.previewUrl) {
     imagePreviewUrl.value = null
   }
@@ -2199,7 +2262,7 @@ function handleImagePreviewVisibleChange(show: boolean) {
 }
 
 function canPreviewAttachment(attachment: ChatAttachmentItem) {
-  return !attachment.expired && Boolean(attachment.previewUrl)
+  return !attachment.expired && isImageContentType(attachment.contentType) && Boolean(attachment.previewUrl)
 }
 
 function previewMessageAttachment(attachment: ChatAttachmentItem) {
@@ -2208,6 +2271,10 @@ function previewMessageAttachment(attachment: ChatAttachmentItem) {
   }
 
   imagePreviewUrl.value = attachment.previewUrl ?? null
+}
+
+function isImageContentType(contentType?: string | null) {
+  return (contentType ?? '').toLowerCase().startsWith('image/')
 }
 
 function shouldShowArtifactBundle(messageItem: ChatMessageItem) {
@@ -2501,7 +2568,7 @@ function handleSend() {
     return
   }
 
-  if (!trimmedPrompt && composerImageCount.value === 0) {
+  if (!trimmedPrompt && composerAttachmentCount.value === 0) {
     return
   }
 
@@ -2528,13 +2595,13 @@ function handleSend() {
   const messages = ensureConversationMessages(conversationId)
   const assistantMessageId = -Date.now()
   let currentAssistantMessageId = assistantMessageId
-  const currentReadyPendingImages = pendingImages.value.filter(
+  const currentReadyPendingAttachments = pendingImages.value.filter(
     (image) => image.status === 'ready' && typeof image.attachmentId === 'number'
   )
-  const currentPendingAttachments: ChatAttachmentItem[] = currentReadyPendingImages.map((image) => ({
+  const currentPendingAttachments: ChatAttachmentItem[] = currentReadyPendingAttachments.map((image) => ({
     attachmentId: image.attachmentId as number,
     filename: image.file.name,
-    contentType: image.file.type,
+    contentType: image.contentType,
     status: 'READY',
     expired: false,
     previewUrl: image.previewUrl,
@@ -2565,11 +2632,13 @@ function handleSend() {
 
   const currentPrompt = trimmedPrompt
   const currentThinkingEnabled = thinkingMode.value === 'thinking'
-  const currentAttachmentIds = currentReadyPendingImages
+  const currentAttachmentIds = currentReadyPendingAttachments
     .map((image) => image.attachmentId as number)
   const currentReuseAttachmentIds = currentReuseAttachments.map((attachment) => attachment.attachmentId)
   const currentSkillIds = activeAgentKey.value ? [] : [...selectedSkillIds.value]
-  const currentSentPreviewUrls = currentReadyPendingImages.map((image) => image.previewUrl)
+  const currentSentPreviewUrls = currentReadyPendingAttachments
+    .filter((image) => image.kind === 'image' && image.previewUrl)
+    .map((image) => image.previewUrl as string)
   currentSentPreviewUrls.forEach((previewUrl) => sentLocalPreviewUrls.add(previewUrl))
   prompt.value = ''
   pendingImages.value = []
@@ -3496,6 +3565,45 @@ svg {
   object-fit: cover;
 }
 
+.image-preview-button.file {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 4px;
+  padding: 6px;
+  cursor: default;
+}
+
+.pending-file-icon {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  color: #4b5563;
+}
+
+.pending-file-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.pending-file-name {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  color: #374151;
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .image-remove-button {
   position: absolute;
   top: -7px;
@@ -3889,12 +3997,40 @@ svg {
   object-fit: cover;
 }
 
+.message-attachment.file {
+  align-content: center;
+  gap: 4px;
+  padding: 6px;
+}
+
+.message-file-icon {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0;
+}
+
+.message-file-icon svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
 .message-attachment span {
   padding: 6px;
   font-size: 12px;
   line-height: 1.35;
   text-align: center;
   white-space: normal;
+}
+
+.message-attachment .message-file-icon {
+  padding: 0;
 }
 
 .message-attachment.disabled {

@@ -145,6 +145,8 @@ export interface ImageUploadUrlRecord {
   expiresAt: string
 }
 
+export type AttachmentUploadUrlRecord = ImageUploadUrlRecord
+
 export interface AvailableModelRecord {
   modelId: number
   providerId: number
@@ -613,5 +615,18 @@ export async function createImageUploadUrl(filename: string, contentType: string
 }
 
 export async function confirmImageUpload(attachmentId: number) {
+  await http.post(`/chat/attachments/${attachmentId}/confirm`)
+}
+
+export async function createAttachmentUploadUrl(filename: string, contentType: string, fileSize: number) {
+  const response = await http.post<ApiResponse<AttachmentUploadUrlRecord>>('/chat/attachments/upload-url', {
+    filename,
+    contentType,
+    fileSize
+  })
+  return response.data.data
+}
+
+export async function confirmAttachmentUpload(attachmentId: number) {
   await http.post(`/chat/attachments/${attachmentId}/confirm`)
 }

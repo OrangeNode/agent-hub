@@ -379,7 +379,8 @@ public class ChatServiceImpl implements ChatService {
             streamExecutor.execute(() -> streamLlm(emitter, preparedChat.conversation().getUserId(),
                     preparedChat.conversation().getId(), runtimeConfig, preparedChat.context().messages(),
                     preparedChat.assistantMessage(), preparedChat.conversation().getAgentKey(), resolvedAgentId,
-                    thinkingEnabled, preparedChat.skillContext(), normalizedPrompt, taskRunContext, runDecision));
+                    thinkingEnabled, preparedChat.skillContext(), normalizedPrompt, taskRunContext, runDecision,
+                    !preparedChat.images().isEmpty()));
         } else {
             // 初始事件发送失败说明客户端已断开，直接标记助手消息停止。
             stopAssistantMessage(preparedChat.assistantMessage(), new StringBuilder(), new StringBuilder(),
@@ -471,7 +472,7 @@ public class ChatServiceImpl implements ChatService {
                 reuseAttachmentIds,
                 imageTokenEstimate
         );
-        if (!images.isEmpty() && !runtimeConfig.imageInputSupported()) {
+        if (hasImageReferences(images) && !runtimeConfig.imageInputSupported()) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "当前模型不支持图片输入");
         }
         SkillRuntimeContext skillContext = buildSkillRuntimeContext(agentRuntime, selectedSkillIds);
@@ -960,7 +961,8 @@ public class ChatServiceImpl implements ChatService {
             SkillRuntimeContext skillContext,
             String prompt,
             TaskRunContext taskRunContext,
-            AgentRunDecision runDecision
+            AgentRunDecision runDecision,
+            boolean hasAttachments
     ) {
         StringBuilder content = new StringBuilder();
         StringBuilder reasoningContent = new StringBuilder();
@@ -995,7 +997,7 @@ public class ChatServiceImpl implements ChatService {
         try {
             startTaskProgress(emitter, runtimeConfig, prompt, taskRunContext);
             errorSource = ERROR_SOURCE_TOOL;
-            availableTools = shouldExposeTools(runDecision, skillContext) ? listTools(toolContext) : List.of();
+            availableTools = shouldExposeTools(runDecision, skillContext, hasAttachments) ? listTools(toolContext) : List.of();
             errorSource = ERROR_SOURCE_LLM;
             LlmClient client = llmClientFactory.apply(runtimeConfig.protocolType());
             loopMessages = withSandboxPathRules(messages, availableTools);
@@ -1071,11 +1073,22 @@ public class ChatServiceImpl implements ChatService {
         }
     }
 
-    private boolean shouldExposeTools(AgentRunDecision runDecision, SkillRuntimeContext skillContext) {
+    private boolean shouldExposeTools(AgentRunDecision runDecision, SkillRuntimeContext skillContext, boolean hasAttachments) {
         if (skillContext != null && !skillContext.skillIds().isEmpty()) {
             return true;
         }
+        if (hasAttachments) {
+            return true;
+        }
         return runDecision != null && runDecision.toolPolicy() == ToolPolicy.AUTO;
+    }
+
+    private boolean hasImageReferences(List<AttachmentReference> attachments) {
+        return attachments != null && attachments.stream().anyMatch(attachment ->
+                attachment != null
+                        && hasText(attachment.contentType())
+                        && attachment.contentType().toLowerCase(Locale.ROOT).startsWith("image/")
+                        && hasText(attachment.readUrl()));
     }
 
     private void startTaskProgress(

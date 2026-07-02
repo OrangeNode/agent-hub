@@ -2375,6 +2375,63 @@ class ChatServiceImplTest {
     }
 
     @Test
+    void shouldExposeToolsForDirectChatWhenAttachmentIsProvided() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        ToolRegistry toolRegistry = mock(ToolRegistry.class);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.answer("已读取文件"),
+                LlmStreamChunk.done()
+        ));
+        ChatServiceImpl service = new ChatServiceImpl(
+                conversationMapper,
+                messageMapper,
+                modelService,
+                new ConversationTitleService(),
+                transactionTemplate(),
+                new RecordingSseEventSender(),
+                attachmentService,
+                null,
+                contextBuilder(messageMapper, attachmentService, llmClient),
+                protocolType -> llmClient,
+                Runnable::run,
+                null,
+                toolRegistry,
+                null,
+                null,
+                null,
+                null,
+                null,
+                new AgentRunRouter(),
+                null
+        );
+        LlmToolDefinition uploadTool = new LlmToolDefinition(
+                "sandbox.upload_file",
+                "把用户上传文件导入 /workspace/input",
+                Map.of("type", "object")
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(9L), List.of(), 1500))
+                .thenReturn(List.of(new AttachmentReference(
+                        9L,
+                        "需求.docx",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        null,
+                        0
+                )));
+        when(toolRegistry.listTools(any(ToolExecutionContext.class))).thenReturn(List.of(uploadTool));
+
+        service.stream(7L, 100L, 10L, null, "总结这份文档", false, List.of(9L), List.of());
+
+        verify(toolRegistry).listTools(any(ToolExecutionContext.class));
+        assertThat(llmClient.lastRequest.tools()).containsExactly(uploadTool);
+    }
+
+    @Test
     void shouldRecordFailedToolResultWhenRegistryExecutionThrows() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
         ChatMessageMapper messageMapper = messageMapper();
@@ -2686,6 +2743,35 @@ class ChatServiceImplTest {
                 .extracting("errorCode")
                 .isEqualTo(ErrorCode.BAD_REQUEST);
         verify(messageMapper, never()).insert(any(ChatMessage.class));
+    }
+
+    @Test
+    void shouldAllowFileAttachmentsWhenModelDoesNotSupportImageInput() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.done()));
+        ChatServiceImpl service = service(conversationMapper, messageMapper, modelService, new RecordingSseEventSender(),
+                attachmentService, llmClient);
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig(false, null));
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        when(attachmentService.resolveImagesForChat(7L, 100L, List.of(9L), List.of(), 1500))
+                .thenReturn(List.of(new AttachmentReference(
+                        9L,
+                        "需求.docx",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        null,
+                        0
+                )));
+
+        service.stream(7L, 100L, 10L, null, "总结这个文档", false, List.of(9L), List.of());
+
+        assertThat(llmClient.lastRequest.messages().getFirst().parts().getFirst().text())
+                .contains("attachment_id=9")
+                .contains("需求.docx");
+        verify(attachmentService).bindToMessage(7L, 100L, 1L, List.of(9L));
     }
 
     @Test

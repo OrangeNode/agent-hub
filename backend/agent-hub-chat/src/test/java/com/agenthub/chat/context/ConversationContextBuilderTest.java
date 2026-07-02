@@ -195,6 +195,34 @@ class ConversationContextBuilderTest {
     }
 
     @Test
+    void shouldExposeCurrentFileAttachmentIdsWithoutImageParts() {
+        ConversationContextBuilder builder = builder(List.of(), null, summaryClient("summary"));
+
+        ConversationContext result = builder.build(
+                7L,
+                100L,
+                runtimeConfig(10_000, 1_000),
+                "请总结这个表格",
+                List.of(new AttachmentReference(
+                        43L,
+                        "数据.xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        null,
+                        0
+                ))
+        );
+
+        LlmMessage currentMessage = result.messages().getLast();
+        assertThat(currentMessage.content()).isNull();
+        assertThat(currentMessage.parts()).hasSize(1);
+        assertThat(currentMessage.parts().getFirst().text())
+                .contains("请总结这个表格")
+                .contains("attachment_id=43")
+                .contains("数据.xlsx")
+                .contains("sandbox.upload_file");
+    }
+
+    @Test
     void shouldContinueChatWhenSummaryLlmThrows() {
         ChatConversationSummaryMapper summaryMapper = mock(ChatConversationSummaryMapper.class);
         ChatMessageMapper messageMapper = mock(ChatMessageMapper.class);

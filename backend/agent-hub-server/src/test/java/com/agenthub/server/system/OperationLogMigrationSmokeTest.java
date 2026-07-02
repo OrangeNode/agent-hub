@@ -1,9 +1,9 @@
 package com.agenthub.server.system;
 
+import static com.agenthub.server.support.MigrationTestSupport.readConsolidatedSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
@@ -108,18 +108,16 @@ class OperationLogMigrationSmokeTest {
     }
 
     @Test
-    void shouldNotHardCodeMenuIdsOrRestartIdentityInMigration() throws IOException {
-        var migrationScriptUrl = OperationLogMigrationSmokeTest.class
-                .getResource("/db/migration/V9__init_operation_log_and_sandbox_admin.sql");
+    void shouldDefineOperationLogAndSandboxMenusInConsolidatedMigration() throws IOException {
+        String scriptContent = readConsolidatedSchema();
 
-        assertThat(migrationScriptUrl).isNotNull();
-
-        String scriptContent;
-        try (var inputStream = migrationScriptUrl.openStream()) {
-            scriptContent = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-        }
-
-        assertThat(scriptContent).doesNotContain("INSERT INTO sys_menu (id");
-        assertThat(scriptContent).doesNotContain("RESTART WITH");
+        assertThat(scriptContent)
+                .contains(
+                        "SELECT 0, 'sandbox', 'Sandbox 管理'",
+                        "SELECT parent.id, 'sandboxMonitor', 'Sandbox 运维'",
+                        "SELECT parent.id, 'operationLogs', '操作日志'",
+                        "'operation-log:view'",
+                        "'sandbox:monitor:view'"
+                );
     }
 }

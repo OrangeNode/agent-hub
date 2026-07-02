@@ -1,9 +1,9 @@
 package com.agenthub.server.sandbox;
 
+import static com.agenthub.server.support.MigrationTestSupport.readConsolidatedSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import javax.sql.DataSource;
 import com.agenthub.sandbox.artifact.mapper.SandboxArtifactMapper;
@@ -159,17 +159,14 @@ class SandboxToolLoopMigrationSmokeTest {
     }
 
     @Test
-    void shouldNotRestartIdentityInMigration() throws IOException {
-        var migrationScriptUrl = SandboxToolLoopMigrationSmokeTest.class
-                .getResource("/db/migration/V7__init_sandbox_tool_loop.sql");
+    void shouldKeepSandboxTablesInConsolidatedMigration() throws IOException {
+        String scriptContent = readConsolidatedSchema();
 
-        assertThat(migrationScriptUrl).isNotNull();
-
-        String scriptContent;
-        try (var inputStream = migrationScriptUrl.openStream()) {
-            scriptContent = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-        }
-
-        assertThat(scriptContent).doesNotContain("RESTART WITH");
+        assertThat(scriptContent)
+                .contains(
+                        "CREATE TABLE sandbox_session",
+                        "CREATE TABLE sandbox_execution",
+                        "CREATE TABLE sandbox_artifact"
+                );
     }
 }

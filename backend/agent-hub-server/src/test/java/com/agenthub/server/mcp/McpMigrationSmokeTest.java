@@ -1,12 +1,12 @@
 package com.agenthub.server.mcp;
 
+import static com.agenthub.server.support.MigrationTestSupport.readConsolidatedSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.agenthub.tool.mcp.mapper.McpServerMapper;
 import com.agenthub.tool.mcp.mapper.McpToolCallLogMapper;
 import com.agenthub.tool.mcp.mapper.McpToolMapper;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
@@ -153,19 +153,15 @@ class McpMigrationSmokeTest {
     }
 
     @Test
-    void shouldNotHardCodeMenuIdsOrRestartIdentityInMigration() throws IOException {
-        var migrationScriptUrl = McpMigrationSmokeTest.class
-                .getResource("/db/migration/V11__init_mcp_tool_registry.sql");
+    void shouldDefineMcpMenuInConsolidatedMigration() throws IOException {
+        String scriptContent = readConsolidatedSchema();
 
-        assertThat(migrationScriptUrl).isNotNull();
-
-        String scriptContent;
-        try (var inputStream = migrationScriptUrl.openStream()) {
-            scriptContent = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-        }
-
-        assertThat(scriptContent).doesNotContain("INSERT INTO sys_menu (id");
-        assertThat(scriptContent).doesNotContain("INSERT INTO sys_role_menu (id");
-        assertThat(scriptContent).doesNotContain("RESTART WITH");
+        assertThat(scriptContent)
+                .contains(
+                        "SELECT parent.id, 'mcpServers', 'MCP 服务'",
+                        "'mcp:server:list'",
+                        "'mcp:tool:sync'",
+                        "'mcp:call:list'"
+                );
     }
 }

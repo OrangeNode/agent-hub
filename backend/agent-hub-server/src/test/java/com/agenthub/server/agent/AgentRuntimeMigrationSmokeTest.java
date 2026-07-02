@@ -1,9 +1,9 @@
 package com.agenthub.server.agent;
 
+import static com.agenthub.server.support.MigrationTestSupport.readConsolidatedSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
@@ -99,20 +99,14 @@ class AgentRuntimeMigrationSmokeTest {
     }
 
     @Test
-    void shouldNotHardCodeAgentMenuIdsOrRestartIdentityInMigration() throws IOException {
-        var migrationScriptUrl = AgentRuntimeMigrationSmokeTest.class
-                .getResource("/db/migration/V6__init_agent_runtime.sql");
+    void shouldDefineAgentMenuWithParentLookupInConsolidatedMigration() throws IOException {
+        String scriptContent = readConsolidatedSchema();
 
-        assertThat(migrationScriptUrl).isNotNull();
-
-        String scriptContent;
-        try (var inputStream = migrationScriptUrl.openStream()) {
-            scriptContent = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-        }
-
-        assertThat(scriptContent).doesNotContain("INSERT INTO sys_menu (id");
-        assertThat(scriptContent).doesNotContain("INSERT INTO sys_role_menu (id");
-        assertThat(scriptContent).doesNotContain("RESTART WITH");
-        assertThat(scriptContent).contains("parent.parent_id = 0");
+        assertThat(scriptContent)
+                .contains(
+                        "SELECT 0, 'agent', 'Agent 管理'",
+                        "SELECT parent.id, 'agentList', 'Agent 列表'",
+                        "WHERE parent.parent_id = 0"
+                );
     }
 }

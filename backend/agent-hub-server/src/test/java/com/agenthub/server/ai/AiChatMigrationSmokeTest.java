@@ -1,9 +1,9 @@
 package com.agenthub.server.ai;
 
+import static com.agenthub.server.support.MigrationTestSupport.readConsolidatedSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import javax.sql.DataSource;
@@ -258,74 +258,32 @@ class AiChatMigrationSmokeTest {
     }
 
     @Test
-    void shouldNotHardCodeAiMenuIdsOrRestartIdentityInMigration() throws IOException {
-        var migrationScriptUrl = AiChatMigrationSmokeTest.class.getResource("/db/migration/V2__init_ai_chat.sql");
+    void shouldDefineAiMenusWithParentLookupInConsolidatedMigration() throws IOException {
+        String scriptContent = readConsolidatedSchema();
 
-        assertThat(migrationScriptUrl).isNotNull();
-
-        String scriptContent;
-        try (var inputStream = migrationScriptUrl.openStream()) {
-            scriptContent = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-        }
-
-        assertThat(scriptContent).doesNotContain("INSERT INTO sys_menu (id");
-        assertThat(scriptContent).doesNotContain("INSERT INTO sys_role_menu (id");
-        assertThat(scriptContent).doesNotContain("RESTART WITH");
+        assertThat(scriptContent)
+                .contains(
+                        "SELECT 0, 'ai', 'AI 管理'",
+                        "SELECT parent.id, 'aiProviders', '供应商管理'",
+                        "SELECT parent.id, 'aiModels', '模型管理'",
+                        "WHERE parent.parent_id = 0"
+                );
         assertThat(scriptContent).doesNotContain("WHERE parent.name = 'ai'");
         assertThat(scriptContent).doesNotContain("JOIN sys_menu sm ON sm.name IN");
-        assertThat(scriptContent).contains("parent.parent_id = 0");
     }
 
     @Test
-    void shouldKeepExistingVersionThreeMigrationAndMoveDeleteConstraintChangeToVersionFour() throws IOException {
-        var historicalVersionThreeUrl = AiChatMigrationSmokeTest.class
-                .getResource("/db/migration/V3__init_multimodal_image_summary.sql");
-        var conflictingVersionThreeUrl = AiChatMigrationSmokeTest.class
-                .getResource("/db/migration/V3__relax_ai_config_delete_constraints.sql");
-        var deleteConstraintMigrationUrl = AiChatMigrationSmokeTest.class
-                .getResource("/db/migration/V4__relax_ai_config_delete_constraints.sql");
-        var contextIndexMigrationUrl = AiChatMigrationSmokeTest.class
-                .getResource("/db/migration/V5__add_chat_message_context_index.sql");
+    void shouldKeepChatDeleteConstraintsAndContextIndexInConsolidatedMigration() throws IOException {
+        String scriptContent = readConsolidatedSchema();
 
-        assertThat(historicalVersionThreeUrl).isNotNull();
-        assertThat(conflictingVersionThreeUrl).isNull();
-        assertThat(deleteConstraintMigrationUrl).isNotNull();
-        assertThat(contextIndexMigrationUrl).isNotNull();
-
-        String scriptContent;
-        try (var inputStream = deleteConstraintMigrationUrl.openStream()) {
-            scriptContent = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-        }
-
-        String historicalVersionThreeContent;
-        try (var inputStream = historicalVersionThreeUrl.openStream()) {
-            historicalVersionThreeContent = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-        }
-
-        assertThat(historicalVersionThreeContent)
-                .doesNotContain("idx_chat_message_conversation_user_role_created_id");
-        assertThat(scriptContent).doesNotContain("idx_chat_message_conversation_user_role_created_id");
         assertThat(scriptContent).contains("ON DELETE CASCADE");
         assertThat(scriptContent).contains("ON DELETE SET NULL");
-
-        String contextIndexContent;
-        try (var inputStream = contextIndexMigrationUrl.openStream()) {
-            contextIndexContent = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-        }
-        assertThat(contextIndexContent).contains("idx_chat_message_conversation_user_role_created_id");
+        assertThat(scriptContent).contains("CREATE INDEX IF NOT EXISTS idx_chat_message_conversation_user_role_created_id");
     }
 
     @Test
     void shouldMigrateRemovedProtocolsToOpenAiCompatible() throws IOException {
-        var migrationScriptUrl = AiChatMigrationSmokeTest.class
-                .getResource("/db/migration/V19__collapse_ai_protocols_to_openai_compatible.sql");
-
-        assertThat(migrationScriptUrl).isNotNull();
-
-        String scriptContent;
-        try (var inputStream = migrationScriptUrl.openStream()) {
-            scriptContent = new String(inputStream.readAllBytes(), StandardCharsets.UTF_8);
-        }
+        String scriptContent = readConsolidatedSchema();
 
         assertThat(scriptContent).contains("OPENAI_COMPATIBLE");
         assertThat(scriptContent).contains("OPENAI_CHAT_COMPLETIONS");

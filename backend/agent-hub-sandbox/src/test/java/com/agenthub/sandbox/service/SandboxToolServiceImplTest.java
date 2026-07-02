@@ -478,6 +478,37 @@ class SandboxToolServiceImplTest {
         verify(client, never()).writeFile(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
     }
 
+    @Test
+    void shouldUploadOfficeAttachmentBytesIntoWorkspace() {
+        SandboxClient client = mock(SandboxClient.class);
+        AttachmentService attachmentService = mock(AttachmentService.class);
+        SandboxSessionMapper sessionMapper = mock(SandboxSessionMapper.class);
+        when(sessionMapper.selectBySandboxSessionId("sbx_1")).thenReturn(session(55L));
+        when(attachmentService.requireImportSource(7L, 10L)).thenReturn(new AttachmentImportSource(
+                10L,
+                "document.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                7L,
+                "data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,UEsDBP8AgA==",
+                "users/7/chat-files/document.docx"
+        ));
+        SandboxToolServiceImpl service = new SandboxToolServiceImpl(
+                client,
+                new CommandPolicy(200, 60),
+                sessionMapper,
+                mock(SandboxExecutionMapper.class),
+                mock(SandboxArtifactMapper.class),
+                attachmentService
+        );
+
+        service.uploadFile(7L, 100L, "sbx_1", 10L, "/workspace/input/document.docx");
+
+        ArgumentCaptor<byte[]> bytesCaptor = ArgumentCaptor.forClass(byte[].class);
+        verify(client).writeFileBytes(eq("sbx_1"), eq("/workspace/input/document.docx"), bytesCaptor.capture(), eq(false));
+        assertThat(bytesCaptor.getValue()).containsExactly(0x50, 0x4b, 0x03, 0x04, 0xff, 0x00, 0x80);
+        verify(client, never()).writeFile(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
     private SandboxToolServiceImpl service(SandboxClient client, SandboxExecutionMapper executionMapper) {
         SandboxSessionMapper sessionMapper = mock(SandboxSessionMapper.class);
         when(sessionMapper.selectBySandboxSessionId("sbx_1")).thenReturn(session(55L));

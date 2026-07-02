@@ -399,11 +399,15 @@ public class SandboxToolServiceImpl implements SandboxToolService {
         }
         String normalized = contentType.toLowerCase();
         return normalized.startsWith("text/")
-                || normalized.contains("json")
-                || normalized.contains("xml")
-                || normalized.contains("csv")
-                || normalized.contains("yaml")
-                || normalized.contains("javascript");
+                || "application/json".equals(normalized)
+                || normalized.endsWith("+json")
+                || "application/xml".equals(normalized)
+                || normalized.endsWith("+xml")
+                || "application/csv".equals(normalized)
+                || "application/yaml".equals(normalized)
+                || "application/x-yaml".equals(normalized)
+                || "application/javascript".equals(normalized)
+                || "application/x-javascript".equals(normalized);
     }
 
     private class ExecutionAccumulator {

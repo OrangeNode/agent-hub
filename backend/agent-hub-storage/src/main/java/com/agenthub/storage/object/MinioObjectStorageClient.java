@@ -16,6 +16,8 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.time.Duration;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
 public class MinioObjectStorageClient implements ObjectStorageClient {
 
@@ -25,11 +27,38 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
     private final MinioClient internalClient;
     private final MinioClient presignClient;
     private final StorageProperties properties;
+    private final String defaultPresignEndpoint;
+    private final Supplier<String> presignEndpointResolver;
+    private final Function<String, MinioClient> presignClientFactory;
 
     public MinioObjectStorageClient(MinioClient internalClient, MinioClient presignClient, StorageProperties properties) {
+        this(
+                internalClient,
+                presignClient,
+                properties,
+                new PresignEndpointResolver(properties).defaultEndpoint(),
+                new PresignEndpointResolver(properties)::resolve,
+                endpoint -> MinioClient.builder()
+                        .endpoint(endpoint)
+                        .credentials(properties.getAccessKey(), properties.getSecretKey())
+                        .build()
+        );
+    }
+
+    MinioObjectStorageClient(
+            MinioClient internalClient,
+            MinioClient presignClient,
+            StorageProperties properties,
+            String defaultPresignEndpoint,
+            Supplier<String> presignEndpointResolver,
+            Function<String, MinioClient> presignClientFactory
+    ) {
         this.internalClient = internalClient;
         this.presignClient = presignClient;
         this.properties = properties;
+        this.defaultPresignEndpoint = defaultPresignEndpoint;
+        this.presignEndpointResolver = presignEndpointResolver;
+        this.presignClientFactory = presignClientFactory;
     }
 
     @Override
@@ -40,7 +69,7 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
     @Override
     public String presignPut(String bucket, String objectKey, String contentType, Duration ttl) {
         try {
-            return presignClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+            return presignClient().getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(Method.PUT)
                     .bucket(resolveBucket(bucket))
                     .object(objectKey)
@@ -60,7 +89,7 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
     @Override
     public String presignGet(String bucket, String objectKey, Duration ttl) {
         try {
-            return presignClient.getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
+            return presignClient().getPresignedObjectUrl(GetPresignedObjectUrlArgs.builder()
                     .method(Method.GET)
                     .bucket(resolveBucket(bucket))
                     .object(objectKey)
@@ -174,5 +203,13 @@ public class MinioObjectStorageClient implements ObjectStorageClient {
 
     private String resolveBucket(String bucket) {
         return bucket == null || bucket.isBlank() ? properties.getBucket() : bucket;
+    }
+
+    private MinioClient presignClient() {
+        String resolvedEndpoint = presignEndpointResolver.get();
+        if (resolvedEndpoint == null || resolvedEndpoint.isBlank() || resolvedEndpoint.equals(defaultPresignEndpoint)) {
+            return presignClient;
+        }
+        return presignClientFactory.apply(resolvedEndpoint);
     }
 }

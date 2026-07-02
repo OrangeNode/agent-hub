@@ -46,6 +46,33 @@ Agent Hub 是一个单仓多模块的企业级 AI Agent 平台，面向管理端
 
 ## 快速启动
 
+### Linux 统一启动脚本
+
+服务器侧推荐在项目根目录使用统一脚本启动和停止，避免分别进入 `docker`、`backend`、`admin-web`、`user-web` 等目录：
+
+```bash
+bash scripts/start-all.sh
+bash scripts/status-all.sh
+bash scripts/stop-all.sh
+```
+
+默认会启动 Docker 基础依赖、Java 后端、管理端前端和用户端前端。运行态 PID 和日志统一写入：
+
+```text
+logs/runtime
+```
+
+如果需要同时启动生产形态 `sandbox-service`，先确保服务器已准备 Firecracker、`rootfs.ext4`、`vmlinux` 和 `sandbox-service/.env`，再执行：
+
+```bash
+export SANDBOX_SUDO_PASSWORD=<sudo-password>
+bash scripts/start-all.sh --with-sandbox
+bash scripts/status-all.sh
+bash scripts/stop-all.sh --with-sandbox
+```
+
+`SANDBOX_SUDO_PASSWORD` 只建议作为临时环境变量传入，不要写入仓库脚本或配置文件。
+
 ### 1. 启动基础依赖
 
 ```powershell

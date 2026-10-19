@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import chatViewSource from '../src/views/ChatView.vue?raw'
+import chatViewSource from '../src/views/chat/ChatSidebar.vue?raw'
 
 const normalizedSource = chatViewSource.replace(/\r\n/g, '\n')
 
@@ -22,7 +22,7 @@ describe('聊天侧栏账号菜单', () => {
     expect(normalizedSource).toContain('account-menu-header')
     expect(normalizedSource).toContain('account-menu-divider')
     expect(normalizedSource).toContain('退出登录')
-    expect(normalizedSource).not.toContain('<strong>{{ authStore.displayName')
+    expect(normalizedSource).not.toContain('<strong>{{ displayName')
     expect(normalizedSource).not.toContain('<n-button quaternary size="small" @click="handleLogout">退出</n-button>')
   })
 

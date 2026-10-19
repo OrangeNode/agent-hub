@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import chatViewSource from '../src/views/ChatView.vue?raw'
+import chatViewSource from '../src/views/chat/ChatMessageList.vue?raw'
 
 function cssBlock(selector: string) {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

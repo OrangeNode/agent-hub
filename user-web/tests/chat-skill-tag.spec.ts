@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import chatViewSource from '../src/views/ChatView.vue?raw'
+import chatViewSource from '../src/views/chat/ChatComposer.vue?raw'
 
 const normalizedChatViewSource = chatViewSource.replace(/\r\n/g, '\n')
 

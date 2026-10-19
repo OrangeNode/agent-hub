@@ -1,4 +1,4 @@
-package com.agenthub.tool.sandbox;
+package com.agenthub.sandbox.tool;
 
 import com.agenthub.ai.llm.tool.LlmToolDefinition;
 import com.agenthub.sandbox.client.dto.SandboxEvent;

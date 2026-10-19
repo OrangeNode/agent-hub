@@ -1,7 +1,6 @@
 package com.agenthub.tool.binding.service.impl;
 
-import com.agenthub.agent.entity.AgentConfig;
-import com.agenthub.agent.mapper.AgentConfigMapper;
+import com.agenthub.agent.service.AgentService;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
 import com.agenthub.tool.binding.command.AgentToolBindingCommand;
@@ -29,18 +28,18 @@ public class AgentToolBindingServiceImpl implements AgentToolBindingService {
     private static final String MCP_PREFIX = "mcp.";
 
     private final AgentToolBindingMapper bindingMapper;
-    private final AgentConfigMapper agentMapper;
+    private final AgentService agentService;
     private final McpServerMapper serverMapper;
     private final McpToolMapper toolMapper;
 
     public AgentToolBindingServiceImpl(
             AgentToolBindingMapper bindingMapper,
-            AgentConfigMapper agentMapper,
+            AgentService agentService,
             McpServerMapper serverMapper,
             McpToolMapper toolMapper
     ) {
         this.bindingMapper = bindingMapper;
-        this.agentMapper = agentMapper;
+        this.agentService = agentService;
         this.serverMapper = serverMapper;
         this.toolMapper = toolMapper;
     }
@@ -48,7 +47,7 @@ public class AgentToolBindingServiceImpl implements AgentToolBindingService {
     @Override
     @Transactional(readOnly = true)
     public List<AgentToolBindingItem> listBindings(Long agentId) {
-        requireAgent(agentId);
+        agentService.requireExists(agentId);
         return bindingMapper.selectByAgentIdAndProviderType(agentId, PROVIDER_TYPE_MCP).stream()
                 .map(this::toBindingItem)
                 .toList();
@@ -57,7 +56,7 @@ public class AgentToolBindingServiceImpl implements AgentToolBindingService {
     @Override
     @Transactional(readOnly = true)
     public List<AgentToolOptionItem> listOptions(Long agentId) {
-        requireAgent(agentId);
+        agentService.requireExists(agentId);
         return serverMapper.selectList(new LambdaQueryWrapper<McpServer>()
                         .orderByAsc(McpServer::getSort)
                         .orderByAsc(McpServer::getId))
@@ -74,7 +73,7 @@ public class AgentToolBindingServiceImpl implements AgentToolBindingService {
     @Override
     @Transactional
     public List<AgentToolBindingItem> updateBindings(Long userId, Long agentId, List<AgentToolBindingCommand> commands) {
-        requireAgent(agentId);
+        agentService.requireExists(agentId);
         Map<String, AgentToolBindingCommand> uniqueCommands = new LinkedHashMap<>();
         if (commands != null) {
             for (AgentToolBindingCommand command : commands) {
@@ -114,14 +113,6 @@ public class AgentToolBindingServiceImpl implements AgentToolBindingService {
         if (!exposedToolName(server.getServerKey(), tool.getToolName()).equals(command.toolName())) {
             throw new BusinessException(ErrorCode.BAD_REQUEST, "工具标识与 MCP 工具不匹配");
         }
-    }
-
-    private AgentConfig requireAgent(Long agentId) {
-        AgentConfig agent = agentMapper.selectById(agentId);
-        if (agent == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND, "Agent 不存在");
-        }
-        return agent;
     }
 
     private McpTool requireTool(Long toolId) {

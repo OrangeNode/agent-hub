@@ -9,8 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.agenthub.agent.entity.AgentConfig;
-import com.agenthub.agent.mapper.AgentConfigMapper;
+import com.agenthub.agent.service.AgentService;
 import com.agenthub.common.api.ErrorCode;
 import com.agenthub.common.exception.BusinessException;
 import com.agenthub.tool.binding.command.AgentToolBindingCommand;
@@ -33,19 +32,18 @@ import org.mockito.InOrder;
 class AgentToolBindingServiceImplTest {
 
     private final AgentToolBindingMapper bindingMapper = mock(AgentToolBindingMapper.class);
-    private final AgentConfigMapper agentMapper = mock(AgentConfigMapper.class);
+    private final AgentService agentService = mock(AgentService.class);
     private final McpServerMapper serverMapper = mock(McpServerMapper.class);
     private final McpToolMapper toolMapper = mock(McpToolMapper.class);
     private final AgentToolBindingService service = new AgentToolBindingServiceImpl(
             bindingMapper,
-            agentMapper,
+            agentService,
             serverMapper,
             toolMapper
     );
 
     @Test
     void shouldReplaceBindingsAndIgnoreDuplicateToolNames() {
-        when(agentMapper.selectById(1L)).thenReturn(agent(1L));
         when(toolMapper.selectById(100L)).thenReturn(tool(100L, 10L, "search", true));
         when(toolMapper.selectById(101L)).thenReturn(tool(101L, 11L, "read", true));
         when(serverMapper.selectById(10L)).thenReturn(server(10L, "github", true, 2));
@@ -80,7 +78,6 @@ class AgentToolBindingServiceImplTest {
 
     @Test
     void shouldRejectUnsupportedProviderType() {
-        when(agentMapper.selectById(1L)).thenReturn(agent(1L));
 
         assertThatThrownBy(() -> service.updateBindings(7L, 1L, List.of(
                 new AgentToolBindingCommand("builtin.echo", "BUILTIN", 100L, 0)
@@ -94,7 +91,6 @@ class AgentToolBindingServiceImplTest {
 
     @Test
     void shouldRejectMismatchedToolName() {
-        when(agentMapper.selectById(1L)).thenReturn(agent(1L));
         when(toolMapper.selectById(100L)).thenReturn(tool(100L, 10L, "search", true));
         when(serverMapper.selectById(10L)).thenReturn(server(10L, "github", true, 1));
 
@@ -110,7 +106,6 @@ class AgentToolBindingServiceImplTest {
 
     @Test
     void shouldListBindingsWithServerAndToolEnabledFlags() {
-        when(agentMapper.selectById(1L)).thenReturn(agent(1L));
         AgentToolBinding binding = binding(5L, 1L, "mcp.github.search", 100L, true, 3);
         when(bindingMapper.selectByAgentIdAndProviderType(1L, "MCP")).thenReturn(List.of(binding));
         when(toolMapper.selectById(100L)).thenReturn(tool(100L, 10L, "search", false));
@@ -137,7 +132,6 @@ class AgentToolBindingServiceImplTest {
 
     @Test
     void shouldListMcpOptionsGroupedByServerAndToolOrder() {
-        when(agentMapper.selectById(1L)).thenReturn(agent(1L));
         when(serverMapper.selectList(ArgumentMatchers.<Wrapper<McpServer>>any())).thenReturn(List.of(
                 server(11L, "gitlab", false, 1),
                 server(10L, "github", true, 2)
@@ -157,14 +151,6 @@ class AgentToolBindingServiceImplTest {
                 .containsExactly(false, true, true);
         assertThat(options).extracting(AgentToolOptionItem::toolEnabled)
                 .containsExactly(false, true, false);
-    }
-
-    private AgentConfig agent(Long id) {
-        AgentConfig agent = new AgentConfig();
-        agent.setId(id);
-        agent.setAgentKey("official-writing");
-        agent.setName("公文写作 Agent");
-        return agent;
     }
 
     private AgentToolBinding binding(Long id, Long agentId, String toolName, Long providerRefId, boolean enabled, int sort) {

@@ -82,6 +82,12 @@ public class AgentServiceImpl implements AgentService {
         agentMapper.deleteById(agentId);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public void requireExists(Long agentId) {
+        requireAgent(agentId);
+    }
+
     private AgentConfig requireAgent(Long agentId) {
         AgentConfig agent = agentMapper.selectById(agentId);
         if (agent == null) {

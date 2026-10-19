@@ -3,6 +3,7 @@ package com.agenthub.ai.llm.openai;
 import com.agenthub.ai.llm.LlmClient;
 import com.agenthub.ai.llm.LlmContentPart;
 import com.agenthub.ai.llm.LlmMessage;
+import com.agenthub.ai.llm.LlmStreamCancelledException;
 import com.agenthub.ai.llm.LlmStreamChunk;
 import com.agenthub.ai.llm.LlmStreamChunkType;
 import com.agenthub.ai.llm.LlmStreamRequest;
@@ -90,6 +91,9 @@ public class OpenAiCompatibleClient implements LlmClient {
                     chunkConsumer.accept(LlmStreamChunk.error("模型流式响应未正常结束"));
                 }
             }
+        } catch (LlmStreamCancelledException e) {
+            // 关闭 lines 流后上游连接随之中断，取消信号交回调用方处理。
+            throw e;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             chunkConsumer.accept(LlmStreamChunk.error("OpenAI Compatible 流式请求被中断"));

@@ -13,6 +13,12 @@ server:
   port: 8080
 
 agent-hub:
+  # 以下密钥仅用于本地开发联调，共享环境和生产环境必须通过环境变量覆盖。
+  security:
+    jwt:
+      secret: ${AGENT_HUB_JWT_SECRET:local-dev-only-jwt-secret-never-use-in-production}
+  sandbox:
+    internal-token: ${AGENT_HUB_SANDBOX_INTERNAL_TOKEN:dev-sandbox-token}
   storage:
     endpoint: http://172.16.112.183:9000
     public-endpoint: http://172.16.112.183:9000

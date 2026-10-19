@@ -23,13 +23,14 @@ mybatis-plus:
 agent-hub:
   security:
     jwt:
-      secret: ${AGENT_HUB_JWT_SECRET:agent-hub-demo-secret-agent-hub-demo-secret}
+      # 不提供默认值：未配置或使用公开示例值时后端拒绝启动。
+      secret: ${AGENT_HUB_JWT_SECRET:}
       ttl-hours: ${AGENT_HUB_JWT_TTL_HOURS:12}
   storage:
     endpoint: ${AGENT_HUB_STORAGE_ENDPOINT:http://127.0.0.1:9000}
     public-endpoint: ${AGENT_HUB_STORAGE_PUBLIC_ENDPOINT:}
-    access-key: ${AGENT_HUB_STORAGE_ACCESS_KEY:agenthub}
-    secret-key: ${AGENT_HUB_STORAGE_SECRET_KEY:agenthub123}
+    access-key: ${AGENT_HUB_STORAGE_ACCESS_KEY:}
+    secret-key: ${AGENT_HUB_STORAGE_SECRET_KEY:}
     bucket: ${AGENT_HUB_STORAGE_BUCKET:agent-hub-chat-images}
     skill-bucket: ${AGENT_HUB_STORAGE_SKILL_BUCKET:agent-hub-skill-packages}
     image-expire-days: ${AGENT_HUB_STORAGE_IMAGE_EXPIRE_DAYS:7}
@@ -39,7 +40,7 @@ agent-hub:
     unused-ready-cleanup-hours: ${AGENT_HUB_STORAGE_UNUSED_READY_CLEANUP_HOURS:24}
   sandbox:
     base-url: ${AGENT_HUB_SANDBOX_BASE_URL:http://172.16.112.183:8090}
-    internal-token: ${AGENT_HUB_SANDBOX_INTERNAL_TOKEN:dev-sandbox-token}
+    internal-token: ${AGENT_HUB_SANDBOX_INTERNAL_TOKEN:}
     command-max-length: ${AGENT_HUB_SANDBOX_COMMAND_MAX_LENGTH:8192}
     exec-timeout-seconds: ${AGENT_HUB_SANDBOX_EXEC_TIMEOUT_SECONDS:300}
   logging:

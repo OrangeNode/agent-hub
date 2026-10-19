@@ -41,11 +41,11 @@ import tools.jackson.databind.ObjectMapper;
 public class SecurityConfig {
 
     /**
-     * 构造 JWT 配置，默认值仅用于本地开发。
+     * 构造 JWT 配置；密钥不提供默认值，缺失或强度不足时直接拒绝启动。
      */
     @Bean
     JwtProperties jwtProperties(
-            @Value("${agent-hub.security.jwt.secret:agent-hub-demo-secret-agent-hub-demo-secret}") String secret,
+            @Value("${agent-hub.security.jwt.secret:}") String secret,
             @Value("${agent-hub.security.jwt.ttl-hours:12}") long ttlHours
     ) {
         return new JwtProperties(

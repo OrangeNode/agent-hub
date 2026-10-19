@@ -16,10 +16,10 @@
 docker
 ├── docker-compose.yml
 ├── env
-│   ├── backend.env
-│   ├── minio.env
-│   ├── postgres.env
-│   └── redis.env
+│   ├── backend.env.example
+│   ├── minio.env.example
+│   ├── postgres.env.example
+│   └── redis.env.example
 ├── initdb
 │   └── 01-init-schema.sql
 └── README.md
@@ -27,7 +27,7 @@ docker
 
 ## 使用方式
 
-1. 根据实际环境修改：
+1. 将 `env/*.env.example` 复制为同名的 `env/*.env`，并把所有 `CHANGE_ME` 替换为实际值（真实 `.env` 文件已加入 `.gitignore`，不要提交）：
    - `env/postgres.env`
    - `env/redis.env`
    - `env/minio.env`
@@ -84,7 +84,7 @@ docker compose down
 
 ## MinIO 图片存储
 
-[minio.env](/D:/project/Agent-Hub/docker/env/minio.env) 提供了聊天图片对象存储所需的默认变量。
+`env/minio.env`（由 `minio.env.example` 复制）提供了聊天图片对象存储所需的默认变量。
 
 - API 端口：`9000`
 - Console 端口：`9001`

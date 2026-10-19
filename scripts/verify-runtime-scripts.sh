@@ -34,6 +34,8 @@ grep -q "admin-web" "${SCRIPT_DIR}/start-all.sh"
 grep -q "user-web" "${SCRIPT_DIR}/start-all.sh"
 
 backend_env="${PROJECT_DIR}/docker/env/backend.env"
+# 真实 env 不入库，CI 等无本地配置的环境退回校验样例文件。
+[[ -f "${backend_env}" ]] || backend_env="${backend_env}.example"
 grep -q "^AGENT_HUB_STORAGE_ENDPOINT=" "${backend_env}"
 grep -q "^AGENT_HUB_STORAGE_PUBLIC_ENDPOINT=" "${backend_env}"
 grep -q "^AGENT_HUB_STORAGE_BUCKET=" "${backend_env}"

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import chatViewSource from '../src/views/ChatView.vue?raw'
+import chatViewSource from '../src/views/chat/ChatMessageList.vue?raw'
 
 describe('artifact bundle style', () => {
   it('opens the all-files panel from both the card and preview button', () => {

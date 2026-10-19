@@ -7,12 +7,14 @@ import {
   findStoppableAssistantMessage,
   resolveConversationSwitchStopAction,
   resolveSendButtonDisabled
-} from '../src/views/ChatView.vue'
+} from '../src/views/chat-view.helpers'
 import chatApiSource from '../src/api/chat.ts?raw'
 import chatViewSource from '../src/views/ChatView.vue?raw'
+import composerSource from '../src/views/chat/ChatComposer.vue?raw'
 
 const normalizedChatApiSource = chatApiSource.replace(/\r\n/g, '\n')
 const normalizedChatViewSource = chatViewSource.replace(/\r\n/g, '\n')
+const normalizedComposerSource = composerSource.replace(/\r\n/g, '\n')
 
 function functionBlock(name: string) {
   const start = normalizedChatViewSource.indexOf(`function ${name}`)
@@ -36,18 +38,18 @@ function computedBlock(name: string) {
 
 describe('聊天生成中止', () => {
   it('生成中发送按钮应切换为可点击的中止按钮', () => {
-    expect(normalizedChatViewSource).toContain(':disabled="sendButtonDisabled"')
-    expect(normalizedChatViewSource).toContain(':aria-label="streaming ? \'中止生成\' : \'发送\'"')
-    expect(normalizedChatViewSource).toContain(':title="streaming ? \'中止生成\' : \'发送\'"')
-    expect(normalizedChatViewSource).toContain('v-if="streaming"')
-    expect(normalizedChatViewSource).toContain('<rect x="5" y="5" width="14" height="14" rx="2.5" />')
+    expect(normalizedComposerSource).toContain(':disabled="sendButtonDisabled"')
+    expect(normalizedComposerSource).toContain(':aria-label="streaming ? \'中止生成\' : \'发送\'"')
+    expect(normalizedComposerSource).toContain(':title="streaming ? \'中止生成\' : \'发送\'"')
+    expect(normalizedComposerSource).toContain('v-if="streaming"')
+    expect(normalizedComposerSource).toContain('<rect x="5" y="5" width="14" height="14" rx="2.5" />')
   })
 
   it('生成中应保持蓝色按钮和白色停止方块', () => {
-    expect(normalizedChatViewSource).toContain(`.send-orb.is-stopping {
+    expect(normalizedComposerSource).toContain(`.send-orb.is-stopping {
   background: #2563eb;
 }`)
-    expect(normalizedChatViewSource).toContain(`.send-orb.is-stopping rect {
+    expect(normalizedComposerSource).toContain(`.send-orb.is-stopping rect {
   fill: currentColor;
   stroke: none;
 }`)

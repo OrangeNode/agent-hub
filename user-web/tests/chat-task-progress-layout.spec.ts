@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   markTaskProgressTerminal,
   shouldApplyTaskProgressForStream
-} from '../src/views/ChatView.vue'
+} from '../src/views/chat-view.helpers'
 import chatViewSource from '../src/views/ChatView.vue?raw'
 import taskProgressPanelSource from '../src/views/TaskProgressPanel.vue?raw'
+import composerSource from '../src/views/chat/ChatComposer.vue?raw'
+import taskProgressSource from '../src/views/chat/useTaskProgress.ts?raw'
 
 const normalizedChatViewSource = chatViewSource.replace(/\r\n/g, '\n')
 
@@ -25,7 +27,8 @@ describe('聊天任务进度布局', () => {
     expect(chatViewSource).toContain('applyTaskProgress')
     expect(chatViewSource).toContain('onTaskProgressStarted')
     expect(chatViewSource).toContain('onTaskProgressCompleted')
-    expect(chatViewSource).toContain('fetchLatestTaskProgress')
+    expect(chatViewSource).toContain('restoreActiveTaskProgress')
+    expect(taskProgressSource).toContain('fetchLatestTaskProgress')
   })
 
   it('任务进度面板应提供折叠进度胶囊和展开时间线列表', () => {
@@ -42,18 +45,28 @@ describe('聊天任务进度布局', () => {
 
   it('任务进度面板应放在空状态和会话输入区域上方', () => {
     const panelMarkup = '<TaskProgressPanel v-if="activeTaskProgress" :progress="activeTaskProgress" />'
-    const landingPanelIndex = chatViewSource.indexOf(panelMarkup)
-    const landingComposerIndex = chatViewSource.indexOf('<div class="landing-composer"')
+    const emptyStateIndex = chatViewSource.indexOf('<section v-if="!hasMessages" class="empty-state">')
+    const beforeInputSlotIndex = chatViewSource.indexOf('<template #before-input>', emptyStateIndex)
+    const landingPanelIndex = chatViewSource.indexOf(panelMarkup, beforeInputSlotIndex)
     const footerIndex = chatViewSource.indexOf('<footer class="conversation-composer">')
     const conversationPanelIndex = chatViewSource.indexOf(panelMarkup, footerIndex)
-    const pendingImagesIndex = chatViewSource.indexOf('v-if="composerImageCount"', footerIndex)
-    const compactComposerIndex = chatViewSource.indexOf('<div class="landing-composer compact"', footerIndex)
+    const compactComposerIndex = chatViewSource.indexOf('<ChatComposer v-model:prompt="prompt" compact', footerIndex)
 
-    expect(landingPanelIndex).toBeGreaterThan(-1)
-    expect(landingPanelIndex).toBeLessThan(landingComposerIndex)
+    expect(beforeInputSlotIndex).toBeGreaterThan(emptyStateIndex)
+    expect(landingPanelIndex).toBeGreaterThan(beforeInputSlotIndex)
+    expect(landingPanelIndex).toBeLessThan(footerIndex)
     expect(conversationPanelIndex).toBeGreaterThan(footerIndex)
-    expect(conversationPanelIndex).toBeLessThan(pendingImagesIndex)
     expect(conversationPanelIndex).toBeLessThan(compactComposerIndex)
+  })
+
+  it('输入框组件应把空状态任务进度插在附件列表和输入框之间', () => {
+    const pendingImagesIndex = composerSource.indexOf('v-if="composerAttachmentCount"')
+    const slotIndex = composerSource.indexOf('<slot name="before-input" />')
+    const composerIndex = composerSource.indexOf('<div class="landing-composer"')
+
+    expect(pendingImagesIndex).toBeGreaterThan(-1)
+    expect(slotIndex).toBeGreaterThan(pendingImagesIndex)
+    expect(composerIndex).toBeGreaterThan(slotIndex)
   })
 
   it('旧 stream token 或已切换会话时不应应用任务进度', () => {
@@ -112,7 +125,7 @@ describe('聊天任务进度布局', () => {
   it('聊天页应通过受保护的 stream 任务处理器更新进度', () => {
     const handleSend = functionBlock('handleSend')
 
-    expect(normalizedChatViewSource).toContain('currentTaskStreamToken')
+    expect(taskProgressSource).toContain('currentTaskStreamToken')
     expect(normalizedChatViewSource).toContain('guardedApplyTaskProgress')
     expect(handleSend).toContain('const taskStreamToken = activateTaskStreamContext(conversationId)')
     expect(handleSend).toContain('onTaskProgressStarted: guardedApplyTaskProgress')

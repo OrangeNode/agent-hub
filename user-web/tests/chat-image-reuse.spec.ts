@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { selectReusableImageAttachments, validateReuseImageCount } from '../src/views/ChatView.vue'
+import { selectReusableImageAttachments, validateReuseImageCount } from '../src/views/chat-view.helpers'
 
 describe('历史图片复用', () => {
   it('只允许选择未过期且有预览地址的图片', () => {

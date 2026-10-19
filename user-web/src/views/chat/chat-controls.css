@@ -1,0 +1,36 @@
+/* 聊天页各组件共用的按钮重置和图标尺寸，按 scoped 方式分别引入各组件。 */
+.icon-button,
+.nav-item,
+.recent-title,
+.recent-more,
+.conversation-action-menu button,
+.round-action,
+.send-orb,
+.message-tools button,
+.image-preview-button,
+.image-remove-button,
+.agent-option,
+.mode-option,
+.message-attachment,
+.history-image-option,
+.artifact-bundle-card button,
+.panel-icon-button,
+.panel-text-button,
+.artifact-preview-trigger,
+.artifact-item-actions button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}

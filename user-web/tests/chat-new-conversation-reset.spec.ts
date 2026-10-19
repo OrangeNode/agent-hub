@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveNewConversationState } from '../src/views/ChatView.vue'
+import { resolveNewConversationState } from '../src/views/chat-view.helpers'
 import chatViewSource from '../src/views/ChatView.vue?raw'
 
 const normalizedChatViewSource = chatViewSource.replace(/\r\n/g, '\n')
@@ -28,9 +28,7 @@ describe('新聊天状态重置', () => {
       selectedArtifactId: 9,
       skillPickerOpen: true,
       historyImagePickerOpen: true,
-      thinkingConfigOpen: true,
-      openConversationMenuId: 12,
-      agentMenuOpen: true
+      thinkingConfigOpen: true
     })).toEqual({
       activeConversationId: null,
       activeAgentKey: null,
@@ -43,9 +41,7 @@ describe('新聊天状态重置', () => {
       selectedArtifactId: null,
       skillPickerOpen: false,
       historyImagePickerOpen: false,
-      thinkingConfigOpen: false,
-      openConversationMenuId: null,
-      agentMenuOpen: false
+      thinkingConfigOpen: false
     })
   })
 
@@ -62,9 +58,7 @@ describe('新聊天状态重置', () => {
       selectedArtifactId: 3,
       skillPickerOpen: true,
       historyImagePickerOpen: true,
-      thinkingConfigOpen: true,
-      openConversationMenuId: 12,
-      agentMenuOpen: true
+      thinkingConfigOpen: true
     }, { preserveAgent: true })
 
     expect(nextState.activeAgentKey).toBe('coder')

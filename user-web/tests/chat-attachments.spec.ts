@@ -6,6 +6,7 @@ import {
   validateImageFile
 } from '../src/views/chat-attachments.helpers'
 import chatViewSource from '../src/views/ChatView.vue?raw'
+import attachmentsSource from '../src/views/chat/useChatAttachments.ts?raw'
 
 function file(name: string, type: string, size: number) {
   return new File([new Uint8Array(size)], name, { type, lastModified: 0 })
@@ -63,12 +64,12 @@ describe('聊天图片附件校验', () => {
   it('聊天主区域应支持粘贴和拖拽图片上传', () => {
     expect(chatViewSource).toContain('@paste="handleImagePaste"')
     expect(chatViewSource).toContain('@drop.prevent="handleImageDrop"')
-    expect(chatViewSource).toContain('event.clipboardData?.files')
-    expect(chatViewSource).toContain('event.dataTransfer?.files')
+    expect(attachmentsSource).toContain('event.clipboardData?.files')
+    expect(attachmentsSource).toContain('event.dataTransfer?.files')
   })
 
   it('文件选择器应支持 Word 和 Excel', () => {
     expect(chatViewSource).toContain('.doc,.docx,.xls,.xlsx')
-    expect(chatViewSource).toContain('createAttachmentUploadUrl')
+    expect(attachmentsSource).toContain('createAttachmentUploadUrl')
   })
 })

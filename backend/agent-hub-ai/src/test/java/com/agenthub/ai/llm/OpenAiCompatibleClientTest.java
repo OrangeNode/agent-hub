@@ -505,6 +505,27 @@ class OpenAiCompatibleClientTest {
                 LlmStreamChunk.done());
     }
 
+    @Test
+    void shouldPropagateCancellationAndCloseResponseStream() {
+        java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean(false);
+        CapturingOpenAiClient capturingClient = new CapturingOpenAiClient(
+                Stream.of(
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"第一段\"}}]}",
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"第二段\"}}]}",
+                        "data: [DONE]")
+                        .onClose(() -> closed.set(true)));
+        List<LlmStreamChunk> chunks = new ArrayList<>();
+
+        assertThatThrownBy(() -> capturingClient.stream(request("https://api.openai.com/v1"), chunk -> {
+            chunks.add(chunk);
+            throw new LlmStreamCancelledException("用户已中止生成");
+        })).isInstanceOf(LlmStreamCancelledException.class);
+
+        assertThat(chunks).hasSize(1);
+        assertThat(chunks.getFirst().type()).isEqualTo(LlmStreamChunkType.ANSWER_DELTA);
+        assertThat(closed).isTrue();
+    }
+
     private LlmStreamRequest request(String baseUrl) {
         return new LlmStreamRequest(
                 baseUrl,

@@ -29,6 +29,8 @@ import com.agenthub.chat.conversation.entity.ChatConversation;
 import com.agenthub.chat.conversation.mapper.ChatConversationMapper;
 import com.agenthub.chat.message.entity.ChatMessage;
 import com.agenthub.chat.message.mapper.ChatMessageMapper;
+import com.agenthub.chat.run.ChatRunProperties;
+import com.agenthub.chat.run.ChatRunRegistry;
 import com.agenthub.chat.service.impl.ChatServiceImpl;
 import com.agenthub.chat.summary.mapper.ChatConversationSummaryMapper;
 import com.agenthub.chat.task.dto.TaskProgressItem;
@@ -131,7 +133,7 @@ class ChatServiceImplTest {
                 LlmStreamChunk.answer("呀"),
                 LlmStreamChunk.done()
         ));
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -593,7 +595,7 @@ class ChatServiceImplTest {
                 LlmStreamChunk.answer("好的"),
                 LlmStreamChunk.done()
         ));
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -643,7 +645,7 @@ class ChatServiceImplTest {
                 LlmStreamChunk.answer("好的"),
                 LlmStreamChunk.done()
         ));
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -696,7 +698,7 @@ class ChatServiceImplTest {
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         LlmClient llmClient = mock(LlmClient.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -769,7 +771,7 @@ class ChatServiceImplTest {
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         LlmClient llmClient = mock(LlmClient.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -831,7 +833,7 @@ class ChatServiceImplTest {
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         LlmClient llmClient = mock(LlmClient.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -899,7 +901,7 @@ class ChatServiceImplTest {
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         LlmClient llmClient = mock(LlmClient.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -964,7 +966,7 @@ class ChatServiceImplTest {
                 LlmStreamChunk.answer("好的"),
                 LlmStreamChunk.done()
         ));
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -1028,7 +1030,7 @@ class ChatServiceImplTest {
                 LlmStreamChunk.done()
         ));
         RecordingSseEventSender sender = new RecordingSseEventSender();
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -1099,7 +1101,7 @@ class ChatServiceImplTest {
         ObjectStorageClient objectStorageClient = mock(ObjectStorageClient.class);
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         LlmClient llmClient = mock(LlmClient.class);
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -1170,7 +1172,7 @@ class ChatServiceImplTest {
                 LlmStreamChunk.answer("ok"),
                 LlmStreamChunk.done()
         ));
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -1212,7 +1214,7 @@ class ChatServiceImplTest {
         ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
         AgentService agentService = mock(AgentService.class);
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -1480,17 +1482,17 @@ class ChatServiceImplTest {
     }
 
     @Test
-    void shouldKeepStoppedStatusAndBackfillContentWhenStopRequestWinsRaceBeforeAbort() {
+    void shouldSkipModelCallWhenStopRequestedBeforeRunStarts() {
         ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
         ChatMessageMapper messageMapper = messageMapper();
         AiModelService modelService = mock(AiModelService.class);
-        RecordingSseEventSender sender = new RecordingSseEventSender(SseEventType.ANSWER_DELTA);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
         ManualExecutor executor = new ManualExecutor();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
-                LlmStreamChunk.answer("已生成内容"),
+                LlmStreamChunk.answer("不应生成"),
                 LlmStreamChunk.done()
         ));
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -1517,6 +1519,7 @@ class ChatServiceImplTest {
         service.stopGeneration(7L, 2L);
         executor.runCaptured();
 
+        assertThat(llmClient.lastRequest).isNull();
         ArgumentCaptor<ChatMessage> messageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
         ArgumentCaptor<Wrapper<ChatMessage>> wrapperCaptor = wrapperCaptor();
         verify(messageMapper, org.mockito.Mockito.times(3)).update(messageCaptor.capture(), wrapperCaptor.capture());
@@ -1524,14 +1527,145 @@ class ChatServiceImplTest {
         assertThat(updates.get(0).getStatus()).isEqualTo("STOPPED");
         assertThat(updates.get(0).getErrorMessage()).isEqualTo("用户已中止生成");
         assertThat(updates.get(1).getStatus()).isEqualTo("STOPPED");
-        assertThat(updates.get(1).getContent()).isEqualTo("已生成内容");
-        assertThat(updates.get(1).getErrorMessage()).isEqualTo("SSE 连接已断开");
+        assertThat(updates.get(1).getErrorMessage()).isEqualTo("用户已中止生成");
         assertStreamingAssistantUpdateWrapper(wrapperCaptor.getAllValues().get(1), 2L, 7L);
         assertThat(updates.get(2).getStatus()).isEqualTo("STOPPED");
-        assertThat(updates.get(2).getContent()).isEqualTo("已生成内容");
         assertThat(updates.get(2).getErrorMessage()).isNull();
+        assertThat(sender.eventTypes()).doesNotContain(SseEventType.ANSWER_DELTA, SseEventType.MESSAGE_COMPLETED,
+                SseEventType.ERROR);
+        assertThat(sender.eventTypes()).contains(SseEventType.DONE);
+    }
+
+    @Test
+    void shouldStopStreamingWhenStopRequestedOnAnotherInstance() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                LlmStreamChunk.answer("部分内容"),
+                LlmStreamChunk.answer("后续内容"),
+                LlmStreamChunk.done()
+        ));
+        ChatRunProperties runProperties = new ChatRunProperties();
+        runProperties.setStopPollInterval(Duration.ZERO);
+        ChatServiceImpl service = ChatServiceTestFactory.create(
+                conversationMapper, messageMapper, modelService, new ConversationTitleService(), transactionTemplate(),
+                sender, mock(AttachmentService.class), null,
+                contextBuilder(messageMapper, mock(AttachmentService.class), llmClient), protocolType -> llmClient,
+                Runnable::run, null, null, null, null, null, null, null, null, null, runProperties
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+        ChatMessage streamingMessage = message(2L, 100L, 7L, "ASSISTANT", "");
+        streamingMessage.setStatus("STREAMING");
+        ChatMessage stoppedElsewhere = message(2L, 100L, 7L, "ASSISTANT", "");
+        stoppedElsewhere.setStatus("STOPPED");
+        // 依次对应：循环入口检查点、第一个 chunk 检查点、第二个 chunk 检查点、回填前查询。
+        when(messageMapper.selectById(2L)).thenReturn(streamingMessage, streamingMessage, stoppedElsewhere);
+        when(messageMapper.update(any(ChatMessage.class), any())).thenReturn(0, 1);
+
+        service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
+
+        ArgumentCaptor<ChatMessage> messageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper, org.mockito.Mockito.times(2)).update(messageCaptor.capture(), any());
+        List<ChatMessage> updates = messageCaptor.getAllValues();
+        assertThat(updates.get(0).getStatus()).isEqualTo("STOPPED");
+        assertThat(updates.get(0).getContent()).isEqualTo("部分内容");
+        assertThat(updates.get(1).getStatus()).isEqualTo("STOPPED");
+        assertThat(updates.get(1).getContent()).isEqualTo("部分内容");
+        assertThat(sender.eventDataOfAll(SseEventData.Delta.class)).hasSize(1);
         assertThat(sender.eventTypes()).doesNotContain(SseEventType.MESSAGE_COMPLETED, SseEventType.ERROR);
         assertThat(sender.eventTypes()).contains(SseEventType.DONE);
+    }
+
+    @Test
+    void shouldFailRunWhenMaxDurationExceeded() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        RecordingSseEventSender sender = new RecordingSseEventSender();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.answer("不应生成")));
+        ChatRunProperties runProperties = new ChatRunProperties();
+        runProperties.setMaxDuration(Duration.ZERO);
+        ChatServiceImpl service = ChatServiceTestFactory.create(
+                conversationMapper, messageMapper, modelService, new ConversationTitleService(), transactionTemplate(),
+                sender, mock(AttachmentService.class), null,
+                contextBuilder(messageMapper, mock(AttachmentService.class), llmClient), protocolType -> llmClient,
+                Runnable::run, null, null, null, null, null, null, null, null, null, runProperties
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+
+        service.stream(7L, 100L, 10L, null, "继续", false, List.of(), List.of());
+
+        assertThat(llmClient.lastRequest).isNull();
+        ArgumentCaptor<ChatMessage> messageCaptor = ArgumentCaptor.forClass(ChatMessage.class);
+        verify(messageMapper).update(messageCaptor.capture(), any());
+        assertThat(messageCaptor.getValue().getStatus()).isEqualTo("FAILED");
+        assertThat(messageCaptor.getValue().getErrorMessage()).isEqualTo("生成时间超过上限，已自动终止");
+        SseEventData.Error error = sender.eventDataOf(SseEventData.Error.class);
+        assertThat(error.code()).isEqualTo("RUN_ABORTED");
+        assertThat(error.source()).isEqualTo("SERVER");
+        assertThat(sender.eventTypes()).contains(SseEventType.DONE);
+    }
+
+    @Test
+    void shouldRejectStreamBeforePersistingWhenRunCapacityExhausted() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.done()));
+        ManualExecutor executor = new ManualExecutor();
+        ChatRunProperties runProperties = new ChatRunProperties();
+        runProperties.setMaxConcurrentRuns(1);
+        ChatRunRegistry runRegistry = new ChatRunRegistry(runProperties);
+        ChatServiceImpl service = ChatServiceTestFactory.create(
+                conversationMapper, messageMapper, modelService, new ConversationTitleService(), transactionTemplate(),
+                new RecordingSseEventSender(), mock(AttachmentService.class), null,
+                contextBuilder(messageMapper, mock(AttachmentService.class), llmClient), protocolType -> llmClient,
+                executor, null, null, null, null, null, null, null, null, null, runProperties, runRegistry
+        );
+        when(modelService.requireAvailableRuntimeConfig(10L)).thenReturn(runtimeConfig());
+        when(conversationMapper.selectById(100L)).thenReturn(conversation(100L, 7L, "ACTIVE"));
+        when(messageMapper.insert(any(ChatMessage.class))).thenAnswer(new SequentialMessageIdAnswer());
+
+        service.stream(7L, 100L, 10L, null, "第一轮", false, List.of(), List.of());
+
+        assertThatThrownBy(() -> service.stream(7L, 100L, 10L, null, "第二轮", false, List.of(), List.of()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.RUN_CAPACITY_EXCEEDED);
+        verify(messageMapper, org.mockito.Mockito.times(2)).insert(any(ChatMessage.class));
+
+        executor.runCaptured();
+
+        assertThat(runRegistry.availablePermits()).isEqualTo(1);
+        assertThat(runRegistry.activeRuns()).isEmpty();
+    }
+
+    @Test
+    void shouldReleaseRunPermitWhenPreparationFails() {
+        ChatConversationMapper conversationMapper = mock(ChatConversationMapper.class);
+        ChatMessageMapper messageMapper = messageMapper();
+        AiModelService modelService = mock(AiModelService.class);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.done()));
+        ChatRunProperties runProperties = new ChatRunProperties();
+        runProperties.setMaxConcurrentRuns(1);
+        ChatRunRegistry runRegistry = new ChatRunRegistry(runProperties);
+        ChatServiceImpl service = ChatServiceTestFactory.create(
+                conversationMapper, messageMapper, modelService, new ConversationTitleService(), transactionTemplate(),
+                new RecordingSseEventSender(), mock(AttachmentService.class), null,
+                contextBuilder(messageMapper, mock(AttachmentService.class), llmClient), protocolType -> llmClient,
+                Runnable::run, null, null, null, null, null, null, null, null, null, runProperties, runRegistry
+        );
+
+        assertThatThrownBy(() -> service.stream(7L, null, 10L, null, " ", false, List.of(), List.of()))
+                .isInstanceOf(BusinessException.class);
+
+        assertThat(runRegistry.availablePermits()).isEqualTo(1);
     }
 
     @Test
@@ -1814,7 +1948,7 @@ class ChatServiceImplTest {
         LlmClient throwingClient = (request, chunkConsumer) -> {
             throw new RuntimeException("网络异常");
         };
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -1880,7 +2014,7 @@ class ChatServiceImplTest {
             chunkConsumer.accept(LlmStreamChunk.answer("已经生成"));
             throw new RuntimeException("网络异常");
         };
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -1921,7 +2055,7 @@ class ChatServiceImplTest {
                 )),
                 LlmStreamChunk.done()
         ));
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -2035,7 +2169,7 @@ class ChatServiceImplTest {
         RecordingSseEventSender sender = new RecordingSseEventSender();
         ManualExecutor executor = new ManualExecutor();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.answer("异步回答"), LlmStreamChunk.done()));
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -2141,7 +2275,7 @@ class ChatServiceImplTest {
                 )), LlmStreamChunk.done()),
                 List.of(LlmStreamChunk.answer("运行完成"), LlmStreamChunk.done())
         ));
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -2240,7 +2374,7 @@ class ChatServiceImplTest {
                 LlmStreamChunk.answer("你好"),
                 LlmStreamChunk.done()
         ));
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -2285,7 +2419,7 @@ class ChatServiceImplTest {
                 LlmStreamChunk.answer("你好"),
                 LlmStreamChunk.done()
         ));
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -2333,7 +2467,7 @@ class ChatServiceImplTest {
                 LlmStreamChunk.answer("已按 Skill 处理"),
                 LlmStreamChunk.done()
         ));
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -2385,7 +2519,7 @@ class ChatServiceImplTest {
                 LlmStreamChunk.answer("已读取文件"),
                 LlmStreamChunk.done()
         ));
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -2445,7 +2579,7 @@ class ChatServiceImplTest {
                         Map.of("query", "agent hub")
                 )), LlmStreamChunk.done())
         ));
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -2516,7 +2650,7 @@ class ChatServiceImplTest {
                 )), LlmStreamChunk.done()),
                 List.of(LlmStreamChunk.answer("完成"), LlmStreamChunk.done())
         ));
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -2566,7 +2700,7 @@ class ChatServiceImplTest {
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         CountingToolLoopClient llmClient = new CountingToolLoopClient(100);
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -2611,7 +2745,7 @@ class ChatServiceImplTest {
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         CountingToolLoopClient llmClient = new CountingToolLoopClient(101);
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -2655,7 +2789,7 @@ class ChatServiceImplTest {
         ToolRegistry toolRegistry = mock(ToolRegistry.class);
         RecordingSseEventSender sender = new RecordingSseEventSender();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.done()));
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -2837,7 +2971,7 @@ class ChatServiceImplTest {
         AiModelService modelService = mock(AiModelService.class);
         List<String> events = new ArrayList<>();
         RecordingSseEventSender sender = new RecordingSseEventSender(events);
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -2876,7 +3010,7 @@ class ChatServiceImplTest {
         RecordingSseEventSender sender = new RecordingSseEventSender(events);
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(LlmStreamChunk.answer("summary"), LlmStreamChunk.done()), events);
         ManualExecutor executor = new ManualExecutor();
-        ChatServiceImpl service = new ChatServiceImpl(
+        ChatServiceImpl service = ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -3016,7 +3150,7 @@ class ChatServiceImplTest {
             AttachmentService attachmentService,
             LlmClient llmClient
     ) {
-        return new ChatServiceImpl(
+        return ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,
@@ -3041,7 +3175,7 @@ class ChatServiceImplTest {
             AgentRunRouter runRouter,
             AgentTaskPlanner taskPlanner
     ) {
-        return new ChatServiceImpl(
+        return ChatServiceTestFactory.create(
                 conversationMapper,
                 messageMapper,
                 modelService,

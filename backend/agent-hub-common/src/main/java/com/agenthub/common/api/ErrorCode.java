@@ -17,6 +17,7 @@ public enum ErrorCode {
     ARTIFACT_SYNC_FAILED(468, "产物同步失败"),
     TOOL_CALL_INVALID(469, "模型返回的工具调用参数无效"),
     TOOL_LOOP_LIMIT_EXCEEDED(470, "工具调用轮次超过上限"),
+    RUN_CAPACITY_EXCEEDED(471, "当前生成任务过多，请稍后重试"),
     INTERNAL_ERROR(500, "系统繁忙，请稍后重试");
 
     private final int code;

@@ -43,6 +43,13 @@ agent-hub:
     internal-token: ${AGENT_HUB_SANDBOX_INTERNAL_TOKEN:}
     command-max-length: ${AGENT_HUB_SANDBOX_COMMAND_MAX_LENGTH:8192}
     exec-timeout-seconds: ${AGENT_HUB_SANDBOX_EXEC_TIMEOUT_SECONDS:300}
+  chat:
+    run:
+      # 单次 Agent 运行最长时间，超时自动终止；也是孤儿消息回收的判定依据。
+      max-duration: ${AGENT_HUB_CHAT_RUN_MAX_DURATION:30m}
+      # 单实例同时运行的生成任务上限，超出时拒绝新请求。
+      max-concurrent-runs: ${AGENT_HUB_CHAT_RUN_MAX_CONCURRENT:200}
+      max-tool-calls: ${AGENT_HUB_CHAT_RUN_MAX_TOOL_CALLS:100}
   logging:
     path: logs/agent-hub
     access-log-enabled: true

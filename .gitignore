@@ -27,3 +27,6 @@ sandbox-service/logs/
 sandbox-service/run/
 sandbox-service/rootfs/
 sandbox-service/sandbox-service.pid
+
+# 本地真实环境变量不入库，仅提交 *.env.example 样例
+docker/env/*.env
